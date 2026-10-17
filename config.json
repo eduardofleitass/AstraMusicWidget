@@ -32,13 +32,13 @@
   "panel_no_robar": true,
   "panel_topmost": true,
   "panel_clics_al_juego": false,
-  "panel_auto_hide_s": 6.0,
-  "panel_hud": true,
-  "panel_alpha": 235,
+  "panel_auto_hide_s": 0.0,
+  "panel_hud": false,
+  "panel_alpha": 255,
   "panel_bg_alpha": 250,
   "panel_pos": [
-    2942,
-    755
+    4,
+    946
   ],
   "fade_cover": true,
   "fade_cover_ms": 220,

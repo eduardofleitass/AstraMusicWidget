@@ -157,6 +157,10 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, volume=None,
 
     idle = not state.has_session
     dim = 0.6 if idle else 1.0
+    # posicion que se muestra: la del arrastre si se esta arrastrando
+    pos = 0.0
+    if state.duration > 0 and not idle:
+        pos = scrub if scrub is not None else state.live_position()
     tcol = draw._col(theme, "title", int(255 * dim))
     acol = draw._col(theme, "artist", int(255 * dim))
     scol = draw._col(theme, "artist", int(170 * dim))
@@ -191,10 +195,20 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, volume=None,
         tercera = state.album if (state.album and state.album != artista) else ""
         if not tercera and not idle:
             tercera = state.app_name
+    # En el panel chico los tiempos comparten el renglon del artista: hay que
+    # reservarles su ancho o el nombre se les encima (medido en la captura: "Fuerza
+    # Regida y Grupo Fronte" + "0:07 / 3:32" uno sobre el otro).
+    texto_tiempos = ""
+    if L["tiempos_en_texto"] and state.duration > 0 and not idle:
+        texto_tiempos = (f"{draw.fmt_time(scrub if scrub is not None else pos)} / "
+                         f"{draw.fmt_time(state.duration)}")
+    ancho_artista = ancho_texto
+    if texto_tiempos:
+        ancho_artista -= d.textlength(texto_tiempos, font=f_chico) + 8 * S
     tx = z["texto"][0] * SS
     d.text((tx, L["titulo_y"] * S), recortar(titulo, f_titulo, ancho_texto),
            font=f_titulo, fill=tcol)
-    d.text((tx, L["artista_y"] * S), recortar(artista, f_artista, ancho_texto),
+    d.text((tx, L["artista_y"] * S), recortar(artista, f_artista, ancho_artista),
            font=f_artista, fill=acol)
     if L["tercera_y"] is not None:
         d.text((tx, L["tercera_y"] * S), recortar(tercera, f_chico, ancho_texto),
@@ -206,9 +220,7 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, volume=None,
     cy = (zb[1] + zb[3]) / 2.0 * SS
     d.rounded_rectangle([zb[0] * SS, cy - bh / 2, zb[2] * SS, cy + bh / 2],
                         radius=bh / 2, fill=draw._col(theme, "track", 255))
-    pos = 0.0
     if state.duration > 0 and not idle:
-        pos = scrub if scrub is not None else state.live_position()
         frac = max(0.0, min(1.0, pos / state.duration))
         if frac > 0:
             d.rounded_rectangle([zb[0] * SS, cy - bh / 2,
@@ -223,9 +235,8 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, volume=None,
     if state.duration > 0 and not idle:
         izq, der = draw.fmt_time(pos), draw.fmt_time(state.duration)
         if L["tiempos_en_texto"]:
-            texto_t = f"{izq} / {der}"
-            ancho_t = d.textlength(texto_t, font=f_chico)
-            d.text((z["texto"][2] * SS - ancho_t, L["tiempos_y"] * S), texto_t,
+            ancho_t = d.textlength(texto_tiempos, font=f_chico)
+            d.text((z["texto"][2] * SS - ancho_t, L["tiempos_y"] * S), texto_tiempos,
                    font=f_chico, fill=scol)
         else:
             d.text((zb[0] * SS, L["tiempos_y"] * S), izq, font=f_chico, fill=scol)

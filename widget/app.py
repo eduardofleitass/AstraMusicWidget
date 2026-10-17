@@ -96,8 +96,12 @@ WM_APP_PANEL = win32con.WM_APP + 10  # wParam = 1/0: abrir o cerrar el panel
 WM_APP_PANEL_CFG = win32con.WM_APP + 11  # pruebas: cambiar un ajuste del panel
 # Opciones del submenu Panel (ids 60..).
 PANEL_AUTO_HIDE = [(0, "Nunca"), (3, "A los 3 s"), (6, "A los 6 s"), (10, "A los 10 s")]
-PANEL_ALPHAS = [(255, "Opaco"), (235, "Leve"), (200, "Translucido"),
+PANEL_ALPHAS = [(255, "Todo nitido"), (235, "Leve"), (200, "Translucido"),
                 (160, "Muy transparente")]
+# Alfa del FONDO dibujado (el chip detras del texto). Es independiente del anterior:
+# con el fondo en 0 el panel queda flotando sobre el juego y los textos siguen nitidos.
+PANEL_BG_ALPHAS = [(250, "Solido"), (200, "Translucido"), (140, "Muy transparente"),
+                   (90, "Casi sin fondo"), (0, "Sin fondo")]
 
 # Colores que ofrece el menu para la barra de progreso y las ondas (None = el del
 # tema). El menu guarda el hex en config.json; a mano tambien vale [r, g, b].
@@ -1362,6 +1366,10 @@ class WidgetApp:
                     self.set_panel_ajuste("panel_auto_hide_s", lp / 10.0)
                 elif int(wp) == 8:
                     self.set_panel_ajuste("panel_alpha", lp)
+                elif int(wp) == 9:
+                    self.set_panel_ajuste("panel_bg_alpha", lp)
+                elif int(wp) == 10:
+                    self.panel_anclar_al_widget()
                 elif int(wp) in claves:
                     self.set_panel_ajuste(claves[int(wp)], bool(lp))
                 return 0
@@ -2196,14 +2204,19 @@ class WidgetApp:
         on = bool(on)
         self.cfg["panel_mode"] = "gaming" if on else "normal"
         if on:
+            # Fijo (sin auto-ocultar ni HUD: si lo cerras, se queda cerrado) y con el
+            # FONDO transparente. El alfa de todo el panel queda en 255 para que los
+            # textos e iconos se lean nitidos sobre lo que haya detras.
             self.cfg.update({"panel_size": "chico", "panel_no_robar": True,
-                             "panel_topmost": True, "panel_auto_hide_s": 6,
-                             "panel_hud": True, "panel_alpha": 235,
+                             "panel_topmost": True, "panel_auto_hide_s": 0,
+                             "panel_hud": False, "panel_alpha": 255,
+                             "panel_bg_alpha": PANEL_BG_ALPHAS[0][0],
                              "panel_clics_al_juego": False})
         else:
             self.cfg.update({"panel_size": "normal", "panel_no_robar": False,
                              "panel_topmost": False, "panel_auto_hide_s": 0,
                              "panel_hud": False, "panel_alpha": 255,
+                             "panel_bg_alpha": PANEL_BG_ALPHAS[0][0],
                              "panel_clics_al_juego": False})
         visible = self.panel_visible
         self._panel_olvidar()
@@ -2307,7 +2320,16 @@ class WidgetApp:
                     flags |= win32con.MF_CHECKED
                 win32gui.AppendMenu(alpha_sub, flags, 70 + i, etiqueta)
             win32gui.AppendMenu(pan_sub, win32con.MF_POPUP | win32con.MF_STRING,
-                                alpha_sub, "Opacidad")
+                                alpha_sub, "Opacidad de todo el panel")
+            fondo_sub = win32gui.CreatePopupMenu()
+            fondo_actual = int(self.cfg.get("panel_bg_alpha", 250))
+            for i, (val, etiqueta) in enumerate(PANEL_BG_ALPHAS):
+                flags = win32con.MF_STRING
+                if val == fondo_actual:
+                    flags |= win32con.MF_CHECKED
+                win32gui.AppendMenu(fondo_sub, flags, 75 + i, etiqueta)
+            win32gui.AppendMenu(pan_sub, win32con.MF_POPUP | win32con.MF_STRING,
+                                fondo_sub, "Fondo")
             win32gui.AppendMenu(pan_sub, win32con.MF_SEPARATOR, 0, "")
             win32gui.AppendMenu(pan_sub, win32con.MF_STRING, 74,
                                 "Volver a anclarlo al widget")
@@ -2424,6 +2446,8 @@ class WidgetApp:
             self.set_panel_ajuste("panel_auto_hide_s", PANEL_AUTO_HIDE[cmd - 66][0])
         elif 70 <= cmd <= 70 + len(PANEL_ALPHAS) - 1:
             self.set_panel_ajuste("panel_alpha", PANEL_ALPHAS[cmd - 70][0])
+        elif 75 <= cmd <= 75 + len(PANEL_BG_ALPHAS) - 1:
+            self.set_panel_ajuste("panel_bg_alpha", PANEL_BG_ALPHAS[cmd - 75][0])
         elif cmd == 74:
             self.panel_anclar_al_widget()
         elif 30 <= cmd <= 30 + len(COLOR_CHOICES) - 1:

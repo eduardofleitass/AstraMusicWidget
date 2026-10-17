@@ -531,9 +531,9 @@ derecho > *Panel* > *Modo gaming*) prende el conjunto:
 | Foco | se activa (Escape y clic afuera funcionan) | **no se activa nunca** (`WS_EX_NOACTIVATE` + `WM_MOUSEACTIVATE` → `MA_NOACTIVATE`) |
 | Al tocar afuera | se cierra | **sigue abierto** |
 | Capas | normal | **siempre arriba** (`WS_EX_TOPMOST`, sirve sobre juegos en ventana) |
-| Auto-ocultar | nunca | **a los 6 s** sin usarlo |
-| Al cambiar de cancion | no aparece | **aparece solo 6 s** (un HUD: mirás el titulo sin salir del juego) |
-| Opacidad | opaco | 235/255 (deja ver un poco lo de atras) |
+| Auto-ocultar | nunca | **nunca: queda fijo** hasta que lo cierres |
+| Al cambiar de cancion | no aparece | no aparece solo (se abre cuando vos queres, con `Ctrl+Alt+O`) |
+| Fondo | solido | **solido** (el submenu *Fondo* lo gradua hasta "sin fondo") |
 
 - Se abre y cierra con **`Ctrl+Alt+O`**, sin soltar el mouse. Los controles del panel
   siguen andando con clic, y los atajos globales (play/pausa, siguiente, volumen,
@@ -542,6 +542,12 @@ derecho > *Panel* > *Modo gaming*) prende el conjunto:
   *Volver a anclarlo al widget*).
 - **Dejar pasar los clics al juego** (`WS_EX_TRANSPARENT`): el panel queda solo para
   mirar y los clics van al juego como si no estuviera. Se maneja con los atajos.
+- **Fijo**: en modo gaming no se oculta solo ni se cierra al tocar el juego; queda
+  donde lo dejaste hasta que lo cierres con `Ctrl+Alt+O`, la cruz o el menu.
+- **El fondo y la opacidad son dos cosas distintas** y se ajustan por separado:
+  *Fondo* cambia el recuadro de atras (de *Solido* a *Sin fondo*, para que se vea el
+  juego a traves) y *Opacidad de todo el panel* cambia todo junto, textos incluidos.
+  Si el fondo se te transparenta y no te gusta, en *Fondo* > *Solido* queda opaco.
 - Cada ajuste se puede tocar por separado desde el mismo submenu, si no queres el
   paquete completo.
 
@@ -606,7 +612,7 @@ Como se hacen, y por que no cuestan CPU:
 | `panel_auto_hide_s` | 0 | Se oculta solo tras N segundos sin usarlo (0 = nunca) |
 | `panel_hud` | false | Aparece un rato al cambiar de cancion |
 | `panel_alpha` | 255 | Opacidad de todo el panel (235 leve, 200 translucido, 160 muy transparente) |
-| `panel_bg_alpha` | 250 | Alfa del fondo dibujado (para que no se lea la ventana de atras) |
+| `panel_bg_alpha` | 250 | Alfa del **recuadro de atras** (250 solido, 200, 140, 90, 0 sin fondo). Con el fondo en 0 el panel queda flotando y los textos siguen nitidos |
 | `panel_pos` | `null` | `[x, y]` en pantalla donde lo dejaste arrastrado; `null` = encima del widget |
 | `show_volume` | true | Celda del altavoz despues de los botones (menu > *Mostrar altavoz*) |
 | `volume_step` | 5 | Cuanto sube o baja cada muesca de la rueda sobre el altavoz, en porcentaje |

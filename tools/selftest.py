@@ -1059,6 +1059,62 @@ def main() -> int:
                   rojo_tapa > 120 and barra > 30 and texto > 80,
                   f"tapa {rojo_tapa}, barra {barra}, texto {texto} pixeles")
 
+        # (b2) el renglon del artista no se mete en los tiempos (panel chico) y el
+        # fondo se puede sacar (alfa del fondo independiente del resto)
+        try:
+            L = panel_mod.layout(cfg_chico)
+            art = draw.get_art(art_rojo, "rojo", int(L["tapa"][2]), int(L["tapa_radio"]))
+            z = panel_mod.rects(kp, cfg_chico)
+            largo = MediaState(has_session=True, app_id="brave.exe",
+                               title="Titulo", artist="Artista Con Un Nombre Larguisimo "
+                               "Que No Entra Ni De Cana", playing=True, position=60.0,
+                               duration=180.0, position_at=_t.monotonic(), art=None,
+                               art_key="k", can_seek=True, can_toggle=True)
+            corto = MediaState(has_session=True, app_id="brave.exe", title="Titulo",
+                               artist="Corto", playing=True, position=60.0,
+                               duration=180.0, position_at=_t.monotonic(), art=None,
+                               art_key="k", can_seek=True, can_toggle=True)
+            im_l = panel_mod.render(largo, cfg_chico, art=art, volume=vol,
+                                    k=kp).convert("RGB")
+            im_c = panel_mod.render(corto, cfg_chico, art=art, volume=vol,
+                                    k=kp).convert("RGB")
+            x_t = z["texto"][2]
+            # Ventana bien adentro de los tiempos: el artista se corta ~56 px antes
+            # (se le reserva el ancho de los tiempos + 8), asi que 45 px es seguro.
+            caja_tiempos = (x_t - 45, L["artista_y"], x_t, L["artista_y"] + 14)
+            caja_artista = (z["texto"][0], L["artista_y"], x_t - 60,
+                            L["artista_y"] + 14)
+            px_l = [im_l.getpixel((x, y)) for y in range(caja_tiempos[1], caja_tiempos[3])
+                    for x in range(caja_tiempos[0], caja_tiempos[2])]
+            px_c = [im_c.getpixel((x, y)) for y in range(caja_tiempos[1], caja_tiempos[3])
+                    for x in range(caja_tiempos[0], caja_tiempos[2])]
+            hay_artista_l = sum(1 for y in range(caja_artista[1], caja_artista[3])
+                                for x in range(caja_artista[0], caja_artista[2])
+                                if sum(im_l.getpixel((x, y))) > 300)
+            hay_artista_c = sum(1 for y in range(caja_artista[1], caja_artista[3])
+                                for x in range(caja_artista[0], caja_artista[2])
+                                if sum(im_c.getpixel((x, y))) > 300)
+            check("el artista no se mete en los tiempos (nombre largo o corto)",
+                  px_l == px_c and any(sum(p) > 300 for p in px_l)
+                  and hay_artista_l > hay_artista_c,
+                  f"{sum(1 for p in px_l if sum(p) > 300)} pixeles de tiempos; "
+                  f"identicos con nombre largo y corto: {px_l == px_c}; el nombre largo "
+                  f"ocupa mas ({hay_artista_l} contra {hay_artista_c} pixeles)")
+
+            def alfa_medio(cfgx):
+                imx = panel_mod.render(est, cfgx, art=art, volume=vol, k=kp)
+                canal = imx.getchannel("A")
+                d = list(canal.get_flattened_data())
+                return sum(d) / float(len(d))
+
+            a_solido = alfa_medio(dict(cfg_chico, panel_bg_alpha=250))
+            a_sin = alfa_medio(dict(cfg_chico, panel_bg_alpha=0))
+            check("el fondo del panel se puede sacar (alfa del fondo aparte)",
+                  a_solido > a_sin + 40,
+                  f"alfa medio del panel: con fondo {a_solido:.0f}, sin fondo {a_sin:.0f}")
+        except Exception as exc:
+            check("el fondo y el ancho del artista", False, repr(exc))
+
         # (c) reacciona al hover, al arrastre y al silencio (en los dos tamanos)
         for nombre, c in (("normal", cfg_normal), ("chico", cfg_chico)):
             z = panel_mod.rects(kp, c)
@@ -1117,9 +1173,22 @@ def main() -> int:
                   bool(ex & 0x00000080) and bool(ex & 0x00080000),
                   f"TOOLWINDOW={'si' if ex & 0x80 else 'no'}, "
                   f"LAYERED={'si' if ex & 0x80000 else 'no'}")
-            check("el panel queda encima del widget y dentro del monitor",
-                  dentro and pr[3] <= wr_w[1] + 2,
-                  f"panel {pr} (abajo y={pr[3]}), widget arriba y={wr_w[1]}, monitor {mon}")
+            # Si vos lo arrastraste, el panel vive ahi (no salta detras del widget):
+            # se comprueba que este en pantalla y, si no lo moviste, encima del widget.
+            movido = cfgmod.load().get("panel_pos") is not None
+            en_monitor = True
+            try:
+                mi_p = win32api.GetMonitorInfo(
+                    win32api.MonitorFromPoint(((pr[0] + pr[2]) // 2, (pr[1] + pr[3]) // 2), 2))
+                mp = mi_p["Monitor"]
+                en_monitor = (mp[0] <= pr[0] and pr[2] <= mp[2]
+                              and mp[1] <= pr[1] and pr[3] <= mp[3])
+            except Exception:
+                pass
+            check("el panel queda en pantalla (y encima del widget si no lo moviste)",
+                  en_monitor and (movido or (dentro and pr[3] <= wr_w[1] + 2)),
+                  f"panel {pr}; movido a mano: {movido}; dentro del monitor: {en_monitor}"
+                  + ("" if movido else f"; widget arriba y={wr_w[1]}"))
             im_vivo = ImageGrab.grab(all_screens=True, bbox=pr).convert("L")
             vals = list(im_vivo.get_flattened_data())
             check("el panel esta pintado (no es un rectangulo negro)",
@@ -1151,6 +1220,12 @@ def main() -> int:
                   and pr_g[3] - pr_g[1] < pr_antes[3] - pr_antes[1],
                   f"{(pr_g[2] - pr_g[0])}x{pr_g[3] - pr_g[1]} "
                   f"(antes {pr_antes[2] - pr_antes[0]}x{pr_antes[3] - pr_antes[1]})")
+            cfg_g = cfgmod.load()
+            check("modo gaming: queda fijo (sin auto-ocultar ni HUD)",
+                  float(cfg_g.get("panel_auto_hide_s", 1) or 0) == 0
+                  and not cfg_g.get("panel_hud", True),
+                  f"auto-ocultar={cfg_g.get('panel_auto_hide_s')}, "
+                  f"hud={cfg_g.get('panel_hud')}")
             check("modo gaming: no le roba el foco al juego (NOACTIVATE) y va arriba",
                   bool(ex_g & 0x08000000) and bool(ex_g & 0x00000008),
                   f"NOACTIVATE={'si' if ex_g & 0x08000000 else 'no'}, "
