@@ -7,7 +7,7 @@ winget es el canal que trae descargas sin que nadie promocione nada: `winget ins
 aparece en winstall.app y compania. El PR va a microsoft/winget-pkgs, que es enorme, asi que
 no se clona: se crean los archivos por la API sobre una rama nueva del fork.
 
-El paquete apunta al instalador de la release v1.0.3, con el SHA256 que se verifico bajando
+El paquete apunta al instalador de la release v1.0.4, con el SHA256 que se verifico bajando
 el archivo publicado (mismo hash que el local: la release se sube primero, se baja el
 instalador y recien despues se corre esto).
 
@@ -29,9 +29,9 @@ TOKEN = next((l.split("=", 1)[1].strip() for l in TOKEN.splitlines()
 assert TOKEN, "no pude obtener el token del Gestor de Credenciales"
 ENTORNO = dict(os.environ, GH_TOKEN=TOKEN)
 
-VER = "1.0.3"
+VER = "1.0.4"
 ID = "EduardoFleitas.AstraMusicWidget"
-SHA = "5B92F59754F78A1B5BE028FD5FD0B103F9C58F738CE8A017388F5A2533AAFC05"
+SHA = "CE1E39973E1159A3B9193326E26E1B64809C17773A737F8BAD4D9E169B74F98D"
 URL = ("https://github.com/eduardofleitass/AstraMusicWidget/releases/download/"
        f"v{VER}/Astra-Music-widget-{VER}-setup.exe")
 CARPETA = f"manifests/e/EduardoFleitas/AstraMusicWidget/{VER}"
@@ -99,8 +99,8 @@ viejo = os.path.join(LOCAL, "1.0.2")
 if os.path.isdir(viejo):
     import shutil
     shutil.rmtree(viejo)
-    print("0. saque el manifiesto 1.0.2 (el PR anterior quedo cerrado por el bot: la carpeta "
-          "habia quedado sin archivos al reemplazarla por API)")
+    print("0. saque el manifiesto 1.0.3 (su PR quedo abierto pero la version cambia: la "
+          "1.0.4 arregla que las ondas congelaran el widget en Windows 11)")
 destino = os.path.join(LOCAL, VER)
 os.makedirs(destino, exist_ok=True)
 for nombre, texto in YAML.items():
