@@ -24,7 +24,7 @@ Probado en Windows 10 22H2 (19045), escala 100% y 1920x1080.
 | Arrancar el widget | doble clic en `run.vbs` |
 | Que arranque solo con Windows | `install_startup.bat` |
 | Sacarlo del arranque y detenerlo | `uninstall_startup.bat` |
-| Mostrar / ocultar sin cerrarlo | `Ctrl + Alt + M` (la misma tecla lo vuelve a mostrar) |
+| Mostrar / ocultar sin cerrarlo | `Ctrl + Alt + M` (la misma tecla lo vuelve a mostrar, con un fundido) |
 | Manejar la musica desde cualquier lado | `Ctrl+Alt+P` play/pausa, `Ctrl+Alt+←/→` anterior/siguiente, `Ctrl+Alt+↑/↓` volumen, `Ctrl+Alt+Shift+↑/↓` ±10 s |
 | Atrasarlo o adelantarlo | clic en la barra de progreso, o la rueda del mouse (±10 s; con `Ctrl` ±1 s, con `Shift` ±60 s) |
 | Ondas de sonido (animacion) | clic derecho > *Ondas de sonido* |
@@ -415,7 +415,7 @@ falla posible de esta tecnica:
 - `python tools\stop.py --force` mata el proceso y repara la barra si quedo
   inconsistente.
 
-68 de 69 pruebas pasan (`python tools\selftest.py` con el widget en marcha; la que
+75 de 76 pruebas pasan (`python tools\selftest.py` con el widget en marcha; la que
 se salta es la de restaurar el color del tema, que no aplica cuando ya elegiste uno):
 anclaje, reconstruccion forzada, recuperacion de espacio, pixeles realmente
 pintados, transparencia del fondo medida contra la barra, recorrido completo del
@@ -440,6 +440,10 @@ devolver a donde estaba, la rueda adelanta y atrasa el paso configurado (medido:
 muda de barra y la vuelta lo devuelve, el volumen de la app se mueve con la rueda
 (medido: 30% -> 35%), el arrastre sobre la fila del volumen lo deja donde se apunta
 (medido: 75%) y un clic real en el altavoz silencia y lo vuelve a sacar.
+Ademas comprueba los fundidos: que el cuadro del medio del cambio de caratula este
+efectivamente mezclado (medido: 69,1 del lado de la tapa vieja y 70,5 del de la nueva,
+sobre un cambio total de 139,6) y que el mostrar/ocultar pase por un estado intermedio
+(medido: 1920 pixeles dibujados visibles -> 1590 a mitad del fundido -> 0 oculto).
 Y 15 de 15 de atajos con **teclas reales** (`python tools\hotkeytest.py`): `Ctrl+Alt+P`
 cambia la reproduccion, `Ctrl+Alt+←/→` cambia de tema, `Ctrl+Alt+Shift+↑/↓` mueve
 exacto (+10,0 s y -10,0 s medidos con la musica en pausa, para que la interpolacion no
@@ -462,6 +466,31 @@ barra encogida, y el arranque siguiente la sanea sola sin acumular el
 encogimiento.
 
 
+## Fundidos
+
+Dos transiciones, para que el widget no cambie a los saltos:
+
+- **Al cambiar de cancion**, la caratula nueva se funde con la anterior durante
+  `fade_cover_ms` (220 ms). Antes la tapa saltaba de golpe.
+- **Al mostrar y ocultar** con `Ctrl + Alt + M`, el widget aparece y desaparece con un
+  fundido de ~300 ms.
+
+Como se hacen, y por que no cuestan CPU:
+
+- El de la caratula mezcla las dos imagenes ya dibujadas (`Image.blend`). Es correcto
+  mezclar en alfa recto porque donde las dos tienen el mismo alfa (todo el chip, los
+  textos, la tapa) el resultado es identico al de mezclar en premultiplicado; solo
+  difiere en los bordes donde una tapa tiene silueta y la otra no, que son un par de
+  pixeles durante 200 ms.
+- El de mostrar/ocultar **no redibuja nada**: cambia el `SourceConstantAlpha` de la
+  ventana en capas, o sea el alfa de todo el cuadro de una sola llamada. El widget se
+  oculta de verdad (y suelta el espacio de la barra) recien cuando el alfa llega a 0.
+- Los dos aceleran el temporizador a 30 ms **solo mientras duran** (~33 cuadros por
+  segundo): con el ritmo normal (100 ms) un fundido de 220 ms tendria dos cuadros y se
+  veria a saltos. Terminado el fundido, el temporizador vuelve solo.
+- Con el fondo opaco (`bg_mode: "opaque"`) no hay alfa global que animar, asi que el
+  mostrar/ocultar sigue siendo instantaneo; el de la caratula funciona igual.
+
 ## Configuracion
 
 `config.json`, se aplica al arrancar. Los cambios por menu (ancho) se guardan solos.
@@ -481,6 +510,10 @@ encogimiento.
 | `wave_fps` | 20 | Cuadros por segundo de la animacion. El unico motivo por el que el widget repinta mas seguido que el texto |
 | `progress_color` | `null` | Color de la barra de progreso (relleno, indicador de arrastre y hora destino). `null` = el del tema; tambien `"#RRGGBB"` o `[r, g, b]` |
 | `waves_color` | `null` | Color de las ondas de sonido. Mismas formas que `progress_color` |
+| `fade_cover` | true | Fundido al cambiar de caratula |
+| `fade_cover_ms` | 220 | Cuanto dura ese fundido |
+| `fade_visible` | true | Fundido al mostrar/ocultar el widget (solo con fondo transparente) |
+| `fade_step` | 48 | Cuanto cambia el alfa por cuadro en ese fundido (255 / paso = cuadros) |
 | `show_volume` | true | Celda del altavoz despues de los botones (menu > *Mostrar altavoz*) |
 | `volume_step` | 5 | Cuanto sube o baja cada muesca de la rueda sobre el altavoz, en porcentaje |
 | `taskbar_monitor` | `null` | Barra de tareas donde vive el widget: `null` = la del monitor principal, o el nombre del dispositivo (`"\\.\DISPLAY5"`). Lo guarda el menu *Monitor* o el arrastre |

@@ -190,6 +190,7 @@ class _Layered:
 
     def __init__(self, hwnd: int, w: int, h: int):
         self.hwnd, self.w, self.h = hwnd, w, h
+        self.alpha = 255          # alfa global (fundido de mostrar/ocultar)
         self.bits = ctypes.c_void_p()
         hdc = win32gui.GetDC(0)
         try:
@@ -218,7 +219,9 @@ class _Layered:
         # mezclarlas es exactamente el bug que ya nos costo una barra fuera de lugar).
         size = wt.SIZE(self.w, self.h)
         src = wt.POINT(0, 0)
-        blend = BLENDFUNCTION(0, 0, 255, 1)  # AC_SRC_OVER | premultiplicado
+        # SourceConstantAlpha multiplica el alfa de todo el cuadro: es el fundido de
+        # aparicion y desaparicion, sin recalcular ni reenviar la imagen.
+        blend = BLENDFUNCTION(0, 0, int(self.alpha), 1)  # AC_SRC_OVER | premultiplicado
         user32.UpdateLayeredWindow(self.hwnd, 0, None, ctypes.byref(size),
                                    self.dc, ctypes.byref(src), 0,
                                    ctypes.byref(blend), ULW_ALPHA)
@@ -271,6 +274,11 @@ class WidgetApp:
         self._vol_info = None   # dato de volumen cacheado: nivel, mudo, disponible
         self._vol_app = None    # app de la que se leyo ese dato
         self._hotkeys_ok = []   # atajos globales que quedaron registrados
+        self._vis_alpha = 255   # alfa global del widget (fundido de mostrar/ocultar)
+        self._vis_target = 255
+        self._fade_prev = None  # cuadro anterior, para el fundido de caratula
+        self._fade_t0 = 0.0
+        self._art_prev = None   # clave de caratula del cuadro anterior
         self._wave_phase = 0.0    # fase de la animacion de ondas (solo avanza suena)
         self._wave_t = time.monotonic()
         self._levels: list[float] | None = None   # alturas de las ondas ahora mismo
@@ -617,24 +625,42 @@ class WidgetApp:
                                                             self._min_free()))
         return x - m["left"]
 
+    def _fundido_activo(self) -> bool:
+        """Si el mostrar/ocultar se anima (solo con alpha real por pixel)."""
+        return bool(self.layered and self.cfg.get("fade_visible", True))
+
+    def _ocultar_ya(self) -> None:
+        if self.hwnd_widget:
+            try:
+                win32gui.ShowWindow(self.hwnd_widget, win32con.SW_HIDE)
+            except Exception:
+                pass
+        self.host.restore()
+
+    def _mostrar_ya(self) -> None:
+        if self.hwnd_widget and win32gui.IsWindow(self.hwnd_widget):
+            win32gui.ShowWindow(self.hwnd_widget, win32con.SW_SHOW)
+            self._apply_layout(force=True)
+        else:
+            self._create_widget()
+            self._apply_layout(force=True)
+
     def toggle_visible(self) -> None:
         if self.visible:
             self.visible = False
-            if self.hwnd_widget:
-                try:
-                    win32gui.ShowWindow(self.hwnd_widget, win32con.SW_HIDE)
-                except Exception:
-                    pass
-            self.host.restore()
             self.log("widget oculto (Ctrl+Alt+M para volver)")
+            if self._fundido_activo() and self.hwnd_widget:
+                self._vis_target = 0      # el tick lo oculta al terminar el fundido
+            else:
+                self._ocultar_ya()
         else:
             self.visible = True
-            if self.hwnd_widget and win32gui.IsWindow(self.hwnd_widget):
-                win32gui.ShowWindow(self.hwnd_widget, win32con.SW_SHOW)
-                self._apply_layout(force=True)
-            else:
-                self._create_widget()
-                self._apply_layout(force=True)
+            self._mostrar_ya()
+            if self._fundido_activo():
+                self._vis_alpha, self._vis_target = 0, 255
+                if self.dib:
+                    self.dib.alpha = 0
+                    self.dib.apply()
             self.log("widget visible")
 
     # ------------------------------------------------------------------ pintar
@@ -649,6 +675,13 @@ class WidgetApp:
                 -1 if self._scrub_t is None else int(self._scrub_t),
                 # el volumen que se esta mostrando (nivel, mudo, mostrando, hay sesion)
                 self._vol_para_render(),
+                # Si hay fundido de caratula en curso, su avance: asi el tick vuelve a
+                # dibujar cada cuadro. Va solo en la firma COMPLETA, no en la de la
+                # base: si invalidara la base, `_frame` la reconstruiria en cada cuadro
+                # y el fundido se perderia al segundo cuadro (medido: el cuadro volvia
+                # directo a la tapa nueva sin mezcla).
+                (None if (sin_ondas or self._fade_prev is None)
+                 else int(min(1.0, (time.monotonic() - self._fade_t0) / 0.05) * 50)),
                 # los colores elegidos a mano tambien forman parte de lo que se ve
                 draw.parse_color(self.cfg.get("progress_color")),
                 draw.parse_color(self.cfg.get("waves_color")),
@@ -709,12 +742,39 @@ class WidgetApp:
             img.paste(capa.convert("RGB"), wb, capa)
 
     def _frame(self) -> Image.Image:
-        """Cuadro listo para presentar: base cacheada + ondas del momento."""
+        """Cuadro listo para presentar: base cacheada + ondas del momento.
+
+        Si la caratula cambio, la base nueva se funde con la anterior durante
+        `fade_cover_ms`: el salto de tapa a tapa queda suave. Se mezcla con
+        `Image.blend` (alfa recto) y es correcto porque donde las dos imagenes tienen
+        el mismo alfa (todo el chip, los textos, la tapa) el resultado es identico al
+        de mezclar en premultiplicado; solo difiere en los bordes donde una tapa tiene
+        silueta y la otra no, que es un par de pixeles durante el fundido.
+        """
         base_sig = self._signature(sin_ondas=True)
         if self._base_img is None or base_sig != self._base_sig:
+            anterior = self._base_img
             self._base_sig = base_sig
             self._base_img = self._render_base()
+            self._fade_prev = None
+            if (anterior is not None and self.cfg.get("fade_cover", True)
+                    and self.state.art_key != self._art_prev and self.state.has_session):
+                # solo cuando cambia de verdad la caratula (no en cada cambio de
+                # hover o de posicion), que es cuando el salto se nota
+                self._fade_prev = anterior
+                self._fade_t0 = time.monotonic()
+            self._art_prev = self.state.art_key
         img = self._base_img.copy()
+        if self._fade_prev is not None:
+            dur = max(0.05, self.cfg.get("fade_cover_ms", 220) / 1000.0)
+            t = (time.monotonic() - self._fade_t0) / dur
+            if t >= 1.0:
+                self._fade_prev = None
+            else:
+                try:
+                    img = Image.blend(self._fade_prev, img, max(0.0, min(1.0, t)))
+                except Exception:
+                    self._fade_prev = None
         self._pegar_ondas(img)
         return img
 
@@ -802,12 +862,32 @@ class WidgetApp:
             if self.state.playing:
                 self._wave_phase += max(0.0, min(0.25, dt_w))
             self._levels = self._wave_levels()
+            # fundido de mostrar/ocultar: se mueve el alfa global de la superficie
+            # (no hace falta redibujar nada) y se acelera el temporizador mientras
+            # dura, o se veria a saltos con el ritmo normal de la barra de progreso
+            fundiendo = self.layered and self._vis_alpha != self._vis_target
+            if fundiendo:
+                paso = max(1, int(self.cfg.get("fade_step", 48)))
+                if self._vis_alpha < self._vis_target:
+                    self._vis_alpha = min(self._vis_target, self._vis_alpha + paso)
+                else:
+                    self._vis_alpha = max(self._vis_target, self._vis_alpha - paso)
+                if self.dib:
+                    self.dib.alpha = self._vis_alpha
+                    self.dib.apply()
+                if self._vis_alpha == 0:
+                    self._ocultar_ya()      # recien ahora suelta el espacio
             ms = (int(self.cfg.get("timer_playing_ms", 100)) if self.state.playing
                   else int(self.cfg.get("timer_idle_ms", 500)))
             if self._levels is not None and self.state.playing:
                 # la animacion necesita mas cuadros que la barra de progreso
                 ms = min(ms, max(20, int(round(1000.0 / max(1, int(
                     self.cfg.get("wave_fps", 20)))))))
+            if fundiendo or self._fade_prev is not None:
+                # 30 ms (~33 cuadros por segundo) para que los fundidos se vean
+                # suaves: con el ritmo normal de la barra de progreso (100 ms) un
+                # fundido de 200 ms tendria dos cuadros y se veria a saltos.
+                ms = min(ms, 30)
             self._set_timer(ms)
             self._repaint_if_needed()
         except Exception as exc:

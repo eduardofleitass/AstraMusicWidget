@@ -60,6 +60,13 @@ DEFAULTS = {
     # sistema): la celda del altavoz va despues de los botones del transporte.
     # Con el cursor encima, la fila del progreso pasa a ser la barra de volumen;
     # un clic seco en el altavoz silencia y la rueda mueve `volume_step` por muesca.
+    # Fundido al cambiar de caratula (el salto de tapa a tapa se nota) y al
+    # mostrar/ocultar el widget con Ctrl+Alt+M (solo con el fondo transparente, que
+    # es donde hay alpha global para animar).
+    "fade_cover": True,
+    "fade_cover_ms": 220,
+    "fade_visible": True,
+    "fade_step": 48,
     "show_volume": True,
     "volume_step": 5,
     # Barra de tareas donde vive el widget: null = la del monitor principal. El

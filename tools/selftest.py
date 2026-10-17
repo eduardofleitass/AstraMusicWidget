@@ -857,6 +857,122 @@ def main() -> int:
     except Exception as exc:
         check("la API de audio del sistema responde", False, repr(exc))
 
+    # --- fundidos: caratula y mostrar/ocultar ---------------------------------
+    print("\n-- fundidos --")
+    try:
+        import io as _io
+        import time as _t
+        from PIL import Image as _Image
+        from widget.app import WidgetApp
+        from widget.media import MediaState
+
+        def png(color):
+            im = _Image.new("RGB", (48, 48), color)
+            buf = _io.BytesIO()
+            im.save(buf, "PNG")
+            return buf.getvalue()
+
+        ROJO, AZUL = png((230, 30, 30)), png((30, 60, 230))
+
+        def app_prueba(cfgx):
+            a = WidgetApp(cfgx, embed=False)
+            a.width_px, a.height_px, a.k = 300, 40, 1.0
+            return a
+
+        def estado(art, clave):
+            return MediaState(has_session=True, app_id="prueba.exe", title="Titulo",
+                              artist="Artista", playing=True, position=10.0,
+                              duration=100.0, position_at=_t.monotonic(), art=art,
+                              art_key=clave, can_seek=True, min_seek=0, max_seek=100,
+                              can_toggle=True, can_prev=True, can_next=True)
+
+        def dif(im1, im2, caja):
+            a1, a2 = im1.convert("RGB").crop(caja), im2.convert("RGB").crop(caja)
+            n = 0
+            for p, q in zip(a1.get_flattened_data(), a2.get_flattened_data()):
+                n += abs(p[0] - q[0]) + abs(p[1] - q[1]) + abs(p[2] - q[2])
+            return n / (3.0 * a1.size[0] * a1.size[1])
+
+        caja_tapa = (int(draw.PAD), int(draw.PAD),
+                     int(draw.PAD + draw.ART), int(draw.PAD + draw.ART))
+        a = app_prueba(cfg)
+        a.state = estado(ROJO, "rojo")
+        f_rojo = a._frame()
+        a.state = estado(AZUL, "azul")
+        # El fundido arranca con el PRIMER cuadro que se dibuja despues del cambio
+        # (asi es en vivo: el tick ve la tapa nueva y empieza a mezclar), asi que hay
+        # que pedir ese cuadro y recien despues medir la mitad.
+        f_inicio = a._frame()
+        _t.sleep(max(0.05, cfg.get("fade_cover_ms", 220) / 2000.0))
+        f_mezcla = a._frame()          # a mitad de la mezcla
+        _t.sleep(max(0.35, cfg.get("fade_cover_ms", 220) / 1000.0 + 0.15))
+        f_azul = a._frame()            # ya terminado
+
+        total = dif(f_rojo, f_azul, caja_tapa)
+        hacia_viejo = dif(f_rojo, f_mezcla, caja_tapa)
+        hacia_nuevo = dif(f_mezcla, f_azul, caja_tapa)
+        check("al cambiar de caratula el cuadro queda en el medio (fundido)",
+              total > 5 and hacia_viejo > 0.15 * total and hacia_nuevo > 0.15 * total,
+              f"cambio total {total:.1f}; el cuadro del medio esta a "
+              f"{hacia_viejo:.1f} de la tapa vieja y {hacia_nuevo:.1f} de la nueva")
+        check("el fundido termina en la caratula nueva",
+              dif(f_mezcla, f_azul, caja_tapa) < 0.9 * total,
+              f"distancia del cuadro del medio a la tapa nueva {hacia_nuevo:.1f} "
+              f"contra cambio total {total:.1f}")
+
+        # control: apagado, el cambio es de golpe
+        a2 = app_prueba(dict(cfg, fade_cover=False))
+        a2.state = estado(ROJO, "rojo")
+        f1 = a2._frame()
+        a2.state = estado(AZUL, "azul")
+        f2 = a2._frame()
+        check("con el fundido apagado el cambio de caratula es inmediato",
+              dif(f2, f_azul, caja_tapa) < 1.0 and dif(f1, f_rojo, caja_tapa) < 1.0,
+              f"el cuadro siguiente ya es la tapa nueva "
+              f"(distancia {dif(f2, f_azul, caja_tapa):.1f})")
+        check("la configuracion trae los fundidos encendidos",
+              bool(cfg.get("fade_cover", True)) and bool(cfg.get("fade_visible", True)),
+              f"fade_cover={cfg.get('fade_cover')} fade_visible={cfg.get('fade_visible')}")
+    except Exception as exc:
+        check("los fundidos", False, repr(exc))
+
+    # --- el fundido de mostrar/ocultar, medido en vivo -------------------------
+    try:
+        from PIL import ImageGrab
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        ctl = win32gui.FindWindow("GorusTaskbarMusicCtl", None)
+        wr = rect(w_now)
+
+        def claros(caja=wr):
+            """Cuantos pixeles claros hay: los elementos dibujados del widget."""
+            im = ImageGrab.grab(all_screens=True, bbox=caja).convert("L")
+            return sum(1 for v in im.get_flattened_data() if v > 60)
+
+        visible_antes = claros()
+        win32gui.PostMessage(ctl, win32con.WM_HOTKEY, 1, 0)   # ocultar: arranca el fundido
+        time.sleep(max(0.08, cfg.get("fade_step", 48) and 0.10))
+        medio = claros()
+        time.sleep(0.7)
+        oculto = claros()
+        check("al ocultar, el widget pasa por un estado intermedio (fundido)",
+              visible_antes > medio > oculto + 5,
+              f"pixeles dibujados: visible {visible_antes} -> mitad {medio} -> oculto {oculto}")
+
+        win32gui.PostMessage(ctl, win32con.WM_HOTKEY, 1, 0)   # mostrar: fundido al reves
+        time.sleep(max(0.08, 0.10))
+        medio2 = claros()
+        time.sleep(0.7)
+        visible_despues = claros()
+        check("al mostrarlo tambien aparece con fundido",
+              visible_despues > medio2 > oculto + 5,
+              f"pixeles dibujados: oculto {oculto} -> mitad {medio2} -> visible "
+              f"{visible_despues}")
+        check("el widget termina visible y completo",
+              abs(visible_despues - visible_antes) < max(60, 0.25 * visible_antes),
+              f"antes {visible_antes} pixeles, despues {visible_despues}")
+    except Exception as exc:
+        check("el fundido en vivo", False, repr(exc))
+
     fails = [r for r in RESULTS if not r[1] and not r[3]]
     skips = [r for r in RESULTS if r[3]]
     print(f"\n{len(RESULTS) - len(fails) - len(skips)}/{len(RESULTS)} pruebas pasaron"

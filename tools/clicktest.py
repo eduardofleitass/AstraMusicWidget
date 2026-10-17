@@ -166,21 +166,26 @@ def filas_barra(img, wrect):
     """Cuantas filas de la franja de la barra estan pintadas, medido contra el fondo.
 
     Sirve para distinguir la barra de progreso (2,5 px) de la de volumen, que se
-    dibuja 1,8 veces mas gruesa cuando esta activa. El fondo se estima con las filas
-    entre el renglon del artista y la barra, para que no dependa del tema ni del
-    color que haya elegido el usuario.
+    dibuja 1,8 veces mas gruesa cuando esta activa. Se toma la MEDIANA entre columnas
+    y no la union de filas: la perilla del progreso tiene ~6 px de alto y en una sola
+    columna infla el conteo (medido: 6 filas de "grosor" en una barra de 2,5 px).
+    El fondo se estima con las filas entre el renglon del artista y la barra, para que
+    no dependa del tema ni del color que haya elegido el usuario.
     """
     k = (wrect[3] - wrect[1]) / float(draw.REF_H)
-    cols = range(90, 160, 10)
+    cols = list(range(90, 160, 10))
     fondo = min(img.getpixel((x, y)) for x in cols for y in (29, 30, 31, 32))
     y0 = max(0, int(draw.PROG_Y * k) - 4)
     y1 = min(img.height, int(draw.PROG_Y * k) + 5)
-    pintadas = set()
+    por_columna = []
     for x in cols:
+        n = 0
         for y in range(y0, y1):
             if img.getpixel((x, y)) > fondo + 25:
-                pintadas.add(y)
-    return len(pintadas)
+                n += 1
+        por_columna.append(n)
+    por_columna.sort()
+    return por_columna[len(por_columna) // 2]
 
 
 def mean_lum(img, box):
@@ -454,14 +459,17 @@ def main() -> int:
               f"{r0:.0f}s -> {r1:.0f}s  ({d:+.1f}s, se esperaba +{esperado:.1f}s)"
               f"  tolerancia {tolerancia:.0f}s",
               skipped=not ok1)
-        # Si el tema esta al principio no hay lugar para atras: el reproductor para
-        # en 0 y el salto medido seria -17 s en vez de -10 s. Se adelanta primero.
+        # Si el tema esta al principio no hay lugar para atras: se adelanta con la
+        # MISMA rueda (el propio camino del widget). Hacerlo con el poller de la
+        # prueba deja dos escritores sobre la misma sesion y el salto medido sale
+        # cualquier cosa (medido: -40 s en vez de -10 s).
         if r1 < paso * 2:
-            st_w = sample(poller)
-            if st_w.can_seek:
-                poller.seek(min(r1 + paso * 3, st_w.max_seek or r1 + paso * 3))
-                time.sleep(1.2)
-                r1, t1, ok1 = pos_reportada(poller, desde=r0)
+            for _ in range(3):
+                if not sobre_widget(*centro):
+                    break
+                user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, WHEEL_UP, 0)
+                time.sleep(0.6)
+            r1, t1, ok1 = pos_reportada(poller, desde=r0)
         user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, WHEEL_DOWN, 0)
         r2, t2, ok2 = pos_reportada(poller, desde=r1)
         d2 = r2 - r1
