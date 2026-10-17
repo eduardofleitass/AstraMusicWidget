@@ -18,6 +18,13 @@ from PIL import Image, ImageDraw  # noqa: E402
 from widget import config as cfgmod, draw, panel as panel_mod  # noqa: E402
 from widget.media import MediaState  # noqa: E402
 
+# Color y fondo FIJOS para las imagenes del README: no se toma lo que el usuario tenga
+# puesto hoy (si cambia el color, las imagenes quedarian desactualizadas sin que nadie se
+# entere). El violeta es el que se ve en las capturas publicadas.
+DEMO = {"progress_color": "#B08CFF", "waves_color": "#B08CFF", "chip_alpha": 232,
+        "panel_bg_alpha": 250}
+
+
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DESTINO = os.path.join(HERE, "assets", "captura.png")
 BARRA = (28, 30, 38)          # el color de una barra de tareas oscura
@@ -51,7 +58,7 @@ def caratula(lado: int, radio: int) -> Image.Image:
 
 
 def main() -> int:
-    cfg = dict(cfgmod.load())
+    cfg = dict(cfgmod.load(), **DEMO)
     st = estado()
     W = 640                      # ancho de la franja que simula la barra
     alto = 40

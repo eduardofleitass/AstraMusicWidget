@@ -1,8 +1,46 @@
 # Astra-Music-widget
 
-Widget de musica para la barra de tareas de Windows, en Python.
+[![Ultima version](https://img.shields.io/github/v/release/eduardofleitass/AstraMusicWidget?label=version&color=blueviolet)](https://github.com/eduardofleitass/AstraMusicWidget/releases/latest)
+[![Descargas](https://img.shields.io/github/downloads/eduardofleitass/AstraMusicWidget/total?label=descargas&color=green)](https://github.com/eduardofleitass/AstraMusicWidget/releases)
+[![Licencia: MIT](https://img.shields.io/github/license/eduardofleitass/AstraMusicWidget?color=purple)](LICENSE)
+[![Windows 10+](https://img.shields.io/badge/Windows-10%201809%2B-0078D6?logo=windows&logoColor=white)](#requisitos)
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](#requisitos)
 
-![El widget en la barra de tareas y el panel abierto](assets/captura.png)
+Widget de musica que vive **dentro** de la barra de tareas de Windows: caratula, titulo,
+artista, barra de progreso clicable, controles y **el volumen de la app que suena**. Lee la
+sesion de multimedia del sistema, asi que anda con cualquier reproductor (Spotify, VLC, y lo
+que suene en Chrome, Edge o Brave), sin plugins ni integraciones.
+
+### [⬇️ Descargar la ultima version](https://github.com/eduardofleitass/AstraMusicWidget/releases/latest)
+
+Instalador (menu Inicio, arranque con Windows y desinstalador) o **portatil de un solo
+archivo**. Ninguna de las dos necesita Python instalado.
+
+![El widget animando las ondas en la barra de tareas](assets/demo.gif)
+
+<details>
+<summary><b>English</b> — what it is, how to download, notes</summary>
+
+A music widget that lives **inside** the Windows taskbar: album art, title, artist, a
+clickable progress bar, transport controls and **per-app volume**, read from the system's
+media session (SMTC) so it works with Spotify, VLC and anything playing in the browser.
+Python + raw Win32 — no UI framework, no dependencies bundled.
+
+- **Download** the [latest release](https://github.com/eduardofleitass/AstraMusicWidget/releases/latest):
+  an installer (Start Menu shortcut, start with Windows, uninstaller) or a single portable
+  `.exe`. Neither requires Python on the target machine.
+- **Requires** Windows 10 1809 or later. On **Windows 11** the taskbar no longer allows
+  embedding a window, so the widget runs as a floating strip pinned to the bottom edge
+  (same drawing, same clicks, same hotkeys).
+- **SmartScreen**: the binaries are unsigned, so Windows shows "Windows protected your PC"
+  the first time — *More info* → *Run anyway*.
+- **Known limits**: nothing can draw over an exclusive-fullscreen game; the audio bars are
+  an animation (Windows does not expose audio levels through this API); it lives in one
+  taskbar at a time.
+- The detailed documentation is in Spanish (this is an Argentine project). The code, the
+  release notes and this summary are enough to get started.
+
+</details>
 
 Muestra lo que esta sonando **dentro** de la barra de tareas de Windows 10:
 caratula, titulo, artista, barra de progreso y botones de anterior / play-pausa /
@@ -47,6 +85,11 @@ Si nunca corriste nada todavia, empeza por `setup.bat`.
 
 
 ## Como se ve
+
+![El widget en la barra de tareas y el panel abierto](assets/captura.png)
+
+A la izquierda de los botones: caratula, titulo con marquesina, artista, ondas y la barra
+de progreso. Abajo, el panel que se abre con un clic en la caratula.
 
 - **Caratula** de la cancion, con esquinas redondeadas.
 - **Titulo**: si no entra en el ancho disponible, se desplaza en bucle

@@ -1,0 +1,23 @@
+PackageIdentifier: EduardoFleitas.AstraMusicWidget
+PackageVersion: 1.0.0
+InstallerLocale: es-ES
+Platform:
+- Windows.Desktop
+MinimumOSVersion: 10.0.17763.0
+InstallerType: inno
+Scope: user
+InstallModes:
+- interactive
+- silent
+- silentWithProgress
+UpgradeBehavior: install
+AppsAndFeaturesEntries:
+- DisplayName: Astra-Music-widget
+  Publisher: Eduardo Fleitas
+  DisplayVersion: 1.0.0
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/eduardofleitass/AstraMusicWidget/releases/download/v1.0.0/Astra-Music-widget-1.0.0-setup.exe
+  InstallerSha256: B96AB29888D96A2EADF04F69EE09BBEAE7E0CD4378A6F9F7BCFEDB7A77AC6349
+ManifestType: installer
+ManifestVersion: 1.6.0
