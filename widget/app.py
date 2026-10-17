@@ -27,7 +27,7 @@ from PIL import Image, ImageChops
 from . import config as cfgmod
 from . import draw
 from .media import MediaPoller, MediaState
-from .taskbarwin import TaskbarHost, set_dpi_aware
+from .taskbarwin import TaskbarHost, list_bars, set_dpi_aware
 
 # Niveles de fondo que ofrece el menu (alpha del chip)
 ALPHA_LEVELS = ((232, "Solido"), (170, "Translucido"), (100, "Muy transparente"),
@@ -54,6 +54,7 @@ WM_APP_ALPHA = win32con.WM_APP + 2  # wParam = alpha del chip (0 = sin fondo)
 WM_APP_CANCEL_SCRUB = win32con.WM_APP + 3   # aborta un arrastre de la barra de progreso
 WM_APP_WAVES = win32con.WM_APP + 4  # wParam = 1/0: prende y apaga las ondas de sonido
 WM_APP_COLOR = win32con.WM_APP + 5  # wParam = 1 barra / 2 ondas; lParam = 0xRRGGBB (0 = tema)
+WM_APP_MONITOR = win32con.WM_APP + 6  # wParam = indice de barra (0 = principal)
 
 # Colores que ofrece el menu para la barra de progreso y las ondas (None = el del
 # tema). El menu guarda el hex en config.json; a mano tambien vale [r, g, b].
@@ -203,7 +204,7 @@ class WidgetApp:
     def __init__(self, cfg: dict, embed: bool = True, log_path: str | None = None):
         self.cfg = cfg
         self.embed = embed
-        self.host = TaskbarHost(log=self.log)
+        self.host = TaskbarHost(log=self.log, monitor=cfg.get("taskbar_monitor"))
         self._log_fh = None
         if log_path:
             try:
@@ -410,7 +411,7 @@ class WidgetApp:
     def _covered(self) -> bool:
         """True si la lista de tareas quedo por encima del widget (la tapa)."""
         try:
-            rb = win32gui.GetWindowRect(self.host.rebar)
+            rb = win32gui.GetWindowRect(self.host.container)
             wl = win32gui.GetWindowRect(self.hwnd_widget)[0]
         except Exception:
             return False
@@ -888,6 +889,43 @@ class WidgetApp:
                  else "color de las ondas",
                  draw.hex_color(c) if c else "color del tema")
 
+    def set_taskbar(self, monitor: str | None, save: bool = True) -> None:
+        """Mueve el widget a la barra de tareas de otro monitor (None = principal).
+
+        La ventana es HIJA de la barra, asi que no se puede mudar de padre: hay que
+        destruirla y crearla de nuevo en la otra barra, devolviendo antes el espacio
+        a la primera.
+        """
+        if (monitor or "") == (self.cfg.get("taskbar_monitor") or ""):
+            return
+        self.cfg["taskbar_monitor"] = monitor or None
+        if save:
+            cfgmod.save(self.cfg)
+        try:
+            self.host.detach_widget(self.hwnd_widget)
+        except Exception:
+            pass
+        self.hwnd_widget = 0
+        self.dib = None
+        self._wall_x = None      # el limite medido era de la barra anterior
+        self._base_img = None
+        self._sig = None
+        self.host.select(monitor)
+        self._create_widget()
+        self._apply_layout(force=True)
+        self._repaint_if_needed(force=True)
+        self._show_when_ready()
+        if self._drag is not None and self.hwnd_widget:
+            # seguir arrastrando en la barra nueva (la ventana vieja era la que
+            # tenia la captura del mouse)
+            try:
+                win32gui.SetCapture(self.hwnd_widget)
+                win32gui.SetCursor(win32gui.LoadCursor(0, IDC_SIZEWE))
+            except Exception:
+                pass
+        b = self.host.barra or {}
+        self.log("barra de tareas: %s (%s)", b.get("nombre", "?"), b.get("monitor", "?"))
+
     def _widget_wndproc(self, hwnd, msg, wp, lp):
         try:
             if msg == win32con.WM_PAINT:
@@ -1011,6 +1049,15 @@ class WidgetApp:
                 self.set_color("progress_color" if wp == 1 else "waves_color",
                                None if rgb == 0 else "#%06X" % rgb, save=False)
                 return 0
+            if msg == WM_APP_MONITOR:
+                barras = list_bars()
+                i = int(wp)
+                if 0 <= i < len(barras):
+                    b = barras[i]
+                    self.set_taskbar(None if b["primario"] else b["monitor"], save=bool(lp))
+                else:
+                    self.log("no existe la barra %s (hay %d)", i, len(barras))
+                return 0
             if msg == win32con.WM_RBUTTONUP:
                 if self.cfg.get("right_click_menu", True):
                     self._show_menu()
@@ -1104,6 +1151,17 @@ class WidgetApp:
         dx = cx - d["cx0"]
         if abs(dx) >= 3:
             d["moved"] = True
+        # Si el arrastre se fue al tramo de la barra de otro monitor (o sea: lo
+        # arrastraste al otro monitor), el widget se muda ahi y el arrastre sigue.
+        # La ventana es hija de la barra, asi que mudarla es recrearla.
+        otra = self.host.barra_en(cx)
+        if otra and otra["tray"] != self.host.tray:
+            self.set_taskbar(None if otra["primario"] else otra["monitor"])
+            if self.hwnd_widget:
+                d["cx0"] = cx
+                d["x0"] = self._widget_x()
+                self._drag_x = d["x0"]
+            return
         self._drag_x = self.host.clamp_x(d["x0"] + dx, self.width_px, self._min_free())
         self._apply_layout(force=True)
         try:
@@ -1216,6 +1274,23 @@ class WidgetApp:
                     win32gui.AppendMenu(sub, flags, base_id + i, etiqueta)
                 subs.append((sub, titulo))
 
+            # Submenu de monitor: en que barra de tareas vive el widget. Solo se
+            # muestra si hay mas de una barra (o sea, si hay varios monitores); en
+            # Windows 10 cada monitor tiene la suya.
+            mon_sub = 0
+            barras = list_bars()
+            if len(barras) > 1:
+                mon_sub = win32gui.CreatePopupMenu()
+                activo = self.cfg.get("taskbar_monitor") or None
+                for i, b in enumerate(barras):
+                    mr = b.get("mon_rect") or b["rect"]
+                    flags = win32con.MF_STRING
+                    if (None if b["primario"] else b["monitor"]) == activo:
+                        flags |= win32con.MF_CHECKED
+                    win32gui.AppendMenu(
+                        mon_sub, flags, 50 + i,
+                        "%s  (%dx%d)" % (b["nombre"], mr[2] - mr[0], mr[3] - mr[1]))
+
             step = self._seek_step()
             seek_ok = self._can_seek()
             items = [
@@ -1224,6 +1299,7 @@ class WidgetApp:
                 ("popup", alpha_sub, "Fondo", True),
                 ("popup", subs[0][0], subs[0][1], True),
                 ("popup", subs[1][0], subs[1][1], True),
+                *([("popup", mon_sub, "Monitor", True)] if mon_sub else []),
                 ("sep", 0, "", None),
                 ("item", 13, f"◀◀   Atrasar {step:.0f} s", seek_ok),
                 ("item", 14, f"Adelantar {step:.0f} s   ▶▶", seek_ok),
@@ -1289,6 +1365,12 @@ class WidgetApp:
             self.set_color("progress_color", COLOR_CHOICES[cmd - 30][0])
         elif 40 <= cmd <= 40 + len(COLOR_CHOICES) - 1:
             self.set_color("waves_color", COLOR_CHOICES[cmd - 40][0])
+        elif 50 <= cmd <= 59:
+            barras = list_bars()
+            i = cmd - 50
+            if i < len(barras):
+                b = barras[i]
+                self.set_taskbar(None if b["primario"] else b["monitor"])
         elif cmd == 3:
             self._nudge(-int(round(NUDGE_PX * self.k)))
         elif cmd == 4:

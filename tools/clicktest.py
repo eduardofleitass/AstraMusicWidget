@@ -29,6 +29,7 @@ import win32gui  # noqa: E402
 
 from widget import config as cfgmod, draw  # noqa: E402
 from widget.media import MediaPoller  # noqa: E402
+from widget.taskbarwin import list_bars  # noqa: E402
 
 user32 = ctypes.windll.user32
 PASS, FAIL, SKIP = "PASA", "FALLA", "SALTA"
@@ -84,8 +85,19 @@ def park_away(wrect, tries=10) -> bool:
 
 
 def find_widget():
-    tray = win32gui.FindWindow("Shell_TrayWnd", None)
-    return tray, win32gui.FindWindowEx(tray, 0, "GorusTaskbarMusicWnd", None)
+    """El widget y la barra donde vive, sea la principal o la de otro monitor.
+
+    En Windows 10 cada monitor tiene su propia barra (Shell_SecondaryTrayWnd), asi
+    que no se puede asumir la principal.
+    """
+    for b in list_bars():
+        w = win32gui.FindWindowEx(b["tray"], 0, "GorusTaskbarMusicWnd", None)
+        if w:
+            # WIN lo usan las comprobaciones "el cursor quedo sobre el widget": al
+            # mudarse de barra el hwnd cambia, asi que hay que refrescarlo aca.
+            WIN["widget"] = w
+            return b["tray"], w
+    return 0, 0
 
 
 def rect_actual():
@@ -424,9 +436,80 @@ def main() -> int:
               f"  tolerancia {tolerancia:.0f}s",
               skipped=not ok2)
 
+    # --- 6. arrastrar el widget a la barra del otro monitor -----------------
+    print("\n-- arrastrar el widget a la barra de otro monitor (se devuelve) --")
+    barras = list_bars()
+    actual, w_now = find_widget()
+    if len(barras) < 2:
+        check("el equipo tiene mas de una barra de tareas", False,
+              "un solo monitor: no aplica", skipped=True)
+    elif not w_now:
+        check("el widget esta corriendo", False, "no lo encuentro")
+    else:
+        barra_actual = next(b for b in barras if b["tray"] == actual)
+        otra = next(b for b in barras if b["tray"] != actual)
+        rw = win32gui.GetWindowRect(w_now)
+        agarre = (rw[0] + 80, rw[1] + 12)          # por el titulo: no es boton ni barra
+        destino = ((otra["rect"][0] + otra["rect"][2]) // 2, otra["rect"][1] + 12)
+        if not place_cursor(*agarre) or not sobre_widget(*agarre):
+            check("arrastrar el widget a la otra barra lo muda de monitor", False,
+                  "el cursor no quedo sobre el widget (interferencia del mouse)",
+                  skipped=True)
+            check("la vuelta devuelve el widget a su barra", False, "no aplica",
+                  skipped=True)
+        else:
+            user32.mouse_event(0x0002, 0, 0, 0, 0)     # LEFTDOWN
+            time.sleep(0.15)
+            # en pasos, entrando al tramo del otro monitor
+            for paso in (0.25, 0.5, 0.75, 1.0):
+                x = int(agarre[0] + (destino[0] - agarre[0]) * paso)
+                y = int(agarre[1] + (destino[1] - agarre[1]) * paso)
+                user32.SetCursorPos(x, y)
+                time.sleep(0.25)
+            user32.mouse_event(0x0004, 0, 0, 0, 0)     # LEFTUP
+            time.sleep(1.2)
+            b2, w2 = find_widget()
+            check("arrastrar el widget a la otra barra lo muda de monitor",
+                  bool(w2) and b2 == otra["tray"],
+                  f"quedo en la barra {hex(b2) if b2 else '-'} (se esperaba "
+                  f"{hex(otra['tray'])}, {otra['nombre']})")
+            if w2:
+                wr2 = win32gui.GetWindowRect(w2)
+                check("queda dentro de la barra nueva",
+                      otra["rect"][0] <= wr2[0] and wr2[2] <= otra["rect"][2],
+                      f"widget {wr2} dentro de {otra['rect']}")
+
+            # volver arrastrandolo para el otro lado
+            b3, w3 = find_widget()
+            if w3:
+                rw3 = win32gui.GetWindowRect(w3)
+                ag3 = (rw3[0] + 80, rw3[1] + 12)
+                volver = ((barra_actual["rect"][0] + barra_actual["rect"][2]) // 2,
+                          barra_actual["rect"][1] + 12)
+                if not place_cursor(*ag3) or not sobre_widget(*ag3):
+                    check("la vuelta devuelve el widget a su barra", False,
+                          "el cursor no quedo sobre el widget (interferencia)",
+                          skipped=True)
+                else:
+                    user32.mouse_event(0x0002, 0, 0, 0, 0)
+                    time.sleep(0.15)
+                    for paso in (0.25, 0.5, 0.75, 1.0):
+                        x = int(ag3[0] + (volver[0] - ag3[0]) * paso)
+                        y = int(ag3[1] + (volver[1] - ag3[1]) * paso)
+                        user32.SetCursorPos(x, y)
+                        time.sleep(0.25)
+                    user32.mouse_event(0x0004, 0, 0, 0, 0)
+                    time.sleep(1.2)
+                    b4, w4 = find_widget()
+                    check("la vuelta devuelve el widget a su barra",
+                          bool(w4) and b4 == actual,
+                          f"quedo en la barra {hex(b4) if b4 else '-'} "
+                          f"(se esperaba {hex(actual)}, {barra_actual['nombre']})")
+
     user32.SetCursorPos(wrect[0] - 300, 560)
     poller.stop()
     return _summary()
+
 
 
 def _summary() -> int:

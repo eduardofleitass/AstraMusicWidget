@@ -1,12 +1,19 @@
 """Incrustacion en la barra de tareas de Windows 10.
 
 Windows 10 no tiene API de "bandas" (se elimino despues de Vista), pero si acepta
-ventanas hijas de Shell_TrayWnd. El truco, igual que hace TrafficMonitor:
+ventanas hijas de la barra de tareas. El truco, igual que hace TrafficMonitor:
 
-  1. crear la ventana como hija de Shell_TrayWnd (WS_CHILD)
-  2. apoyarse contra el borde izquierdo del bloque de noticias/bandeja
-  3. encoger la lista de tareas (ReBarWindow32) para liberar ese ancho
+  1. crear la ventana como hija de la barra (WS_CHILD)
+  2. apoyarse contra el borde izquierdo del bloque de la derecha (noticias, reloj)
+  3. encoger el contenedor de la lista de tareas para liberar ese ancho
   4. restaurar el ancho natural al salir
+
+Cada monitor tiene su propia barra, y **no tienen la misma estructura**:
+
+  | monitor   | barra                  | contenedor de la lista | ancla           |
+  |-----------|------------------------|------------------------|-----------------|
+  | principal | Shell_TrayWnd          | ReBarWindow32          | DynamicContent2 |
+  | secundario| Shell_SecondaryTrayWnd | WorkerW                | ClockButton     |
 
 Ojo con las coordenadas: en ventanas hijas, SetWindowPos usa coordenadas
 relativas al CLIENTE del padre, no a la pantalla. Mezclarlas desplaza la barra
@@ -22,10 +29,14 @@ import win32api
 import win32con
 import win32gui
 
-# Anclas de la barra, en orden de preferencia (de derecha a izquierda)
-ANCHOR_CLASSES = ("DynamicContent2", "TrayNotifyWnd")
-REBAR_CLASS = "ReBarWindow32"
+# Anclas de la barra, en orden de preferencia (de derecha a izquierda): el bloque
+# de noticias de la principal, el reloj de las secundarias, la bandeja.
+ANCHOR_CLASSES = ("DynamicContent2", "ClockButton", "TrayNotifyWnd")
+# Contenedor de la lista de tareas: ReBarWindow32 en la principal, WorkerW (el
+# padre de MSTaskListWClass) en las secundarias.
+CONTAINER_CLASSES = ("ReBarWindow32", "WorkerW")
 TRAY_CLASS = "Shell_TrayWnd"
+SECONDARY_CLASS = "Shell_SecondaryTrayWnd"
 
 user32 = ctypes.windll.user32
 
@@ -37,14 +48,66 @@ def _child(parent: int, cls: str) -> int:
         return 0
 
 
-class TaskbarHost:
-    """Gestiona el anclaje, el espacio reservado y la restauracion."""
+def _hijo_con(padre: int, clase_nieta: str) -> int:
+    """Primer hijo directo de `padre` que contiene una ventana de esa clase."""
+    h = 0
+    while True:
+        h = win32gui.FindWindowEx(padre, h, None, None)
+        if not h:
+            return 0
+        if _child(h, clase_nieta) or win32gui.GetClassName(h) == clase_nieta:
+            return h
 
-    def __init__(self, log=lambda *a, **k: None):
+
+def list_bars() -> list[dict]:
+    """Barras de tareas disponibles, ordenadas por monitor.
+
+    Devuelve una por monitor: la principal (`Shell_TrayWnd`) y una por monitor
+    secundario (`Shell_SecondaryTrayWnd`). Cada una trae `monitor` (el nombre del
+    dispositivo, que es lo que se guarda en la configuracion) y `nombre` para el
+    menu.
+    """
+    barras = []
+
+    def cb(h, _):
+        try:
+            clase = win32gui.GetClassName(h)
+            if clase in (TRAY_CLASS, SECONDARY_CLASS) and win32gui.IsWindowVisible(h):
+                rect = win32gui.GetWindowRect(h)
+                if rect[2] - rect[0] <= 0:
+                    return
+                info = win32api.GetMonitorInfo(win32api.MonitorFromRect(rect))
+                barras.append({"tray": h, "clase": clase, "monitor": info["Device"],
+                               "mon_rect": info["Monitor"], "rect": rect,
+                               "primario": clase == TRAY_CLASS})
+        except Exception:
+            pass
+
+    try:
+        win32gui.EnumWindows(cb, None)
+    except Exception:
+        pass
+    barras.sort(key=lambda b: (b["mon_rect"][0], b["mon_rect"][1]))
+    for i, b in enumerate(barras):
+        b["nombre"] = "Principal" if b["primario"] else f"Monitor {i + 1}"
+    return barras
+
+
+class TaskbarHost:
+    """Gestiona el anclaje, el espacio reservado y la restauracion.
+
+    `monitor` es el nombre del dispositivo del monitor cuya barra se usa
+    (`None` = la principal); se guarda en la configuracion para respetarlo al
+    arrancar.
+    """
+
+    def __init__(self, log=lambda *a, **k: None, monitor: str | None = None):
         self.log = log
+        self.monitor = monitor or None
         self.tray = 0
-        self.rebar = 0
-        self.anchor = 0
+        self.container = 0     # contenedor de la lista de tareas (ReBar o WorkerW)
+        self.anchor = 0        # bloque de la derecha contra el que se apoya el widget
+        self.barra = None      # datos de la barra elegida (list_bars)
         self._orig_rebar = None  # (x_rel, y_rel, ancho, alto)
 
     # ------------------------------------------------------------------ estado
@@ -52,20 +115,70 @@ class TaskbarHost:
     def available(self) -> bool:
         return bool(self.tray and win32gui.IsWindow(self.tray))
 
-    def refresh(self) -> bool:
-        self.tray = win32gui.FindWindow(TRAY_CLASS, None)
-        if not self.tray:
-            return False
-        self.rebar = _child(self.tray, REBAR_CLASS)
-        self.anchor = 0
+    def _resolver_contenedor(self, tray: int) -> int:
+        """El que hay que encoger para liberar el ancho del widget.
+
+        En la principal es ReBarWindow32 (la lista de tareas cuelga de ahi). En las
+        secundarias no hay rebar: la lista vive dentro de un WorkerW, asi que hay que
+        buscar el WorkerW que la contiene (no cualquier WorkerW de la barra).
+        """
+        for cls in CONTAINER_CLASSES:
+            h = _child(tray, cls)
+            if not h or not win32gui.IsWindowVisible(h):
+                continue
+            if cls == "WorkerW" and not (_child(h, "MSTaskListWClass")
+                                         or win32gui.GetClassName(h) == "MSTaskListWClass"):
+                continue
+            return h
+        return _hijo_con(tray, "MSTaskListWClass")
+
+    def _resolver_ancla(self, tray: int) -> int:
         for cls in ANCHOR_CLASSES:
-            h = _child(self.tray, cls)
+            h = _child(tray, cls)
             if h and win32gui.IsWindowVisible(h):
-                self.anchor = h
-                break
-        if not self.anchor:
-            self.anchor = self.rebar
+                return h
+        return 0
+
+    def select(self, monitor: str | None) -> None:
+        """Elige en que barra vive el widget (None = la principal)."""
+        self.monitor = monitor or None
+        self.container = 0
+        self.anchor = 0
+        self.tray = 0
+        self.refresh()
+
+    def refresh(self) -> bool:
+        barras = list_bars()
+        elegida = None
+        if self.monitor:
+            for b in barras:
+                if b["monitor"] == self.monitor:
+                    elegida = b
+                    break
+            if elegida is None and barras:
+                self.log("no encuentro la barra de %s; uso la principal", self.monitor)
+                self.monitor = None
+        if elegida is None:
+            for b in barras:
+                if b["primario"]:
+                    elegida = b
+                    break
+        if elegida is None:
+            self.tray = self.container = self.anchor = 0
+            self.barra = None
+            return False
+        self.tray = elegida["tray"]
+        self.barra = elegida
+        self.container = self._resolver_contenedor(self.tray)
+        self.anchor = self._resolver_ancla(self.tray)
         return True
+
+    def barra_en(self, x: int) -> dict | None:
+        """Barra cuyo tramo horizontal contiene esa x de pantalla."""
+        for b in list_bars():
+            if b["rect"][0] <= x < b["rect"][2]:
+                return b
+        return None
 
     def metrics(self) -> dict:
         """Medidas en px reales, listas para el renderizador."""
@@ -80,10 +193,19 @@ class TaskbarHost:
         except Exception:
             return (0, 0, 0, 0)
 
+    def _anchor_rect(self) -> tuple[int, int, int, int]:
+        """Rectangulo del ancla. Si la barra no tiene (reloj oculto, etc.), se usa
+        el borde derecho de la barra, asi el widget nunca se sale de su monitor."""
+        r = self._rect(self.anchor)
+        if r[0] or r[2]:
+            return r
+        tl, tt, tr, tb = self._rect(self.tray)
+        return (tr - 8, tt, tr, tb)
+
     def free_span(self) -> tuple[int, int]:
         """(borde izquierdo del hueco disponible, borde derecho) en coords de pantalla."""
-        rb = self._rect(self.rebar)
-        an = self._rect(self.anchor)
+        rb = self._rect(self.container)
+        an = self._anchor_rect()
         return rb[0], an[0]
 
     # ------------------------------------------------------------- posicion libre
@@ -95,8 +217,8 @@ class TaskbarHost:
         medio, el tramo entre el y el ancla queda como fondo de barra vacio: es el
         precio de poder moverlo a cualquier lado.
         """
-        rb = self._rect(self.rebar)
-        an = self._rect(self.anchor)
+        rb = self._rect(self.container)
+        an = self._anchor_rect()
         lo = rb[0] + max(60, int(min_free))
         hi = max(lo, an[0] - width)
         return lo, hi
@@ -119,8 +241,8 @@ class TaskbarHost:
     def target_x(self, width: int, min_tasklist: int, frac: float | None = None,
                  min_free: int = 140) -> int:
         """x del widget en coords de pantalla. `frac=None` = extremo derecho."""
-        rb = self._rect(self.rebar)
-        an = self._rect(self.anchor)
+        rb = self._rect(self.container)
+        an = self._anchor_rect()
         if not rb[0]:
             return 0
         if frac is None:
@@ -141,7 +263,7 @@ class TaskbarHost:
         if not self.available:
             return 0
         tl, tt, tr, tb = win32gui.GetWindowRect(self.tray)
-        rb = self._rect(self.rebar)
+        rb = self._rect(self.container)
         if not rb[0]:
             return 0
         if x is None:
@@ -149,7 +271,7 @@ class TaskbarHost:
         # no dejar la lista de tareas por debajo del minimo configurado
         new_w = max(80, (x - 2) - rb[0])
         if abs((rb[2] - rb[0]) - new_w) > 1:
-            win32gui.SetWindowPos(self.rebar, 0, 0, 0, new_w, rb[3] - rb[1],
+            win32gui.SetWindowPos(self.container, 0, 0, 0, new_w, rb[3] - rb[1],
                                   win32con.SWP_NOMOVE | win32con.SWP_NOZORDER
                                   | win32con.SWP_NOACTIVATE)
         return x - tl
@@ -171,17 +293,17 @@ class TaskbarHost:
         self.restore()
 
     def restore(self) -> None:
-        """Devuelve a ReBarWindow32 su ancho natural (hasta el ancla)."""
-        if not self.refresh() or not self.rebar:
+        """Devuelve el contenedor de la lista de tareas a su ancho natural."""
+        if not self.refresh() or not self.container:
             return
         tl, tt, tr, tb = win32gui.GetWindowRect(self.tray)
-        rb = self._rect(self.rebar)
-        an = self._rect(self.anchor)
+        rb = self._rect(self.container)
+        an = self._anchor_rect()
         if not rb[0]:
             return
         want = max(80, an[0] - rb[0])
         if abs((rb[2] - rb[0]) - want) > 1:
-            win32gui.SetWindowPos(self.rebar, 0, rb[0] - tl, 0, want, tb - tt,
+            win32gui.SetWindowPos(self.container, 0, rb[0] - tl, 0, want, tb - tt,
                                   win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
             self.log("espacio devuelto a la lista de tareas (ancho %d)", want)
 

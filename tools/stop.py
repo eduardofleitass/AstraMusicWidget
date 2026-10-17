@@ -5,6 +5,10 @@
 
 El cierre ordenado le pide a la ventana controladora que termine, con lo que el
 widget restaura el ancho natural de la lista de tareas antes de irse.
+
+Sanea TODAS las barras de tareas, no solo la principal: el widget puede estar
+viviendo en la barra de otro monitor (Shell_SecondaryTrayWnd), que tiene su propia
+estructura (contenedor WorkerW y reloj como ancla).
 """
 from __future__ import annotations
 
@@ -20,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import win32con  # noqa: E402
 import win32gui  # noqa: E402
 
-from widget.taskbarwin import TaskbarHost  # noqa: E402
+from widget.taskbarwin import TaskbarHost, list_bars  # noqa: E402
 
 
 def widget_pids() -> list[int]:
@@ -40,13 +44,24 @@ def widget_pids() -> list[int]:
     return pids
 
 
-def natural_width() -> int:
-    tray = win32gui.FindWindow("Shell_TrayWnd", None)
-    rb = win32gui.FindWindowEx(tray, 0, "ReBarWindow32", None)
-    an = win32gui.FindWindowEx(tray, 0, "DynamicContent2", None) or \
-        win32gui.FindWindowEx(tray, 0, "TrayNotifyWnd", None)
-    r, a = win32gui.GetWindowRect(rb), win32gui.GetWindowRect(an)
-    return a[0] - r[0]
+def host_de(barra: dict) -> TaskbarHost:
+    """Host apuntado a esa barra (resuelve su contenedor y su ancla)."""
+    host = TaskbarHost()
+    host.select(None if barra["primario"] else barra["monitor"])
+    host.refresh()
+    return host
+
+
+def estado() -> list[tuple]:
+    """(nombre, ancho del contenedor, ancho natural, hay widget) por barra."""
+    filas = []
+    for b in list_bars():
+        host = host_de(b)
+        cont = win32gui.GetWindowRect(host.container) if host.container else (0, 0, 0, 0)
+        ancla = host._anchor_rect()
+        hay = bool(win32gui.FindWindowEx(b["tray"], 0, "GorusTaskbarMusicWnd", None))
+        filas.append((b["nombre"], cont[2] - cont[0], ancla[0] - cont[0], hay))
+    return filas
 
 
 def main() -> int:
@@ -72,18 +87,20 @@ def main() -> int:
                 print(f"terminado PID {pid}")
         time.sleep(1.0)
 
-    host = TaskbarHost()
-    host.refresh()
-    host.restore()
-    tray = win32gui.FindWindow("Shell_TrayWnd", None)
-    left = win32gui.FindWindowEx(tray, 0, "GorusTaskbarMusicWnd", None)
-    rb = win32gui.FindWindowEx(tray, 0, "ReBarWindow32", None)
-    r = win32gui.GetWindowRect(rb)
-    nat = natural_width()
-    print(f"widget          : {'todavia presente' if left else 'detenido'}")
-    print(f"lista de tareas : {r[2] - r[0]} px  (natural {nat} px)")
-    ok = not left and abs((r[2] - r[0]) - nat) <= 3
-    print("VEREDICTO       :", "barra restaurada" if ok else "REVISAR: quedo espacio leakado")
+    # Saneamiento: devolver el ancho natural a cada barra, por si una corrida
+    # anterior murio sin limpiar (o si el widget vivia en una secundaria).
+    for b in list_bars():
+        host_de(b).restore()
+    time.sleep(0.3)
+
+    ok = True
+    for nombre, ancho, natural, hay in estado():
+        bien = not hay and abs(ancho - natural) <= 3
+        ok = ok and bien
+        print(f"barra {nombre:10}: widget {'todavia presente' if hay else 'detenido'}"
+              f" | lista de tareas {ancho} px (natural {natural} px)"
+              f" {'' if bien else '  <-- REVISAR'}")
+    print("VEREDICTO       :", "barras restauradas" if ok else "REVISAR: quedo espacio leakado")
     return 0 if ok else 1
 
 

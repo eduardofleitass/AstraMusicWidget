@@ -49,6 +49,9 @@ DEFAULTS = {
     # Son independientes del auto-contraste: si los elegis, se usan tal cual.
     "progress_color": None,
     "waves_color": None,
+    # Barra de tareas donde vive el widget: null = la del monitor principal. El
+    # menu "Monitor" guarda aca el nombre del dispositivo (p. ej. "\\.\DISPLAY2").
+    "taskbar_monitor": None,
     "auto_contrast": True,
     "theme": {
         "chip": [21, 23, 30],

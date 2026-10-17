@@ -21,6 +21,7 @@ import win32con  # noqa: E402
 import win32gui  # noqa: E402
 
 from widget import config as cfgmod  # noqa: E402
+from widget.taskbarwin import TaskbarHost, list_bars  # noqa: E402
 from widget import draw  # noqa: E402
 
 WM_APP_MOVE = win32con.WM_APP + 1
@@ -28,6 +29,7 @@ WM_APP_ALPHA = win32con.WM_APP + 2
 WM_APP_CANCEL_SCRUB = win32con.WM_APP + 3
 WM_APP_WAVES = win32con.WM_APP + 4
 WM_APP_COLOR = win32con.WM_APP + 5
+WM_APP_MONITOR = win32con.WM_APP + 6
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
 WM_CAPTURECHANGED = 0x0215
@@ -42,15 +44,37 @@ def check(name: str, ok: bool, detail: str = "", skipped: bool = False) -> bool:
     return ok
 
 
+def barra_del_widget():
+    """(datos de la barra, hwnd del widget) donde sea que este viviendo.
+
+    No se asume la barra principal: el widget puede estar en la de otro monitor.
+    """
+    barras = list_bars()
+    for b in barras:
+        w = win32gui.FindWindowEx(b["tray"], 0, "GorusTaskbarMusicWnd", None)
+        if w:
+            return b, w
+    return (barras[0] if barras else None), 0
+
+
+def host_de(barra) -> TaskbarHost:
+    """Host apuntado a esa barra (resuelve contenedor y ancla de ESE monitor).
+
+    En la principal el contenedor es ReBarWindow32 y el ancla el bloque de noticias;
+    en las secundarias el contenedor es un WorkerW y el ancla el reloj.
+    """
+    host = TaskbarHost()
+    if barra:
+        host.select(None if barra["primario"] else barra["monitor"])
+    host.refresh()
+    return host
+
+
 def tray_parts():
-    tray = win32gui.FindWindow("Shell_TrayWnd", None)
-    return {
-        "tray": tray,
-        "rebar": win32gui.FindWindowEx(tray, 0, "ReBarWindow32", None),
-        "anchor": win32gui.FindWindowEx(tray, 0, "DynamicContent2", None)
-        or win32gui.FindWindowEx(tray, 0, "TrayNotifyWnd", None),
-        "widget": win32gui.FindWindowEx(tray, 0, "GorusTaskbarMusicWnd", None),
-    }
+    barra, w = barra_del_widget()
+    host = host_de(barra)
+    return {"tray": host.tray, "rebar": host.container, "anchor": host.anchor,
+            "widget": w, "barra": host.barra}
 
 
 def rect(h) -> tuple:
@@ -212,9 +236,8 @@ def main() -> int:
     if reborn:
         time.sleep(0.6)
         rb = win32gui.GetWindowRect(reborn)
-        r2 = win32gui.GetWindowRect(win32gui.FindWindowEx(p["tray"], 0, "ReBarWindow32", None))
-        a2 = win32gui.GetWindowRect(win32gui.FindWindowEx(p["tray"], 0, "DynamicContent2", None)
-                                    or p["anchor"])
+        r2 = win32gui.GetWindowRect(p["rebar"])
+        a2 = win32gui.GetWindowRect(p["anchor"])
         check("renace en la posicion correcta", abs(rb[2] - a2[0]) <= 3,
               f"right={rb[2]} ancla={a2[0]}")
         check("renace visible", bool(win32gui.IsWindowVisible(reborn)))
@@ -223,17 +246,16 @@ def main() -> int:
 
     # --- recuperacion: la barra se reacomoda a lo ancho --------------------
     print("\n-- prueba de recuperacion: la barra recupera su ancho natural --")
-    reb = win32gui.FindWindowEx(p["tray"], 0, "ReBarWindow32", None)
+    reb = p["rebar"]
     rr = win32gui.GetWindowRect(reb)
-    an = win32gui.GetWindowRect(win32gui.FindWindowEx(p["tray"], 0, "DynamicContent2", None)
-                                or p["anchor"])
+    an = win32gui.GetWindowRect(p["anchor"])
     win32gui.SetWindowPos(reb, 0, 0, 0, an[0] - rr[0], rr[3] - rr[1],
                           win32con.SWP_NOMOVE | win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
     print(f"  la lista de tareas vuelve a ocupar todo: right={an[0]}")
     ok = False
     for _ in range(25):
         time.sleep(0.2)
-        rr2 = win32gui.GetWindowRect(win32gui.FindWindowEx(p["tray"], 0, "ReBarWindow32", None))
+        rr2 = win32gui.GetWindowRect(p["rebar"])
         wg = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
         if wg and rr2[2] <= win32gui.GetWindowRect(wg)[0] + 2:
             ok = True
@@ -247,8 +269,7 @@ def main() -> int:
         w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
         tt = rect(p["tray"])[1]
         wr = posicion(w_now, 0xFFFF, 232)          # extremo derecho, chip solido
-        an = rect(win32gui.FindWindowEx(p["tray"], 0, "DynamicContent2", None)
-                  or p["anchor"])
+        an = rect(p["anchor"])
         zona = (max(wr[0] + 40, 1250), min(wr[2] - 10, an[0] - 10))
         y = tt + 6                                  # dentro del chip
         muestras = {}
@@ -293,9 +314,8 @@ def main() -> int:
         for f in range(0, 11, 2):
             frac = f / 10.0
             wr2 = posicion(w_now, int(frac * 1000), 232)
-            rb2 = rect(win32gui.FindWindowEx(p["tray"], 0, "ReBarWindow32", None))
-            ar2 = rect(win32gui.FindWindowEx(p["tray"], 0, "DynamicContent2", None)
-                       or p["anchor"])
+            rb2 = rect(p["rebar"])
+            ar2 = rect(p["anchor"])
             arriba = quien((wr2[0] + wr2[2]) // 2, (wr2[1] + wr2[3]) // 2)
             filas.append((frac, wr2, rb2, ar2, arriba))
             print(f"   frac {frac:.1f}  widget.left={wr2[0]:5}  lista={rb2[2]-rb2[0]:4} px"
@@ -433,6 +453,7 @@ def main() -> int:
     # --- ondas de sonido ----------------------------------------------------
     print("\n-- ondas de sonido (franja, animacion y recorte del texto) --")
     try:
+        from PIL import ImageGrab
         from widget.media import MediaPoller
         w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
         wr = rect(w_now)
@@ -445,19 +466,35 @@ def main() -> int:
               f"franja {wb} / los botones empiezan en x={ctl[0][0] if ctl else '-'}")
         wrec = draw.wave_rect(ww2, k, cfg)
 
-        def verdes(region=None):
-            from PIL import ImageGrab
-            box = region or (wr[0] + wrec[0], wr[1] + wrec[1], wr[0] + wrec[2], wr[1] + wrec[3])
-            im = ImageGrab.grab(bbox=box).convert("RGB")
-            return sum(1 for q in im.get_flattened_data()
-                       if q[1] > q[0] + 40 and q[1] > q[2] + 20)
+        def captura():
+            return ImageGrab.grab(bbox=(wr[0], wr[1], wr[0] + ww2, wr[3])).convert("RGB")
+
+        def distintos(a, b, box, umbral=30):
+            """Pixeles que cambian entre dos capturas en esa region.
+
+            Se compara contra la MISMA region de la otra captura en vez de contar
+            un color: asi la comprobacion sirve con cualquier color elegido (con
+            las ondas en rosa, contar pixeles verdes daba cero y parecia roto).
+            """
+            x0, y0, x1, y1 = box
+            n = 0
+            for x in range(max(0, x0), min(a.width, x1)):
+                for y in range(max(0, y0), min(a.height, y1)):
+                    pa, pb = a.getpixel((x, y)), b.getpixel((x, y))
+                    if max(abs(pa[i] - pb[i]) for i in range(3)) > umbral:
+                        n += 1
+            return n
 
         estaba = bool(cfg.get("show_waves", False))
         win32gui.SendMessage(w_now, WM_APP_WAVES, 0, 0)      # sin guardar en config.json
-        time.sleep(0.6)
-        apagadas = [verdes() for _ in range(2)]
-        check("con las ondas apagadas no se dibuja nada en su franja",
-              max(apagadas) == 0, f"pixeles verdes {apagadas}")
+        time.sleep(0.7)
+        apagadas = captura()
+        # con las ondas apagadas la franja es fondo liso (del chip o de la barra)
+        referencia = apagadas.getpixel((wrec[0], wrec[1] + 1))
+        liso = sum(1 for x in range(wrec[0], wrec[2]) for y in range(wrec[1], wrec[3])
+                   if max(abs(apagadas.getpixel((x, y))[i] - referencia[i]) for i in range(3)) > 30)
+        check("con las ondas apagadas la franja queda lisa", liso <= 2,
+              f"{liso} pixeles fuera del fondo liso {referencia}")
 
         probe = MediaPoller(interval=0.3)
         probe.start()
@@ -467,10 +504,11 @@ def main() -> int:
         probe.stop()
 
         win32gui.SendMessage(w_now, WM_APP_WAVES, 1, 0)
-        time.sleep(0.6)
+        time.sleep(0.7)
         cuadros = []
         for _ in range(8):
-            cuadros.append(verdes())
+            cuadros.append(distintos(apagadas, captura(),
+                                     (wrec[0], wrec[1], wrec[2], wrec[3])))
             time.sleep(0.16)
         if not sonando:
             check("con las ondas encendidas la animacion cambia de cuadro", False,
@@ -481,29 +519,20 @@ def main() -> int:
                   len(set(cuadros)) >= 3 and max(cuadros) > 0,
                   f"{len(set(cuadros))} cuadros distintos de {len(cuadros)}: {cuadros}")
         # el texto tiene que quedar recortado antes de la franja: ni un pixel claro
-        # dentro de la franja, y las barras no pueden salirse de ella
-        from PIL import ImageGrab
-        im = ImageGrab.grab(bbox=(wr[0], wr[1], wr[0] + ww2, wr[3])).convert("RGB")
+        # dentro de ella
+        im = captura()
         claros = sum(1 for x in range(wrec[0] + 1, wrec[2] - 1) for y in range(0, int(29 * k))
                      if min(im.getpixel((x, y))) > 140
                      and max(im.getpixel((x, y))) - min(im.getpixel((x, y))) < 40)
         check("el texto se recorta antes de la franja de las ondas", claros == 0,
               f"{claros} pixeles de texto dentro de la franja")
-        # Las barras no pueden salirse de su franja. Se mide solo en las filas de la
-        # ondas: mas abajo pasa la barra de progreso, que tambien es verde.
-        fila0, fila1 = wr[1] + wrec[1], wr[1] + wrec[3]
-
-        def verdes_en(box):
-            im = ImageGrab.grab(bbox=box).convert("RGB")
-            return sum(1 for q in im.get_flattened_data()
-                       if q[1] > q[0] + 40 and q[1] > q[2] + 20)
-
-        izquierda = verdes_en((wr[0] + int(draw.TEXT_X * k), fila0, wr[0] + wrec[0], fila1))
-        derecha = verdes_en((wr[0] + wrec[2], fila0, wr[2], fila1))
-        arriba = verdes_en((wr[0] + wrec[0], wr[1], wr[0] + wrec[2], fila0))
-        check("las ondas no se salen de su franja",
-              izquierda + derecha + arriba == 0,
-              f"izquierda {izquierda}, derecha {derecha}, arriba {arriba} (franja {wrec})")
+        # Las barras no pueden salirse: se miran las zonas vecinas sin texto (a la
+        # derecha, hasta los botones, y arriba). Mas abajo pasa la barra de progreso.
+        con_ondas = captura()
+        derecha = distintos(apagadas, con_ondas, (wrec[2], wrec[1], wrec[2] + 5, wrec[3]))
+        arriba = distintos(apagadas, con_ondas, (wrec[0], 0, wrec[2], wrec[1] - 1))
+        check("las ondas no se salen de su franja", derecha + arriba == 0,
+              f"a la derecha {derecha}, arriba {arriba} (franja {wrec})")
 
         win32gui.SendMessage(w_now, WM_APP_WAVES, 1 if estaba else 0, 0)
         time.sleep(0.4)
@@ -580,6 +609,75 @@ def main() -> int:
                   f"el color guardado era {ond_antes!r}: no aplica", skipped=True)
     except Exception as exc:
         check("medicion de los colores", False, repr(exc))
+
+    # --- barra de tareas de otro monitor ------------------------------------
+    print("\n-- barra de tareas de otro monitor --")
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+        u32 = ctypes.windll.user32
+        u32.WindowFromPoint.restype = wt.HWND
+        u32.WindowFromPoint.argtypes = [wt.POINT]
+        barras = list_bars()
+        actual, w_now = barra_del_widget()
+        if len(barras) < 2 or not w_now or actual is None:
+            check("el equipo tiene mas de una barra de tareas", False,
+                  f"{len(barras)} barra(s): no hay otro monitor que probar", skipped=True)
+        else:
+            idx_actual = barras.index(actual)
+            destino = next(b for b in barras if b["tray"] != actual["tray"])
+            idx_destino = barras.index(destino)
+            h_dest, h_act = host_de(destino), host_de(actual)
+            ancla_dest = h_dest._anchor_rect()
+            ancla_act = h_act._anchor_rect()
+
+            win32gui.SendMessage(w_now, WM_APP_MONITOR, idx_destino, 0)   # sin guardar
+            time.sleep(1.7)
+            b2, w2 = barra_del_widget()
+            rb2 = rect(h_dest.container) if h_dest.container else (0, 0, 0, 0)
+            wr2 = rect(w2) if w2 else (0, 0, 0, 0)
+            check("el widget se muda a la barra del otro monitor",
+                  bool(w2) and b2 is not None and b2["tray"] == destino["tray"],
+                  f"ahora vive en {b2['nombre'] if b2 else '?'} "
+                  f"(se pidio {destino['nombre']})")
+            check("la ventana nueva es hija de esa barra",
+                  bool(w2) and win32gui.GetParent(w2) == destino["tray"],
+                  f"padre {hex(win32gui.GetParent(w2)) if w2 else '-'} "
+                  f"vs barra {hex(destino['tray'])}")
+            check("queda dentro de esa barra",
+                  bool(w2) and wr2[0] >= destino["rect"][0] and wr2[2] <= destino["rect"][2],
+                  f"widget {wr2} dentro de {destino['rect']}")
+            check("esa barra le cede el espacio", bool(rb2[0]) and rb2[2] <= wr2[0] + 2,
+                  f"contenedor.right={rb2[2]} widget.left={wr2[0]}")
+            check("no invade el bloque de la derecha", bool(w2) and wr2[2] <= ancla_dest[0],
+                  f"widget.right={wr2[2]} ancla.left={ancla_dest[0]}")
+            check("el widget esta visible en la barra nueva",
+                  bool(w2) and bool(win32gui.IsWindowVisible(w2)))
+            centro = ((wr2[0] + wr2[2]) // 2, (wr2[1] + wr2[3]) // 2)
+            tapado = (win32gui.GetClassName(u32.WindowFromPoint(wt.POINT(int(centro[0]), int(centro[1]))))
+                      if w2 else "-")
+            check("nadie lo tapa en la barra nueva", bool(w2) and tapado == "GorusTaskbarMusicWnd",
+                  f"en el centro devuelve {tapado}")
+            rb_act = rect(h_act.container) if h_act.container else (0, 0, 0, 0)
+            check("la barra que dejo recupera su ancho natural",
+                  abs((rb_act[2] - rb_act[0]) - (ancla_act[0] - rb_act[0])) <= 3,
+                  f"contenedor {rb_act[2] - rb_act[0]} px, natural "
+                  f"{ancla_act[0] - rb_act[0]} px")
+
+            # volver a donde estaba
+            win32gui.SendMessage(w2, WM_APP_MONITOR, idx_actual, 0)
+            time.sleep(1.7)
+            b3, w3 = barra_del_widget()
+            check("la vuelta deja el widget en su barra",
+                  bool(w3) and b3 is not None and b3["tray"] == actual["tray"],
+                  f"quedo en {b3['nombre'] if b3 else '?'}")
+            rb_dest2 = rect(h_dest.container) if h_dest.container else (0, 0, 0, 0)
+            check("la barra que dejo tambien recupera su ancho natural",
+                  abs((rb_dest2[2] - rb_dest2[0]) - (ancla_dest[0] - rb_dest2[0])) <= 3,
+                  f"contenedor {rb_dest2[2] - rb_dest2[0]} px, natural "
+                  f"{ancla_dest[0] - rb_dest2[0]} px")
+    except Exception as exc:
+        check("medicion de la barra de otro monitor", False, repr(exc))
 
     # --- vigilancia del pintado --------------------------------------------
     print("\n-- vigilancia del pintado (30 muestras, ~9 s) --")

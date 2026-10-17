@@ -28,6 +28,7 @@ Probado en Windows 10 22H2 (19045), escala 100% y 1920x1080.
 | Atrasarlo o adelantarlo | clic en la barra de progreso, o la rueda del mouse (±10 s) |
 | Ondas de sonido (animacion) | clic derecho > *Ondas de sonido* |
 | Color de la barra o de las ondas | clic derecho > *Color de la barra* / *Color de las ondas* |
+| Ponerlo en la barra de otro monitor | arrastralo al otro monitor, o clic derecho > *Monitor* |
 | Fondo transparente | clic derecho > *Fondo* |
 | Moverlo a otra parte de la barra | arrastralo con el boton izquierdo, o clic derecho > *Mover / Centrar* |
 | Menu (ondas, fondo, adelantar/atrasar, mover, ancho, salir) | clic derecho sobre el widget |
@@ -227,6 +228,34 @@ Dos cosas a tener en cuenta:
 Ninguno de los dos cambia el chip, la caratula ni los textos.
 
 
+## Varios monitores
+
+En Windows 10 **cada monitor tiene su propia barra de tareas**, asi que el widget
+puede vivir en cualquiera de ellas. Hay dos formas de mudarlo:
+
+- **Arrastralo al otro monitor**: si lo llevas al tramo de la barra de otro monitor,
+  el widget se muda ahi solo y el arrastre sigue. La ventana es hija de la barra, asi
+  que mudarla es recrearla: el proceso devuelve el espacio a la barra vieja, la crea
+  en la nueva y le reserva su lugar.
+- **Clic derecho > *Monitor***: lista las barras disponibles ("Principal (1920x1080)",
+  "Monitor 2 (1366x768)") y deja tildada la que esta en uso. El submenu solo aparece
+  si hay mas de una barra.
+
+La eleccion se guarda en `config.json` (`taskbar_monitor`, el nombre del dispositivo,
+p. ej. `"\\.\DISPLAY5"`) y se respeta al arrancar. Si ese monitor ya no esta, vuelve
+solo a la principal.
+
+Lo que cambia por dentro (y costo encontrar): las barras **no tienen la misma
+estructura**. En la principal la lista de tareas cuelga de `ReBarWindow32` y el ancla
+es el bloque de noticias; en las secundarias no hay rebar (la lista vive dentro de un
+`WorkerW`) y el ancla es el reloj (`ClockButton`). Medido: Windows respeta que se le
+encoja el `WorkerW` igual que la rebar de la principal.
+
+El movimiento (arrastrar, *Mover a la izquierda/derecha*, *Centrar*, posicion libre)
+funciona igual dentro de la barra donde este, entre la lista de tareas y el bloque de
+la derecha de **ese** monitor.
+
+
 ## Como funciona
 
 Tres piezas bien separadas:
@@ -240,12 +269,20 @@ Tres piezas bien separadas:
 ### La incrustacion en la barra
 
 Windows 10 no tiene API de "bandas" (se elimino despues de Vista), pero acepta
-ventanas hijas de `Shell_TrayWnd`. El procedimiento:
+ventanas hijas de la barra de tareas. El procedimiento:
 
-1. crear la ventana como hija de `Shell_TrayWnd` con `WS_CHILD`
-2. apoyarla contra el borde izquierdo del bloque de noticias o de la bandeja
-3. encoger `ReBarWindow32` (la lista de tareas) para liberar exactamente ese ancho
+1. crear la ventana como hija de la barra con `WS_CHILD`
+2. apoyarla contra el borde izquierdo del bloque de la derecha (noticias en la
+   principal, reloj en las secundarias)
+3. encoger el contenedor de la lista de tareas para liberar exactamente ese ancho
 4. devolver a la lista su **ancho natural** al salir
+
+El contenedor y el ancla cambian segun la barra:
+
+| monitor | barra | contenedor de la lista | ancla |
+|---|---|---|---|
+| principal | `Shell_TrayWnd` | `ReBarWindow32` | `DynamicContent2` (o la bandeja) |
+| secundario | `Shell_SecondaryTrayWnd` | `WorkerW` | `ClockButton` |
 
 Detalles que costaron encontrar:
 
@@ -316,25 +353,29 @@ falla posible de esta tecnica:
 - `python tools\stop.py --force` mata el proceso y repara la barra si quedo
   inconsistente.
 
-49 de 49 pruebas pasan (`python tools\selftest.py` con el widget en marcha):
+58 de 58 pruebas pasan (`python tools\selftest.py` con el widget en marcha; 59 en
+total, una se salta sola cuando el color de las ondas ya es personalizado):
 anclaje, reconstruccion forzada, recuperacion de espacio, pixeles realmente
 pintados, transparencia del fondo medida contra la barra, recorrido completo del
 movimiento (que nunca quede tapado), la barra de progreso (que su zona clicable
 no pise los botones, que el arrastre llegue al destino y muestre la hora, que al
 abortar no se mande ningun salto), que el widget reciba el mouse en toda su
 superficie con el fondo transparente, las ondas de sonido (que su franja entre
-entre el texto y los botones, que apagadas no pinten nada, que encendidas cambien
-de cuadro —8 de 8 distintos— que el texto quede recortado antes y que las barras
-no se salgan de su franja), los colores elegidos (que se entiendan en hex, lista y
+entre el texto y los botones, que apagadas la franja quede lisa, que encendidas
+cambien de cuadro —7 de 8 distintos— que el texto quede recortado antes y que no
+se salgan de su franja), los colores elegidos (que se entiendan en hex, lista y
 corto; que la barra tome el suyo —medido en rojo puro— que las ondas tomen el suyo
-—medido en azul— y que ninguno tome el del otro) y 30 muestras de vigilancia del
-pintado (30/30 cuadros correctos). Y 12 de 12 de interaccion real
+—medido en azul— y que ninguno tome el del otro), la barra de otro monitor (que el
+widget se mude, quede dentro de esa barra, que ese monitor le ceda el espacio y
+que la barra que deja recupere su ancho natural, ida y vuelta) y 30 muestras de
+vigilancia del pintado (30/30 cuadros correctos). Y 15 de 15 de interaccion real
 (`python tools\clicktest.py`): el hover ilumina los tres botones, un clic de verdad
 cambia el estado de reproduccion, el segundo clic lo restaura, un clic en la
 caratula no dispara nada, un clic en la barra de progreso salta a esa posicion
 (medido: pedido 157 s, informado 157 s) sin mover el widget, el salto se puede
-devolver a donde estaba, y la rueda adelanta y atrasa el paso configurado
-(medido: -9,9 s para un paso de -10 s).
+devolver a donde estaba, la rueda adelanta y atrasa el paso configurado (medido:
+-9,9 s para un paso de -10 s) y arrastrar el widget a la barra del otro monitor lo
+muda de barra y la vuelta lo devuelve.
 
 En `clicktest.py`, si una lista de reproduccion cambia de tema justo mientras se
 mide, el comando se pierde y la prueba lo informa como `SALTA` (interferencia) en
@@ -366,6 +407,7 @@ encogimiento.
 | `wave_fps` | 20 | Cuadros por segundo de la animacion. El unico motivo por el que el widget repinta mas seguido que el texto |
 | `progress_color` | `null` | Color de la barra de progreso (relleno, indicador de arrastre y hora destino). `null` = el del tema; tambien `"#RRGGBB"` o `[r, g, b]` |
 | `waves_color` | `null` | Color de las ondas de sonido. Mismas formas que `progress_color` |
+| `taskbar_monitor` | `null` | Barra de tareas donde vive el widget: `null` = la del monitor principal, o el nombre del dispositivo (`"\\.\DISPLAY5"`). Lo guarda el menu *Monitor* o el arrastre |
 | `position_frac` | `null` | `null` = pegado al extremo derecho. `0..1` = posicion libre dentro del tramo util |
 | `drag_to_move` | true | Permite moverlo arrastrando con el boton izquierdo |
 | `chip_alpha` | 232 | Transparencia del fondo: 232 solido, 170 translucido, 100 muy transparente, 0 sin fondo |
@@ -428,8 +470,10 @@ afuera que un clic realmente cambio de tema o movio la reproduccion.
 
 - Solo Windows 10. En Windows 11 la barra es otra (`Shell_TrayWnd` cambio de
   estructura) y habria que rehacer el anclaje.
-- El widget vive en la barra **principal**. Si tenes varias barras o la moviste a
-  otro borde, hay que adaptar el calculo del anclaje.
+- Vive en **una** barra por vez (la del monitor que elijas): no se puede duplicar en
+  todos los monitores a la vez.
+- El anclaje asume barras **horizontales** (abajo). Si moviste la barra a un borde
+  lateral o arriba, hay que adaptar el calculo de la posicion.
 - Se reserva el ancho de `config.json` de la lista de tareas. Con muchisimas
   ventanas abiertas la lista queda mas corta; `min_tasklist_width` limita cuanto
   puede ceder, y `Ctrl+Alt+M` lo oculta cuando necesites el espacio.
