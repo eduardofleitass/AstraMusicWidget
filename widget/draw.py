@@ -345,7 +345,7 @@ def dibujar_ondas(d: ImageDraw.ImageDraw, levels, cfg: dict, S: float, x0: float
 
 
 def render_waves(state, cfg: dict, levels, k: float = 1.0, base: tuple = (32, 34, 42),
-                 opaque: bool = True) -> Image.Image | None:
+                 opaque: bool = True, rect: tuple | None = None) -> Image.Image | None:
     """Dibuja SOLO la tira de las ondas, del tamano exacto de su franja.
 
     Se hace aparte del resto del widget para poder animar sin repintar todo el chip:
@@ -353,8 +353,17 @@ def render_waves(state, cfg: dict, levels, k: float = 1.0, base: tuple = (32, 34
     cuadros por segundo sale casi gratis (medido, ver README). Se dibuja a 4x y se
     reduce con LANCZOS; en modo transparente la reduccion va en espacio
     premultiplicado, igual que el resto del widget.
+
+    `rect` es la franja en px reales donde va la tira. OJO: tiene que ser **la misma**
+    que use el que la pega (`app._pegar_ondas`), porque de ahi sale el tamano de la
+    tira y con el se recorta el cuadro: si no coinciden, `ImageChops` tira
+    "images do not match". Y tiene que salir de `wave_rect(int(cfg["width"]), k, cfg)`
+    —el ancho LOGICO de la config—, no del ancho real del cuadro: `wave_band` ya
+    trabaja en px logicos y multiplicarlo por k otra vez corria la franja ~20% a la
+    derecha (encima de los botones) y, con ciertos anchos, la dejaba 1 px mas ancha
+    que el recorte (el widget se congelaba).
     """
-    r = wave_rect(int(cfg.get("width", 260)), k, cfg)
+    r = rect or wave_rect(int(cfg.get("width", 260)), k, cfg)
     if not r or not levels:
         return None
     W, H = r[2] - r[0], r[3] - r[1]

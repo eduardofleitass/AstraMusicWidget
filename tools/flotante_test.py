@@ -240,9 +240,12 @@ def main() -> int:
             time.sleep(1.0)
             pp = win32gui.FindWindow("AstraMusicPanel", None)
             rp = win32gui.GetWindowRect(pp) if pp else (0, 0, 0, 0)
+            # el panel se escala con la franja igual que el widget: 320x34 son los px
+            # logicos, en Windows 11 (franja de 48, k=1.2) mide 384x41
+            esperado = int(round(320 * k))
             check("el panel tambien anda en flotante (tira fina)",
-                  pp and win32gui.IsWindowVisible(pp) and abs((rp[2] - rp[0]) - 320) <= 3,
-                  f"panel {rp[2] - rp[0]}x{rp[3] - rp[1]}")
+                  pp and win32gui.IsWindowVisible(pp) and abs((rp[2] - rp[0]) - esperado) <= 3,
+                  f"panel {rp[2] - rp[0]}x{rp[3] - rp[1]} (esperado {esperado} de ancho con k={k:.2f})")
             win32gui.PostMessage(hp, win32con.WM_APP + 11, 5, tam_antes)
             time.sleep(0.5)
             win32gui.PostMessage(hp, win32con.WM_APP + 10, 0, 1)
@@ -263,6 +266,11 @@ def main() -> int:
         time.sleep(4)
     vuelto = 0
     for _ in range(20):
+        # En Windows 10 el widget vuelve a la barra (hijo de la barra); en Windows 11
+        # la barra no lo admite y vuelve como ventana propia de nivel superior.
+        w_top = win32gui.FindWindow("AstraMusicWnd", None)
+        if w_top and win32gui.IsWindowVisible(w_top):
+            vuelto = w_top
         for b in list_bars():
             h = win32gui.FindWindowEx(b["tray"], 0, "AstraMusicWnd", None)
             if h and win32gui.IsWindowVisible(h):
@@ -270,7 +278,7 @@ def main() -> int:
         if vuelto:
             break
         time.sleep(0.5)
-    check("vuelve el widget de la barra al terminar", bool(vuelto),
+    check("vuelve el widget al terminar (en la barra o flotante)", bool(vuelto),
           f"hwnd {hex(vuelto or 0)}")
     return _resumen()
 

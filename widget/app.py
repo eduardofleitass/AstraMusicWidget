@@ -855,18 +855,33 @@ class WidgetApp:
         La tira se dibuja aparte, a 4x, y se compone encima: asi la animacion puede
         ir a 20 cuadros por segundo sin repintar el chip entero (medido: 4,4 ms el
         render completo contra 0,08 ms copiar la base y pegar la tira).
+
+        La franja sale del ancho LOGICO de la config (que es lo que dibuja
+        `draw.render`), con la escala k aplicada una sola vez. Antes se le pasaba
+        `self.width_px` —el ancho del cuadro, que ya trae la escala— y `wave_rect` la
+        multiplicaba otra vez: la franja quedaba ~20% corrida a la derecha (las ondas
+        aparecian encima del boton de play) y, con algunos anchos, 1 px mas ancha que
+        el recorte del cuadro, y `ImageChops` tiraba "images do not match" en cada
+        cuadro: el widget quedaba congelado y el menu parecia no hacer nada.
         """
-        wb = draw.wave_rect(self.width_px, self.k, self.cfg)
+        wb = draw.wave_rect(int(self.cfg.get("width", 260)), self.k, self.cfg)
         if not wb or not self._levels:
             return
         capa = draw.render_waves(self.state, self.cfg, self._levels, self.k,
-                                 self.base, opaque=not self.layered)
+                                 self.base, opaque=not self.layered, rect=wb)
         if capa is None:
+            return
+        roi = img.crop(wb)
+        if roi.size != capa.size:
+            # Red de seguridad: si algun dia vuelven a divergir las dos franjas, que
+            # se vea en el log y siga el resto del dibujo, en vez de dejar el widget
+            # sin repintar (que es lo que hacia este bug: parecia muerto).
+            self.log("ondas: la tira mide %s y su franja %s; no la pego",
+                     capa.size, roi.size)
             return
         if self.layered:
             # Espacio premultiplicado: out = origen + fondo*(1 - alpha). Con
             # Image.paste quedaria alpha*alpha en los bordes suavizados.
-            roi = img.crop(wb)
             inv = Image.eval(capa.getchannel("A"), lambda v: 255 - v)
             canales = [ImageChops.add(capa.getchannel(c), ImageChops.multiply(roi.getchannel(c), inv))
                        for c in "RGBA"]
@@ -1099,11 +1114,13 @@ class WidgetApp:
         Los botones se prueban primero: ocupan toda la altura, asi que si se
         probara la barra antes, el borde de abajo de "siguiente" saltaria de tema.
         """
+        # control_rects trabaja con el ancho REAL del cuadro (ver _w_log); la barra de
+        # progreso y las ondas, con el logico.
         for i, (x0, y0, x1, y1) in enumerate(draw.control_rects(self.width_px, self.k, self.cfg)):
             if x0 <= x <= x1 and y0 <= y <= y1:
                 # 5 = el altavoz, para no confundirlo con el 3 de la barra
                 return 5 if i == 3 else i
-        r = draw.progress_rect(self.width_px, self.k, self.cfg)
+        r = draw.progress_rect(self._w_log(), self.k, self.cfg)
         if r and r[0] <= x <= r[2] and r[1] <= y <= r[3]:
             # Con el altavoz bajo el cursor, esa misma fila hace de barra de volumen
             if self._vol_mostrar() and self._vol_disponible():
@@ -1126,7 +1143,7 @@ class WidgetApp:
     def _seek_target(self, x: int) -> float:
         """Segundos que corresponden a una x del cliente sobre la barra."""
         st = self.state
-        frac = draw.progress_frac_at(x, self.width_px, self.k, self.cfg)
+        frac = draw.progress_frac_at(x, self._w_log(), self.k, self.cfg)
         return max(st.min_seek, min(frac * st.duration, st.max_seek or st.duration))
 
     def _registrar_atajos(self) -> list[str]:
@@ -1382,7 +1399,7 @@ class WidgetApp:
                 y = (lp >> 16) & 0xFFFF
                 hit = self._hit_at(x, y)
                 if os.environ.get("ASTRA_DEBUG_MOUSE"):
-                    r = draw.progress_rect(self.width_px, self.k, self.cfg)
+                    r = draw.progress_rect(self._w_log(), self.k, self.cfg)
                     dentro = bool(r and r[0] <= x <= r[2] and r[1] <= y <= r[3])
                     self.log("WM_LBUTTONDOWN x=%s y=%s hit=%s barra=%s dentro=%s "
                              "can_seek=%s dur=%.2f captura=%s arrastre=%s",
@@ -1521,6 +1538,21 @@ class WidgetApp:
         return win32gui.DefWindowProc(hwnd, msg, wp, lp)
 
     # ------------------------------------------------------- posicion y fondo
+    def _w_log(self) -> int:
+        """Ancho LOGICO del widget (el de `config.json`), sin la escala k aplicada.
+
+        Ojo con las dos convenciones que conviven en `draw`:
+
+        - `progress_span/progress_rect/progress_frac_at` y `wave_band/wave_rect`
+          trabajan en px logicos y multiplican por k adentro: hay que pasarles
+          `self._w_log()`. Con `self.width_px` (que ya trae la escala) la barra de
+          progreso y las ondas quedaban corridas ~20% a la derecha cuando la barra
+          de tareas mide mas de 40 px (Windows 11: 48 px, k=1.2): los clics saltaban a
+          la posicion equivocada y las ondas aparecian encima de los botones.
+        - `control_rects` espera el ancho REAL del cuadro (`self.width_px`).
+        """
+        return int(self.cfg.get("width", 260))
+
     def _min_free(self) -> int:
         return int(self.cfg.get("min_tasklist_free", 140))
 
@@ -1831,7 +1863,7 @@ class WidgetApp:
         self._repaint_if_needed(force=True)
 
     def _vol_nivel_at(self, x: int) -> float:
-        frac = draw.progress_frac_at(x, self.width_px, self.k, self.cfg)
+        frac = draw.progress_frac_at(x, self._w_log(), self.k, self.cfg)
         return max(0.0, min(1.0, float(frac)))
 
     def _vol_drag_move(self, x: int) -> None:

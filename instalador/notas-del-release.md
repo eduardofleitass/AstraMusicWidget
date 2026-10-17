@@ -1,4 +1,4 @@
-# Astra-Music-widget 1.0.3
+# Astra-Music-widget 1.0.4
 
 Widget de musica que vive **dentro** de la barra de tareas de Windows: muestra lo que esta
 sonando (caratula, titulo, artista, barra de progreso clicable, controles y el volumen de
@@ -8,20 +8,31 @@ de multimedia de Windows, no un reproductor en particular.
 
 ## Novedades de esta version
 
-- **En Windows 11 ahora se ve.** Era el problema de fondo: en esta version de Windows el
-  programa arrancaba, el log decia que habia arrancado y en pantalla no habia nada. La causa
-  es que la barra de Windows 11 (24H2/25H2) **sigue teniendo** el `ReBarWindow32` y el reloj
-  de siempre, asi que la comprobacion "aca se puede incrustar" daba que si; el widget se
-  creaba **dentro** de la barra y Windows 11, que dibuja la barra por su cuenta, no lo pintaba
-  nunca: la ventana existia, contestaba que estaba visible, estaba bien ubicada y quedaba
-  tapada. Ahora la comprobacion mira la estructura real de la barra (el puente de composicion
-  XAML, o la lista de tareas vieja apagada) y el widget pasa solo al **modo flotante**, que es
-  el que se ve. Medido y arreglado en la build 26300.
-- **El log dice por que**: cuando el widget arranca en modo flotante, el motivo queda escrito
-  en `astra-widget.log`, ademas del cartel de error que ya habia.
+- **Las ondas de sonido ya no congelan el widget en Windows 11.** Con las ondas encendidas,
+  el widget se quedaba clavado: seguia corriendo, pero no volvia a dibujarse, asi que el
+  menu (fondo, opacidad, colores) parecia no hacer nada y la cancion no avanzaba. La causa:
+  la tira de las ondas se pegaba sobre una franja calculada con dos cuentas distintas —una
+  con el ancho real del cuadro y otra con el ancho de la configuracion—, y cuando la barra
+  de tareas mide mas de 40 px (Windows 11: 48 px) las dos cuentas no caen en el mismo pixel.
+  El resultado era un error de dibujo en cada cuadro o, cuando no fallaba, las ondas
+  dibujadas encima del boton de play. Ahora las dos usan la misma franja, y si alguna vez
+  volvieran a no coincidir queda anotado en el log en vez de dejar el widget sin repintar.
+- **Los clics en la barra de progreso caen donde uno hace clic.** La zona clicable tambien
+  se calculaba corrida: con la barra de tareas de 48 px, hacer clic en el final de la barra
+  saltaba al 72% del tema en vez del final, y la parte de la barra mas alla del 72% no se
+  podia elegir. Lo mismo afectaba a la rueda del mouse y al arrastre del volumen.
 
 Lo de las versiones anteriores, que sigue valiendo:
 
+- **En Windows 11 ahora se ve.** En esta version de Windows el programa arrancaba, el log
+  decia que habia arrancado y en pantalla no habia nada: la barra de Windows 11 (24H2/25H2)
+  **sigue teniendo** el `ReBarWindow32` y el reloj de siempre, asi que la comprobacion "aca
+  se puede incrustar" daba que si, el widget se creaba **dentro** de la barra y Windows 11,
+  que dibuja la barra por su cuenta, no lo pintaba nunca. Ahora la comprobacion mira la
+  estructura real de la barra y el widget pasa solo al **modo flotante**, que es el que se
+  ve. Medido y arreglado en la build 26300.
+- **El log dice por que**: cuando el widget arranca en modo flotante, el motivo queda escrito
+  en `astra-widget.log`, ademas del cartel de error que ya habia.
 - **Si el programa no puede arrancar, lo dice**: aparece un cartel con la causa y el detalle
   queda escrito en el log. Antes, cualquier fallo de arranque era invisible (el ejecutable no
   tiene consola) y el programa parecia "no hacer nada".
@@ -66,7 +77,7 @@ Lo de las versiones anteriores, que sigue valiendo:
 
 Dos opciones, las dos sin Python:
 
-- **Instalador** (`Astra-Music-widget-1.0.3-setup.exe`, 30 MB): instala por usuario en
+- **Instalador** (`Astra-Music-widget-1.0.4-setup.exe`, 30 MB): instala por usuario en
   `%LOCALAPPDATA%\Programs\Astra-Music-widget`, crea los accesos del menu Inicio y el
   arranque con Windows, y deja un desinstalador en Ajustes → Aplicaciones. No pide
   administrador.

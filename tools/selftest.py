@@ -94,6 +94,26 @@ def difusa(a: list, b: list) -> tuple:
     return sum(d) / max(1, len(d)), max(d)
 
 
+def barra_dibujada(cfg: dict, k: float) -> tuple | None:
+    """Donde se DIBUJA la barra de progreso, en px del cuadro (x0, x1).
+
+    Se mide el dibujo en vez de repetir la formula: el error que tenia Windows 11
+    (k=1.2) no estaba en `progress_rect` sino en quien lo llamaba con el ancho real,
+    asi que comparar la formula contra si misma no probaba nada. Con el progreso al
+    100% y un verde puro, los pixeles de la barra se encuentran solos.
+    """
+    from widget.media import MediaState as _MS
+    cfg2 = dict(cfg, progress_color="#00FF00", show_waves=False, chip_alpha=230)
+    est = _MS(has_session=True, app_id="test.exe", title="Titulo", artist="Artista",
+              playing=True, position=60.0, duration=60.0, position_at=time.monotonic(),
+              art=None, art_key="k", can_seek=True, can_toggle=True)
+    img = draw.render(est, cfg2, art=None, k=k, base=(29, 35, 32),
+                      height=int(round(40 * k)), opaque=False, waves=None)
+    xs = [x for x in range(img.size[0])
+          if any(img.getpixel((x, y))[:3] == (0, 255, 0) for y in range(img.size[1]))]
+    return (min(xs), max(xs)) if xs else None
+
+
 def posicion(widget, frac, alpha=None, espera=0.9):
     win32gui.SendMessage(widget, WM_APP_MOVE, frac, 0)
     if alpha is not None:
@@ -371,7 +391,13 @@ def main() -> int:
         w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
         wr = rect(w_now)
         ww2, wh2 = wr[2] - wr[0], wr[3] - wr[1]
-        pr = draw.progress_rect(ww2, k, cfg)
+        # Dos anchos, que no son lo mismo: `ww2` es el real del cuadro (lo que piden
+        # control_rects y las capturas) y `wlog` el logico de la config, que es lo que
+        # piden progress_rect / progress_frac_at / wave_rect (escalan por k adentro).
+        # Medir la barra de progreso con ww2 daba por bueno el error que en Windows 11
+        # (k=1.2) corria la zona clicable 68 px a la derecha.
+        wlog = int(cfg.get("width", 260))
+        pr = draw.progress_rect(wlog, k, cfg)
         ctl = draw.control_rects(ww2, k, cfg)
         check("la barra de progreso tiene zona clicable",
               bool(pr) and (pr[2] - pr[0]) >= 40, f"{pr}")
@@ -383,14 +409,21 @@ def main() -> int:
               bool(pr) and pr[0] >= 0 and pr[2] < ww2 and pr[3] <= wh2,
               f"franja {pr} dentro de {ww2}x{wh2}")
         if pr:
-            medio = draw.progress_frac_at((pr[0] + pr[2]) / 2.0, ww2, k, cfg)
+            # Ademas de la formula, se comprueba contra lo que se ve: la zona clicable
+            # tiene que empezar y terminar donde empieza y termina la barra dibujada.
+            pintada = barra_dibujada(cfg, k)
+            check("la zona clicable cae donde se dibuja la barra",
+                  bool(pintada) and abs(pr[0] - pintada[0]) <= 2 and abs(pr[2] - pintada[1]) <= 2,
+                  f"clicable x={pr[0]}..{pr[2]} / dibujada x={pintada[0]}..{pintada[1]}"
+                  if pintada else "no encontre la barra dibujada")
+            medio = draw.progress_frac_at((pr[0] + pr[2]) / 2.0, wlog, k, cfg)
             check("la mitad de la barra corresponde a la mitad del tema",
                   abs(medio - 0.5) <= 0.06, f"fraccion {medio:.3f}")
             check("los extremos de la barra dan 0 y 1",
-                  draw.progress_frac_at(pr[0], ww2, k, cfg) <= 0.01
-                  and draw.progress_frac_at(pr[2], ww2, k, cfg) >= 0.99,
-                  f"{draw.progress_frac_at(pr[0], ww2, k, cfg):.2f} / "
-                  f"{draw.progress_frac_at(pr[2], ww2, k, cfg):.2f}")
+                  draw.progress_frac_at(pr[0], wlog, k, cfg) <= 0.01
+                  and draw.progress_frac_at(pr[2], wlog, k, cfg) >= 0.99,
+                  f"{draw.progress_frac_at(pr[0], wlog, k, cfg):.2f} / "
+                  f"{draw.progress_frac_at(pr[2], wlog, k, cfg):.2f}")
 
             from widget.media import MediaPoller
             probe = MediaPoller(interval=0.3)
@@ -482,13 +515,16 @@ def main() -> int:
         w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
         wr = rect(w_now)
         ww2 = wr[2] - wr[0]
-        wb = draw.wave_band(ww2, cfg)
+        # La franja de las ondas se calcula con el ancho LOGICO (el mismo que usa el
+        # widget para pegarla); los botones, con el real (ver _w_log en app.py).
+        wlog2 = int(cfg.get("width", 260))
+        wb = draw.wave_band(wlog2, cfg)
         ctl = draw.control_rects(ww2, k, cfg)
         check("la franja de las ondas entra entre el texto y los botones",
               bool(wb) and (not ctl or wb[1] < ctl[0][0])
               and wb[0] >= draw.TEXT_X + draw.WAVE_MIN_TEXT,
               f"franja {wb} / los botones empiezan en x={ctl[0][0] if ctl else '-'}")
-        wrec = draw.wave_rect(ww2, k, cfg)
+        wrec = draw.wave_rect(wlog2, k, cfg)
 
         def captura():
             return ImageGrab.grab(all_screens=True, bbox=(wr[0], wr[1], wr[0] + ww2, wr[3])).convert("RGB")
@@ -576,6 +612,58 @@ def main() -> int:
     except Exception as exc:
         check("medicion de las ondas de sonido", False, repr(exc))
 
+    # --- ondas y barra con la barra de tareas de mas de 40 px -----------------
+    # El bug de Windows 11 (barra de 48 px -> k=1.2): el widget pegaba la tira de las
+    # ondas con una franja calculada con el ancho REAL del cuadro y la tira con el
+    # ancho logico. Con algunos anchos eso daba 1 px de diferencia y ImageChops tiraba
+    # "images do not match" en cada cuadro (el widget quedaba congelado y parecia que
+    # el menu no hacia nada); con otros, la tira caia 60 px a la derecha, encima de los
+    # botones. Con k=1.0 las dos cuentas coinciden, asi que se prueba a mano con k=1.2
+    # y 1.5 llamando a la MISMA funcion que usa el widget.
+    print("\n-- ondas y barra con la barra de tareas grande (k != 1) --")
+    import types as _types
+    from widget.app import WidgetApp
+    from widget.media import MediaState as _MS3
+    for kk in (1.2, 1.5):
+        try:
+            cfg_k = dict(cfg, width=280, show_waves=True, wave_bars=4, show_controls=True)
+            alto_k = int(round(40 * kk))
+            est_k = _MS3(has_session=True, app_id="test.exe", title="Titulo", artist="Artista",
+                         playing=True, position=30.0, duration=180.0,
+                         position_at=time.monotonic(), art=None, art_key="k",
+                         can_seek=True, can_toggle=True)
+            wl = int(cfg_k["width"])
+            # (a) la zona clicable de la barra cae donde se dibuja (no donde dice otra formula)
+            pr_k = draw.progress_rect(wl, kk, cfg_k)
+            pintada_k = barra_dibujada(cfg_k, kk)
+            check("k=%.1f: la barra clicable cae donde se dibuja la barra" % kk,
+                  bool(pr_k) and bool(pintada_k)
+                  and abs(pr_k[0] - pintada_k[0]) <= 2 and abs(pr_k[2] - pintada_k[1]) <= 2,
+                  f"clicable x={pr_k[0]}..{pr_k[2]} / dibujada {pintada_k}")
+            # (b) el pegado real de las ondas: pixels cambiados dentro y fuera de la franja
+            img_k = draw.render(est_k, cfg_k, art=None, k=kk, base=(30, 30, 30),
+                                height=alto_k, opaque=False, waves=[])
+            falso = _types.SimpleNamespace(
+                cfg=cfg_k, k=kk, layered=True, base=(30, 30, 30), state=est_k,
+                _levels=[0.95, 0.2, 0.85, 0.4], log=lambda *a: None,
+                # el widget real tiene estos dos; sin ellos la prueba no seria la misma
+                width_px=int(round(wl * kk)), height_px=alto_k)
+            antes = img_k.copy()
+            WidgetApp._pegar_ondas(falso, img_k)
+            fr = draw.wave_rect(wl, kk, cfg_k)
+            ctl_k = draw.control_rects(int(round(wl * kk)), kk, cfg_k)
+            dentro = sum(1 for x in range(fr[0], fr[2]) for y in range(fr[1], fr[3])
+                         if img_k.getpixel((x, y)) != antes.getpixel((x, y)))
+            sobre_botones = sum(1 for x in range(ctl_k[0][0] - 2, ctl_k[-1][2] + 2)
+                                for y in range(alto_k)
+                                if img_k.getpixel((x, y)) != antes.getpixel((x, y)))
+            check("k=%.1f: las ondas se pegan dentro de su franja" % kk, dentro > 10,
+                  f"{dentro} pixeles cambiados dentro de la franja {fr}")
+            check("k=%.1f: las ondas no se pegan encima de los botones" % kk,
+                  sobre_botones == 0, f"{sobre_botones} pixeles cambiados sobre los botones")
+        except Exception as exc:
+            check("k=%.1f: pegado de las ondas" % kk, False, repr(exc))
+
     # --- colores personalizados --------------------------------------------
     print("\n-- colores de la barra de progreso y de las ondas --")
     try:
@@ -592,8 +680,8 @@ def main() -> int:
               f"'#f00' -> {draw.parse_color('#f00')}, '[0,128,255]' -> "
               f"{draw.parse_color([0, 128, 255])}, basura -> {draw.parse_color('no es un color')}")
 
-        pr = draw.progress_rect(ww2, k, cfg)
-        wrec = draw.wave_rect(ww2, k, cfg)
+        pr = draw.progress_rect(int(cfg.get("width", 260)), k, cfg)
+        wrec = draw.wave_rect(int(cfg.get("width", 260)), k, cfg)
         y_barra = wr[1] + int(35.5 * k)
 
         def cuenta(box, cual):
@@ -793,10 +881,11 @@ def main() -> int:
     print("\n-- volumen de la app --")
     # (a) geometria: el altavoz va despues de los botones y no pisa nada
     w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
-    ww3 = (rect(w_now)[2] - rect(w_now)[0]) if w_now else int(cfg.get("width", 300))
+    ww3 = (rect(w_now)[2] - rect(w_now)[0]) if w_now else int(cfg.get("width", 300) * k)
+    wlog3 = int(cfg.get("width", 260))     # ancho logico: lo que piden progress_span
     ctrls = draw.control_rects(ww3, k, cfg)
-    wrec = draw.wave_rect(ww3, k, cfg)
-    prg = draw.progress_span(ww3, cfg)
+    wrec = draw.wave_rect(wlog3, k, cfg)
+    prg = draw.progress_span(wlog3, cfg)
     check("el altavoz es la cuarta celda, a la derecha del transporte",
           len(ctrls) == 4 and ctrls[3][0] > ctrls[2][0] == ctrls[1][2],
           f"{len(ctrls)} celdas; altavoz en {ctrls[3][:1] + ctrls[3][2:3] if ctrls else '-'}"
