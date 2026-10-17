@@ -1,4 +1,4 @@
-# Astra-Music-widget 1.0.5
+# Astra-Music-widget 1.0.6
 
 Widget de musica que vive **dentro** de la barra de tareas de Windows: muestra lo que esta
 sonando (caratula, titulo, artista, barra de progreso clicable, controles y el volumen de
@@ -7,6 +7,31 @@ sistema (Spotify, VLC, Groove, y lo que suene en Chrome/Edge/Brave), porque lee 
 de multimedia de Windows, no un reproductor en particular.
 
 ## Novedades de esta version
+
+- **Los botones ya no tienen una columna muerta.** Las zonas clicables de anterior / play /
+  siguiente se calculaban redondeando los dos bordes de cada celda por separado, y en una
+  barra de tareas de 48 px (Windows 11) la tercera celda empezaba en el pixel 304 mientras la
+  segunda terminaba en el 303: quedaba una columna de 1 px sin dueno donde el clic no hacia
+  nada. Ahora cada celda empieza exactamente donde termina la anterior (verificado a 40, 48,
+  50 y 60 px de barra).
+- **Con el fondo en "Sin fondo" y el color del widget tomado de Windows, el texto se lee.**
+  El juego de colores (claro u oscuro) se elegia por el color del sistema aunque el fondo no se
+  dibujara, asi que sobre una barra de tareas clara quedaba texto claro (contraste 5, medido).
+  Ahora la eleccion mira el color del chip cuando el chip se dibuja, y lo que hay detras de la
+  barra cuando no. Lo mismo para el panel: con su fondo en 0, el texto sigue a lo que tenga
+  atras (sobre un juego claro, texto oscuro).
+
+## Una aclaracion sobre los atajos (Ctrl+Alt+flechas)
+
+Los drivers de video suelen tomar la familia `Ctrl+Alt+flecha` (es el atajo de girar la
+pantalla). Medido en Windows 11 en un equipo que las tiene tomadas: `Ctrl+Alt+P` anda,
+`Ctrl+Alt+↑` (volumen) tambien, y **`Ctrl+Alt+Shift+↑/↓` (±10 s) no llega al programa** —
+Windows entrega el atajo de volumen, que comparte la flecha. No es del widget: pasa igual con
+cualquier programa (probado registrando esa combinacion sola en una ventana de prueba). Si te
+toca, el ±10 s esta en la **rueda del mouse** (`Ctrl` = 1 s, `Shift` = 60 s, sola = 10 s) y en
+la **barra de progreso**, y las teclas se cambian en `widget/app.py` → tabla `HOTKEYS`.
+
+Lo de las versiones anteriores, que sigue valiendo:
 
 - **El fondo del widget se puede poner del color de Windows**: menu → *Color del widget* →
   *Del tema de Windows*. Toma el color con el que el sistema tiñe la barra de tareas y los
@@ -80,7 +105,7 @@ Lo de las versiones anteriores, que sigue valiendo:
 
 Dos opciones, las dos sin Python:
 
-- **Instalador** (`Astra-Music-widget-1.0.4-setup.exe`, 30 MB): instala por usuario en
+- **Instalador** (`Astra-Music-widget-1.0.6-setup.exe`, 30 MB): instala por usuario en
   `%LOCALAPPDATA%\Programs\Astra-Music-widget`, crea los accesos del menu Inicio y el
   arranque con Windows, y deja un desinstalador en Ajustes → Aplicaciones. No pide
   administrador.
