@@ -7,8 +7,12 @@ winget es el canal que trae descargas sin que nadie promocione nada: `winget ins
 aparece en winstall.app y compania. El PR va a microsoft/winget-pkgs, que es enorme, asi que
 no se clona: se crean los archivos por la API sobre una rama nueva del fork.
 
-El paquete apunta al instalador de la release v1.0.1, con el SHA256 que se verifico bajando
-el archivo publicado (mismo hash que el local).
+El paquete apunta al instalador de la release v1.0.3, con el SHA256 que se verifico bajando
+el archivo publicado (mismo hash que el local: la release se sube primero, se baja el
+instalador y recien despues se corre esto).
+
+Ojo: el PR queda frenado hasta firmar el CLA de Microsoft (el bot lo pide solo en un
+comentario). Es un tramite de una vez por cuenta, no de cada version.
 """
 import base64
 import json
@@ -25,9 +29,9 @@ TOKEN = next((l.split("=", 1)[1].strip() for l in TOKEN.splitlines()
 assert TOKEN, "no pude obtener el token del Gestor de Credenciales"
 ENTORNO = dict(os.environ, GH_TOKEN=TOKEN)
 
-VER = "1.0.1"
+VER = "1.0.3"
 ID = "EduardoFleitas.AstraMusicWidget"
-SHA = "0B06DF78762A062D10EBB32F3144877547F17AC8BF67ADC69F2DB6C5F1A2245F"
+SHA = "5B92F59754F78A1B5BE028FD5FD0B103F9C58F738CE8A017388F5A2533AAFC05"
 URL = ("https://github.com/eduardofleitass/AstraMusicWidget/releases/download/"
        f"v{VER}/Astra-Music-widget-{VER}-setup.exe")
 CARPETA = f"manifests/e/EduardoFleitas/AstraMusicWidget/{VER}"
@@ -91,11 +95,12 @@ ManifestVersion: 1.6.0
 
 # --- 0) el mismo paquete, en el repo local -------------------------------------------
 LOCAL = os.path.join(RAIZ, "winget", "manifests", "e", "EduardoFleitas", "AstraMusicWidget")
-viejo = os.path.join(LOCAL, "1.0.0")
+viejo = os.path.join(LOCAL, "1.0.2")
 if os.path.isdir(viejo):
     import shutil
     shutil.rmtree(viejo)
-    print("0. saque el manifiesto 1.0.0 (nunca se llego a enviar)")
+    print("0. saque el manifiesto 1.0.2 (el PR anterior quedo cerrado por el bot: la carpeta "
+          "habia quedado sin archivos al reemplazarla por API)")
 destino = os.path.join(LOCAL, VER)
 os.makedirs(destino, exist_ok=True)
 for nombre, texto in YAML.items():
@@ -156,8 +161,9 @@ leyendo la sesion de multimedia de Windows (SMTC). Hecho en Python con Win32.
 - Repositorio: https://github.com/eduardofleitass/AstraMusicWidget
 - Release v{VER}: https://github.com/eduardofleitass/AstraMusicWidget/releases/tag/v{VER}
 - Licencia: MIT
-- Requiere Windows 10 1809 o posterior. En Windows 11 corre como tira flotante (la barra ya
-  no admite ventanas incrustadas).
+- Requiere Windows 10 1809 o posterior. En Windows 11 (probado en la build 26300) la barra
+  nueva no admite ventanas propias, asi que corre como tira flotante pegada al borde de
+  abajo; el programa lo detecta solo al arrancar, midiendo la estructura de la barra.
 
 El instalador es Inno Setup con `PrivilegesRequired=lowest` (por usuario, sin UAC) e instala
 en `%LOCALAPPDATA%\\Programs\\Astra-Music-widget`.
