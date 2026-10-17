@@ -16,3 +16,8 @@ shot_check.png
 # empaquetado (el .exe se arma con tools/build_exe.py)
 build/
 dist/
+
+# logs y datos de las pruebas
+*.log
+tools/_selftest.json
+tools/_rig_state.json
