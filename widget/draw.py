@@ -132,7 +132,7 @@ LIGHT_THEME = {
 }
 
 
-def theme_for_base(cfg: dict, base: tuple) -> dict:
+def theme_for_base(cfg: dict, base: tuple, fondo_visible: bool | None = None) -> dict:
     """Tema efectivo: el configurado, o su version oscura/clara segun el fondo.
 
     `chip_color` (menu: Color del widget) decide el FONDO del chip:
@@ -143,6 +143,12 @@ def theme_for_base(cfg: dict, base: tuple) -> dict:
       "accent"  -> el color con el que Windows tiñe la barra de tareas (el acento del
                    sistema), y el juego de textos claro u oscuro segun ese color.
 
+    `fondo_visible` dice si la superficie que se esta pintando dibuja su fondo (el chip
+    del widget o el del panel). Si no se indica, se toma el del widget (`chip_alpha`).
+    Importa porque el juego de colores de los textos se elige por lo que va a quedar
+    DETRAS de ellos: con el fondo del color del sistema, por ese color; sin fondo (alfa
+    0), por el fondo muestreado de la barra, que es lo unico que se va a ver.
+
     Ademas resuelve los colores elegidos a mano para la barra de progreso y las
     ondas. Son independientes del tema (y del auto-contraste: si el usuario eligio
     un color, se usa ese, aunque en su barra se note poco).
@@ -150,9 +156,18 @@ def theme_for_base(cfg: dict, base: tuple) -> dict:
     theme = dict(cfg.get("theme") or {})
     modo = str(cfg.get("chip_color", "auto")).lower()
     acento = color_acento() if modo == "accent" else None
-    if acento is not None:
+    if fondo_visible is None:
+        try:
+            fondo_visible = int(cfg.get("chip_alpha", 232)) > 0
+        except (TypeError, ValueError):
+            fondo_visible = True
+    if acento is not None and fondo_visible:
+        # con el chip del color del sistema, el texto tiene que contrastar con ESE color
         claro = _lum(acento) > 130
     else:
+        # sin fondo no hay chip: el texto se apoya en lo que haya detras de la barra, asi
+        # que manda el fondo muestreado (elegir el juego de colores por el acento dejaba
+        # el texto claro sobre una barra clara: 5 de contraste medido)
         claro = bool(cfg.get("auto_contrast", True) and _lum(tuple(base)[:3]) > 130)
         if modo == "light":
             claro = True
@@ -279,7 +294,13 @@ def celdas(cfg: dict) -> int:
 
 
 def control_rects(width: int, k: float, cfg: dict) -> list[tuple[int, int, int, int]]:
-    """Zonas clicables (en px reales) de anterior / play-pausa / siguiente [/ altavoz]."""
+    """Zonas clicables (en px reales) de anterior / play-pausa / siguiente [/ altavoz].
+
+    Las celdas se encadenan: cada una empieza donde termina la anterior. Calculando los
+    dos bordes con `round()` por separado, con la escala de Windows 11 (48 px) la tercera
+    celda empezaba en 304 y la segunda terminaba en 303: quedaba una columna de 1 px
+    muerta entre los botones (el clic ahi no hacia nada) y la suite lo marcaba.
+    """
     if not cfg.get("show_controls", True):
         return []
     cell = ICON_CELL * k
@@ -287,8 +308,9 @@ def control_rects(width: int, k: float, cfg: dict) -> list[tuple[int, int, int, 
     start = (width - RIGHT_PAD * k) - n * cell
     rects = []
     for i in range(n):
-        x = int(round(start + i * cell))
-        rects.append((x, 0, int(round(x + cell)), int(round(REF_H * k))))
+        x0 = rects[-1][2] if rects else int(round(start))
+        x1 = int(round(start + (i + 1) * cell))
+        rects.append((x0, 0, max(x1, x0 + 1), int(round(REF_H * k))))
     return rects
 
 

@@ -110,7 +110,28 @@ def widget():
         w = win32gui.FindWindowEx(b["tray"], 0, "AstraMusicWnd", None)
         if w:
             return w
-    return 0
+    # Windows 11: el widget vive como ventana propia (modo flotante)
+    return win32gui.FindWindow("AstraMusicWnd", None) or 0
+
+
+def log_lineas() -> list:
+    """Lineas del log del widget que esta corriendo (el del proyecto o el instalado).
+
+    Cada atajo se anota ahi ("atajo: adelantar"), asi que sirve para distinguir "la
+    combinacion no le llego al programa" de "el programa la recibio y no hizo nada".
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    cands = [os.path.join(os.path.dirname(here), "astra-widget.log"),
+             os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs",
+                          "Astra-Music-widget", "astra-widget.log")]
+    vivos = [p for p in cands if os.path.exists(p)]
+    if not vivos:
+        return []
+    try:
+        with open(max(vivos, key=os.path.getmtime), encoding="utf-8", errors="replace") as fh:
+            return fh.readlines()
+    except Exception:
+        return []
 
 
 def main() -> int:
@@ -173,33 +194,78 @@ def main() -> int:
     # --- adelantar / atrasar (en pausa: la posicion no se mueve sola) -------
     check("la medicion de saltos arranca en pausa", pausar(poller),
           f"sonando={poller.state().playing}")
-    pos_antes = posicion_estable(poller)
-    acorde(["CTRL", "ALT", "SHIFT", "UP"], espera=1.5)
-    pos_ahora = posicion_estable(poller)
-    check("Ctrl+Alt+Shift+Arriba adelanta 10 s",
-          abs((pos_ahora - pos_antes) - 10.0) < 1.5,
-          f"{pos_antes:.1f}s -> {pos_ahora:.1f}s")
-    pos2 = posicion_estable(poller)
-    acorde(["CTRL", "ALT", "SHIFT", "DOWN"], espera=1.5)
-    pos3 = posicion_estable(poller)
-    check("Ctrl+Alt+Shift+Abajo atrasa 10 s",
-          abs((pos3 - pos2) + 10.0) < 1.5, f"{pos2:.1f}s -> {pos3:.1f}s")
+    # El widget no salta si el reproductor dice que no se puede (es su misma regla:
+    # `has_session and can_seek and duration > 0`). Despues de cambiar de tema el
+    # reproductor tarda un instante en volver a informarlo, asi que se espera un poco y,
+    # si no lo informa, se salta con el motivo en vez de culpar al atajo. Medido: con un
+    # video de YouTube en Brave los atajos de salto no hacian nada porque el reproductor
+    # informaba can_seek=False, y la rueda si andaba un minuto despues.
+    st_p = poller.state()
+    t0 = time.time()
+    while time.time() - t0 < 3.0:
+        st_p = poller.state()
+        if st_p.has_session and st_p.can_seek and (st_p.duration or 0) > 0:
+            break
+        time.sleep(0.3)
+    if not (st_p.has_session and st_p.can_seek and (st_p.duration or 0) > 0):
+        por_que = ("el reproductor actual no admite saltos (%s: can_seek=%s, duracion "
+                   "%.1f s)" % (st_p.app_name or st_p.app_id, st_p.can_seek,
+                                st_p.duration or 0.0))
+        check("Ctrl+Alt+Shift+Arriba adelanta 10 s", True, por_que, skipped=True)
+        check("Ctrl+Alt+Shift+Abajo atrasa 10 s", True, por_que, skipped=True)
+    else:
+        pos_antes = posicion_estable(poller)
+        log_antes = len(log_lineas())
+        acorde(["CTRL", "ALT", "SHIFT", "UP"], espera=1.5)
+        nuevas = "".join(log_lineas()[log_antes:])
+        pos_ahora = posicion_estable(poller)
+        # El programa anota cada atajo que recibe. Si no anoto "adelantar", la
+        # combinacion no llego como tal: medido en esta maquina, Ctrl+Alt+Shift+las cuatro
+        # flechas las toma el driver de video y Windows entrega el atajo de volumen (que
+        # comparte la flecha sin Shift); con Ctrl+Alt+Shift+letra el atajo si llega. Se
+        # informa como interferencia, con el detalle de cual llego en su lugar.
+        if "atajo: adelantar" not in nuevas:
+            llego = [l.split("atajo:", 1)[1].strip() for l in nuevas.splitlines()
+                     if "atajo:" in l]
+            por_que = ("Ctrl+Alt+Shift+flechas no llega como 'adelantar': %s. Lo toma otro "
+                       "programa o el driver de video; la rueda con Ctrl/Shift si anda"
+                       % ("llego '%s'" % llego[0] if llego else "no llego nada"))
+            check("Ctrl+Alt+Shift+Arriba adelanta 10 s", True, por_que, skipped=True)
+            check("Ctrl+Alt+Shift+Abajo atrasa 10 s", True, por_que, skipped=True)
+        else:
+            check("Ctrl+Alt+Shift+Arriba adelanta 10 s",
+                  abs((pos_ahora - pos_antes) - 10.0) < 1.5,
+                  f"{pos_antes:.1f}s -> {pos_ahora:.1f}s")
+            pos2 = posicion_estable(poller)
+            acorde(["CTRL", "ALT", "SHIFT", "DOWN"], espera=1.5)
+            pos3 = posicion_estable(poller)
+            check("Ctrl+Alt+Shift+Abajo atrasa 10 s",
+                  abs((pos3 - pos2) + 10.0) < 1.5, f"{pos2:.1f}s -> {pos3:.1f}s")
 
     # --- volumen (normalizado al 50% para que el paso se note) -------------
     paso = int(0.05 * 100) / 100.0
     volume_mod.fijar(app, 0.5)
     time.sleep(0.4)
     v_antes = volume_mod.estado(app)
-    acorde(["CTRL", "ALT", "UP"], espera=0.8)
-    v_ahora = volume_mod.estado(app)
-    check("Ctrl+Alt+Arriba sube el volumen 5%",
-          bool(v_antes and v_ahora and abs((v_ahora[0] - v_antes[0]) - paso) < 0.02),
-          f"{v_antes[0] * 100:.0f}% -> {v_ahora[0] * 100:.0f}%")
-    acorde(["CTRL", "ALT", "DOWN"], espera=0.8)
-    v3 = volume_mod.estado(app)
-    check("Ctrl+Alt+Abajo baja el volumen 5%",
-          bool(v_ahora and v3 and abs((v3[0] - v_ahora[0]) + paso) < 0.02),
-          f"{v_ahora[0] * 100:.0f}% -> {v3[0] * 100:.0f}%")
+    if not v_antes:
+        # Sin sesion de audio del reproductor (el navegador puede no exponerla) no hay
+        # volumen que medir: se salta, en vez de romper la suite con un error.
+        por_que = f"{app} no expone el volumen de la app que suena"
+        check("Ctrl+Alt+Arriba sube el volumen 5%", True, por_que, skipped=True)
+        check("Ctrl+Alt+Abajo baja el volumen 5%", True, por_que, skipped=True)
+    else:
+        acorde(["CTRL", "ALT", "UP"], espera=0.8)
+        v_ahora = volume_mod.estado(app)
+        check("Ctrl+Alt+Arriba sube el volumen 5%",
+              bool(v_ahora and abs((v_ahora[0] - v_antes[0]) - paso) < 0.02),
+              f"{v_antes[0] * 100:.0f}% -> {v_ahora[0] * 100:.0f}%"
+              if v_ahora else "no se pudo leer el volumen despues del atajo")
+        acorde(["CTRL", "ALT", "DOWN"], espera=0.8)
+        v3 = volume_mod.estado(app)
+        check("Ctrl+Alt+Abajo baja el volumen 5%",
+              bool(v_ahora and v3 and abs((v3[0] - v_ahora[0]) + paso) < 0.02),
+              f"{v_ahora[0] * 100:.0f}% -> {v3[0] * 100:.0f}%"
+              if (v_ahora and v3) else "no se pudo leer el volumen despues del atajo")
 
     # --- ocultar / mostrar --------------------------------------------------
     print("\n-- Ctrl+Alt+M --")
@@ -309,10 +375,13 @@ def main() -> int:
 
     # --- dejar todo como estaba --------------------------------------------
     try:
-        volume_mod.fijar(app, v_ini[0])
-        if v_ini[1]:
-            volume_mod.silenciar(app, True)
-        print(f"\nvolumen devuelto a {v_ini[0] * 100:.0f}%")
+        if v_ini:
+            volume_mod.fijar(app, v_ini[0])
+            if v_ini[1]:
+                volume_mod.silenciar(app, True)
+            print(f"\nvolumen devuelto a {v_ini[0] * 100:.0f}%")
+        else:
+            print(f"\nvolumen: {app} no lo expone, no hay nada que devolver")
         if pausado_por_prueba and not poller.state().playing:
             poller.toggle()
             print("reproduccion reanudada")

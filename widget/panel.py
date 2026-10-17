@@ -208,7 +208,9 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, volume=None,
     img = Image.new("RGBA", (Wp * SS, Hp * SS), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    theme = draw.theme_for_base(cfg, tuple(base)[:3] if base else (26, 28, 36))
+    theme = draw.theme_for_base(
+        cfg, tuple(base)[:3] if base else (26, 28, 36),
+        fondo_visible=int(max(0, min(255, cfg.get("panel_bg_alpha", 250)))) > 0)
     # El alfa del fondo se respeta TAL CUAL: con 0 no se dibuja nada (ni el borde) y el
     # panel queda solo con los datos, flotando sobre lo que haya detras. Antes habia un
     # piso de 60 "para que no quedara invisible", y eso hacia que "Sin fondo" pintara

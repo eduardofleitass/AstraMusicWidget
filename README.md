@@ -81,6 +81,14 @@ Probado en Windows 10 22H2 (19045), escala 100% y 1920x1080.
 | Detenerlo | clic derecho > Salir, o `python tools\stop.py` |
 | Reinstalar dependencias | `setup.bat` |
 
+> **Ojo con Ctrl+Alt+flechas**: los drivers de video suelen tomar esa familia de teclas
+> (Ctrl+Alt+flecha = girar la pantalla). Medido en Windows 11 en un equipo que las tiene
+> tomadas: `Ctrl+Alt+P` funciona, `Ctrl+Alt+↑` (volumen) tambien, y **`Ctrl+Alt+Shift+↑/↓`
+> (±10 s) no llega al programa** — Windows entrega el atajo de volumen. No es del widget: pasa
+> igual con cualquier programa (probado registrando esa combinacion sola). Si te toca, el ±10 s
+> esta en la **rueda del mouse** (`Ctrl` = 1 s, `Shift` = 60 s, sola = 10 s) y en la **barra de
+> progreso**, y las teclas se cambian en `widget/app.py` → tabla `HOTKEYS`.
+
 Si nunca corriste nada todavia, empeza por `setup.bat`.
 
 

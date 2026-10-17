@@ -91,7 +91,8 @@ def find_widget():
     """El widget y la barra donde vive, sea la principal o la de otro monitor.
 
     En Windows 10 cada monitor tiene su propia barra (Shell_SecondaryTrayWnd), asi
-    que no se puede asumir la principal.
+    que no se puede asumir la principal. En Windows 11 el widget pasa al modo flotante
+    (ventana propia, sin barra): se acepta tambien asi, que es como se ve en pantalla.
     """
     for b in list_bars():
         w = win32gui.FindWindowEx(b["tray"], 0, "AstraMusicWnd", None)
@@ -100,6 +101,12 @@ def find_widget():
             # mudarse de barra el hwnd cambia, asi que hay que refrescarlo aca.
             WIN["widget"] = w
             return b["tray"], w
+    # Windows 11: el widget es una ventana propia (modo flotante), no un hijo de la barra
+    w = win32gui.FindWindow("AstraMusicWnd", None)
+    if w:
+        WIN["widget"] = w
+        barras = list_bars()
+        return (barras[0]["tray"] if barras else 0), w
     return 0, 0
 
 
@@ -399,7 +406,7 @@ def main() -> int:
     base = sample(poller)
     w, wrect = rect_actual()
     k = (wrect[3] - wrect[1]) / 40.0
-    pr = draw.progress_rect(wrect[2] - wrect[0], k, cfg)
+    pr = draw.progress_rect(int(cfg.get("width", 260)), k, cfg)
     y_barra = wrect[1] + int(35.5 * k)
     if not (pr and base.can_seek and base.duration > 20):
         check("un clic en la barra salta a la posicion clickeada", False,
@@ -1053,22 +1060,27 @@ def main() -> int:
             except Exception as exc:
                 check("soltandolo cerca del borde queda pegado al borde", False, repr(exc))
 
-            # (c8) tercer tamano: tira fina (320x34 a k=1) y sigue siendo usable
+            # (c8) tercer tamano: tira fina (320x34 en una barra de 40 px) y sigue usable
             try:
                 win32gui.PostMessage(w, win32con.WM_APP + 11, 5, 2)     # tira
                 time.sleep(1.0)
-                k_t = 1.0
                 # El panel de la tira: se pide su tamano explicito. Mirar la config actual
                 # daba cualquier cosa si la app corre con OTRO config.json (el del .exe
                 # vive al lado del ejecutable, no en la carpeta del proyecto).
                 cfg_tira = dict(cfgmod.load(), panel_size="tira")
-                w_t, h_t = panel_mod.size(k_t, cfg_tira)
                 hp_t = win32gui.FindWindow(PANEL_CLASS if "PANEL_CLASS" in dir() else
                                            "AstraMusicPanel", None)
                 rr = win32gui.GetWindowRect(hp_t) if hp_t else (0, 0, 0, 0)
+                # La escala NO es 1 en Windows 11 (barra de 48 px -> k=1.2) y el panel se
+                # dibuja con la escala de la barra: se saca del alto del widget en vez de
+                # asumir 1, que hacia fallar el tamano esperado (320x34 contra 384x41) y
+                # despues el clic en la cruz, que caia corrido.
+                _wk, wr_k = rect_actual()
+                k_t = (wr_k[3] - wr_k[1]) / 40.0 if wr_k[3] > wr_k[1] else 1.0
+                w_t, h_t = panel_mod.size(k_t, cfg_tira)
                 check("el tamano tira fina achica el panel a una fila",
                       hp_t and win32gui.IsWindowVisible(hp_t)
-                      and abs((rr[2] - rr[0]) - w_t) <= 2,
+                      and abs((rr[2] - rr[0]) - w_t) <= 2 and abs((rr[3] - rr[1]) - h_t) <= 2,
                       f"ventana {rr[2] - rr[0]}x{rr[3] - rr[1]}, esperado {w_t}x{h_t}")
                 if hp_t and win32gui.IsWindowVisible(hp_t):
                     zt = panel_mod.rects(k_t, cfg_tira)

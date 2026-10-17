@@ -48,6 +48,21 @@ def check(name: str, ok: bool, detail: str = "", skipped: bool = False) -> bool:
     return ok
 
 
+FLOTANTE = False   # se resuelve en main(): en Windows 11 el widget es ventana propia
+
+
+def widget_ventana() -> int:
+    """El hwnd del widget donde este viviendo: incrustado en la barra o ventana propia.
+
+    En Windows 10 vive adentro de la barra de tareas; en Windows 11 (barra dibujada por
+    XAML) el widget pasa al modo flotante, que es una ventana de nivel superior. La
+    suite tiene que encontrarlo igual, porque es la mitad de las comprobaciones. Las que
+    dependen de estar incrustado quedan marcadas como SALTA con el motivo.
+    """
+    barra, w = barra_del_widget()
+    return w or win32gui.FindWindow("AstraMusicWnd", None)
+
+
 def barra_del_widget():
     """(datos de la barra, hwnd del widget) donde sea que este viviendo.
 
@@ -78,7 +93,7 @@ def tray_parts():
     barra, w = barra_del_widget()
     host = host_de(barra)
     return {"tray": host.tray, "rebar": host.container, "anchor": host.anchor,
-            "widget": w, "barra": host.barra}
+            "widget": widget_ventana(), "barra": host.barra}
 
 
 def rect(h) -> tuple:
@@ -179,16 +194,46 @@ def scrub_abortar(hwnd) -> tuple:
 
 
 def main() -> int:
+    global FLOTANTE
     cfg = cfgmod.load()
     p = tray_parts()
     if not check("la barra de tareas existe", bool(p["tray"])):
         return 1
-    if not check("el widget esta incrustado", bool(p["widget"]) and
-                 win32gui.GetParent(p["widget"]) == p["tray"]):
-        print("  (arrancá el widget antes de correr esto)")
+    # El widget vive incrustado en la barra (Windows 10) o como ventana propia (el modo
+    # flotante, que es el unico que se ve en Windows 11). Si la barra lo admite y igual
+    # quedo suelto, es un fallo del detector y se informa como tal; si la barra no lo
+    # admite, la suite sigue en modo flotante y saltea solo las pruebas de anclaje.
+    if not p["widget"]:
+        check("el widget esta corriendo", False, "arrancalo antes de correr esto")
         return 1
+    incrustado = win32gui.GetParent(p["widget"]) == p["tray"]
+    from widget.taskbarwin import motivo_no_incrustable
+    admite = motivo_no_incrustable() is None
+    if incrustado:
+        check("el widget esta incrustado en la barra", True)
+    elif admite:
+        check("el widget esta incrustado en la barra", False,
+              "la barra lo admite y el widget quedo como ventana propia: revisar "
+              "motivo_no_incrustable()")
+    else:
+        FLOTANTE = True
+        check("el widget esta donde debe: ventana propia (modo flotante)", True,
+              "la barra no admite ventanas ajenas; las pruebas de anclaje se marcan SALTA")
     check("el widget esta visible", bool(win32gui.IsWindowVisible(p["widget"])),
           "se crea oculto y se muestra recien tras el primer render")
+
+    def check_barra(nombre: str, ok: bool, detalle: str = "") -> bool:
+        """Comprobacion de las que solo valen con el widget INCRUSTADO en la barra.
+
+        En modo flotante (Windows 11) el widget es una ventana propia: no le pide lugar
+        a la lista de tareas, no se apoya en el bloque de la bandeja y puede estar en
+        cualquier parte del tramo. Marcarlas SALTA con el motivo es mas honesto que
+        informar un fallo que no existe (y que taparia un fallo de verdad).
+        """
+        if FLOTANTE:
+            return check(nombre, True, "no aplica en modo flotante: el widget es ventana "
+                                       "propia y no reserva lugar en la barra", skipped=True)
+        return check(nombre, ok, detalle)
 
     tl, tt, tr, tb = win32gui.GetWindowRect(p["tray"])
     k = (tb - tt) / 40.0
@@ -204,16 +249,16 @@ def main() -> int:
     check("alto igual a la barra", wh == tb - tt, f"{wh} vs {tb - tt}")
     pegado = abs(w_rect[2] - a_rect[0]) <= 3
     frenado = w_rect[2] < a_rect[0]
-    check("no pisa el bloque de la bandeja (pegado al ancla o frenado por la lista)",
-          w_rect[2] <= a_rect[0] + 3,
-          f"widget.right={w_rect[2]} vs ancla.left={a_rect[0]}"
-          + ("" if pegado else " (frenado por el espacio de la lista de tareas)"))
-    check("pegado al ancla cuando la lista no lo impide",
-          pegado or frenado,
-          "pegado" if pegado else "frenado por la lista, que es lo esperado con "
-          "muchas ventanas abiertas")
-    check("la lista de tareas cedio el espacio", r_rect[2] <= w_rect[0] + 2,
-          f"rebar.right={r_rect[2]} < widget.left={w_rect[0]}")
+    check_barra("no pisa el bloque de la bandeja (pegado al ancla o frenado por la lista)",
+                w_rect[2] <= a_rect[0] + 3,
+                f"widget.right={w_rect[2]} vs ancla.left={a_rect[0]}"
+                + ("" if pegado else " (frenado por el espacio de la lista de tareas)"))
+    check_barra("pegado al ancla cuando la lista no lo impide",
+                pegado or frenado,
+                "pegado" if pegado else "frenado por la lista, que es lo esperado con "
+                "muchas ventanas abiertas")
+    check_barra("la lista de tareas cedio el espacio", r_rect[2] <= w_rect[0] + 2,
+                f"rebar.right={r_rect[2]} < widget.left={w_rect[0]}")
     # min_tasklist_width es el minimo PREFERIDO; cuando el widget se mueve libre el
     # piso real es min_tasklist_free (el limite lo descubre el propio widget). Se
     # comprueba el piso y se informa el ancho real.
@@ -266,7 +311,7 @@ def main() -> int:
     reborn = 0
     for _ in range(30):
         time.sleep(0.2)
-        reborn = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
+        reborn = widget_ventana()
         if reborn:
             break
     check("el widget se reconstruye solo", bool(reborn),
@@ -276,67 +321,79 @@ def main() -> int:
         rb = win32gui.GetWindowRect(reborn)
         r2 = win32gui.GetWindowRect(p["rebar"])
         a2 = win32gui.GetWindowRect(p["anchor"])
-        check("renace sin pisar el bloque de la bandeja", rb[2] <= a2[0] + 3,
-              f"right={rb[2]} ancla={a2[0]}"
-              + ("" if abs(rb[2] - a2[0]) <= 3 else " (frenado por la lista)"))
+        check_barra("renace sin pisar el bloque de la bandeja", rb[2] <= a2[0] + 3,
+                    f"right={rb[2]} ancla={a2[0]}"
+                    + ("" if abs(rb[2] - a2[0]) <= 3 else " (frenado por la lista)"))
         check("renace visible", bool(win32gui.IsWindowVisible(reborn)))
-        check("vuelve a reservar su espacio", r2[2] <= rb[0] + 2,
-              f"rebar.right={r2[2]} widget.left={rb[0]}")
+        check_barra("vuelve a reservar su espacio", r2[2] <= rb[0] + 2,
+                    f"rebar.right={r2[2]} widget.left={rb[0]}")
 
     # --- recuperacion: la barra se reacomoda a lo ancho --------------------
     print("\n-- prueba de recuperacion: la barra recupera su ancho natural --")
     reb = p["rebar"]
     rr = win32gui.GetWindowRect(reb)
     an = win32gui.GetWindowRect(p["anchor"])
-    win32gui.SetWindowPos(reb, 0, 0, 0, an[0] - rr[0], rr[3] - rr[1],
-                          win32con.SWP_NOMOVE | win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
-    print(f"  la lista de tareas vuelve a ocupar todo: right={an[0]}")
+    if not FLOTANTE:
+        win32gui.SetWindowPos(reb, 0, 0, 0, an[0] - rr[0], rr[3] - rr[1],
+                              win32con.SWP_NOMOVE | win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
+        print(f"  la lista de tareas vuelve a ocupar todo: right={an[0]}")
     ok = False
     for _ in range(25):
         time.sleep(0.2)
         rr2 = win32gui.GetWindowRect(p["rebar"])
-        wg = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
+        wg = widget_ventana()
         if wg and rr2[2] <= win32gui.GetWindowRect(wg)[0] + 2:
             ok = True
             break
-    check("el widget recupera su espacio solo", ok,
-          f"rebar.right={rr2[2]}")
+    check_barra("el widget recupera su espacio solo", ok, f"rebar.right={rr2[2]}")
 
     # --- transparencia real -------------------------------------------------
     print("\n-- fondos: transparencia real medida contra la barra --")
     try:
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
+        w_now = widget_ventana()
         tt = rect(p["tray"])[1]
         wr = posicion(w_now, 0xFFFF, 232)          # extremo derecho, chip solido
         an = rect(p["anchor"])
-        zona = (max(wr[0] + 40, 1250), min(wr[2] - 10, an[0] - 10))
+        # La franja de prueba es la parte pelada de la barra, a la izquierda del bloque
+        # de la bandeja y a la derecha del widget. En modo flotante el widget no se apoya
+        # en la barra y puede quedar encima o a la derecha de esa franja: cuando no queda
+        # franja libre no hay nada que medir (la transparencia del chip se mide, en modo
+        # flotante, en tools/flotante_test.py).
+        x0 = max(wr[0] + 40, 1250)
+        x1 = min(wr[2] - 10, an[0] - 10)
         y = tt + 6                                  # dentro del chip
-        muestras = {}
-        for a in (0, 100, 170, 232):
-            posicion(w_now, 0xFFFF, a)
-            muestras[a] = franja(zona[0], zona[1], y)
-        wr2 = posicion(w_now, 300, 232)             # a la izquierda: zona pelada
-        pelado = franja(zona[0], zona[1], y)
-        if wr2[2] >= zona[0]:
-            check("franja de prueba libre para medir el fondo", False,
-                  f"el widget en {wr2} tapa la franja {zona}")
+        if x1 - x0 < 40:
+            check("transparencia del fondo medida contra la barra", True,
+                  f"no quedo franja pelada donde medir ({x0}..{x1}): el widget en modo "
+                  f"flotante no se apoya en la barra", skipped=True)
         else:
-            m0, mx0 = difusa(muestras[0], pelado)
-            m100, _ = difusa(muestras[100], pelado)
-            m232, _ = difusa(muestras[232], pelado)
-            print(f"   franja {zona[0]}..{zona[1]} y={y - tt}: "
-                  f"alpha0={m0:.2f}  alpha100={m100:.2f}  alpha232={m232:.2f}")
-            check("sin fondo: se ve el fondo de la barra tal cual",
-                  m0 <= 3, f"diferencia media {m0:.2f} (max {mx0})")
-            # El cuanto depende del papel tapiz detras de la barra de ese monitor
-            # (la barra es translucida): 10 es lo que da en la principal, en la del
-            # secundario puede quedar en ~8. La invariante es que tape de forma
-            # perceptible y que los niveles sean progresivos.
-            check("fondo solido: el chip tapa el fondo", m232 >= 6,
-                  f"diferencia media {m232:.2f} (en el monitor principal suele "
-                  f"pasar de 10)")
-            check("los niveles de fondo son progresivos", m0 < m100 < m232,
-                  f"{m0:.1f} < {m100:.1f} < {m232:.1f}")
+            zona = (x0, x1)
+            muestras = {}
+            for a in (0, 100, 170, 232):
+                posicion(w_now, 0xFFFF, a)
+                muestras[a] = franja(zona[0], zona[1], y)
+            wr2 = posicion(w_now, 300, 232)             # a la izquierda: zona pelada
+            pelado = franja(zona[0], zona[1], y)
+            if wr2[2] >= zona[0]:
+                check("franja de prueba libre para medir el fondo", False,
+                      f"el widget en {wr2} tapa la franja {zona}")
+            else:
+                m0, mx0 = difusa(muestras[0], pelado)
+                m100, _ = difusa(muestras[100], pelado)
+                m232, _ = difusa(muestras[232], pelado)
+                print(f"   franja {zona[0]}..{zona[1]} y={y - tt}: "
+                      f"alpha0={m0:.2f}  alpha100={m100:.2f}  alpha232={m232:.2f}")
+                check("sin fondo: se ve el fondo de la barra tal cual",
+                      m0 <= 3, f"diferencia media {m0:.2f} (max {mx0})")
+                # El cuanto depende del papel tapiz detras de la barra de ese monitor
+                # (la barra es translucida): 10 es lo que da en la principal, en la del
+                # secundario puede quedar en ~8. La invariante es que tape de forma
+                # perceptible y que los niveles sean progresivos.
+                check("fondo solido: el chip tapa el fondo", m232 >= 6,
+                      f"diferencia media {m232:.2f} (en el monitor principal suele "
+                      f"pasar de 10)")
+                check("los niveles de fondo son progresivos", m0 < m100 < m232,
+                      f"{m0:.1f} < {m100:.1f} < {m232:.1f}")
     except Exception as exc:
         check("medicion de transparencia", False, repr(exc))
 
@@ -353,7 +410,7 @@ def main() -> int:
             h = user32.WindowFromPoint(wt.POINT(int(x), int(y)))
             return win32gui.GetClassName(h) if h else "ninguna"
 
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
+        w_now = widget_ventana()
         filas = []
         for f in range(0, 11, 2):
             frac = f / 10.0
@@ -367,18 +424,18 @@ def main() -> int:
         check("el widget se mueve a lo largo de la barra",
               len({f[1][0] for f in filas}) >= 3,
               f"{len({f[1][0] for f in filas})} posiciones distintas")
-        check("nunca queda tapado por la lista de tareas",
-              all(f[2][2] <= f[1][0] + 1 for f in filas),
-              f"peor: {max(f[2][2] - f[1][0] for f in filas)} px de invasión")
+        check_barra("nunca queda tapado por la lista de tareas",
+                    all(f[2][2] <= f[1][0] + 1 for f in filas),
+                    f"peor: {max(f[2][2] - f[1][0] for f in filas)} px de invasión")
         check("nadie mas lo tapa en su zona",
               all(f[4] == "AstraMusicWnd" for f in filas),
               str({f[4] for f in filas}))
-        check("nunca invade el bloque de la bandeja",
-              all(f[1][2] <= f[3][0] for f in filas),
-              f"peor: {max(f[1][2] - f[3][0] for f in filas)} px")
-        check("al extremo derecho queda pegado al ancla",
-              abs(filas[-1][1][2] - filas[-1][3][0]) <= 3,
-              f"right={filas[-1][1][2]} ancla={filas[-1][3][0]}")
+        check_barra("nunca invade el bloque de la bandeja",
+                    all(f[1][2] <= f[3][0] for f in filas),
+                    f"peor: {max(f[1][2] - f[3][0] for f in filas)} px")
+        check_barra("al extremo derecho queda pegado al ancla",
+                    abs(filas[-1][1][2] - filas[-1][3][0]) <= 3,
+                    f"right={filas[-1][1][2]} ancla={filas[-1][3][0]}")
         piso = int(cfg.get("min_tasklist_free", 140))
         menor = min(f[2][2] - f[2][0] for f in filas)
         check("la lista de tareas nunca baja de su piso usable",
@@ -389,7 +446,7 @@ def main() -> int:
     # --- barra de progreso: zona clicable y previsualizacion ---------------
     print("\n-- barra de progreso: zona clicable y previsualizacion --")
     try:
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
+        w_now = widget_ventana()
         wr = rect(w_now)
         ww2, wh2 = wr[2] - wr[0], wr[3] - wr[1]
         # Dos anchos, que no son lo mismo: `ww2` es el real del cuadro (lo que piden
@@ -489,7 +546,7 @@ def main() -> int:
         u32 = ctypes.windll.user32
         u32.WindowFromPoint.restype = wt.HWND
         u32.WindowFromPoint.argtypes = [wt.POINT]
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
+        w_now = widget_ventana()
         # Sin fondo es el caso que fallaba: el alpha 0 por pixel hace que Windows
         # le entregue el mouse a la barra de tareas en las zonas vacias.
         posicion(w_now, 0xFFFF, 0)
@@ -513,7 +570,7 @@ def main() -> int:
     try:
         from PIL import ImageGrab
         from widget.media import MediaPoller
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
+        w_now = widget_ventana()
         wr = rect(w_now)
         ww2 = wr[2] - wr[0]
         # La franja de las ondas se calcula con el ancho LOGICO (el mismo que usa el
@@ -563,12 +620,21 @@ def main() -> int:
         apagado = draw.render(est_franja, dict(cfg, show_waves=False), art=None,
                               k=1.0, opaque=True, base=(40, 34, 33))
         wr_off = draw.wave_rect(apagado.width, 1.0, cfg)
-        fuera = sum(1 for x in range(wr_off[0] + 1, wr_off[2] - 1)
-                    for y in range(wr_off[1] + 1, wr_off[3] - 1)
-                    if max(abs(apagado.getpixel((x, y))[i] - (40, 34, 33)[i])
-                           for i in range(3)) > 6)
+        # El fondo "liso" de la franja se toma del color mas repetido DENTRO de la franja,
+        # no de un color fijo: con el fondo del widget en el acento de Windows (o en
+        # cualquier otro color), el chip no es el (40,34,33) muestreado y contar contra
+        # ese valor daba 396 pixeles "fuera del fondo" con las ondas perfectamente
+        # apagadas. Lo que se quiere medir es "no hay pixeles de onda", sea cual sea el
+        # color del chip.
+        datos_franja = [apagado.getpixel((x, y))
+                        for x in range(wr_off[0] + 1, wr_off[2] - 1)
+                        for y in range(wr_off[1] + 1, wr_off[3] - 1)]
+        fondo_franja = max(set(datos_franja), key=datos_franja.count) if datos_franja else (0, 0, 0)
+        fuera = sum(1 for p in datos_franja
+                    if max(abs(p[i] - fondo_franja[i]) for i in range(3)) > 6)
         check("con las ondas apagadas la franja queda lisa", fuera == 0,
-              f"{fuera} pixeles fuera del fondo liso en la franja {wr_off} (medido en el dibujo)")
+              f"{fuera} pixeles fuera del fondo liso en la franja {wr_off} "
+              f"(fondo {fondo_franja[:3]}, medido en el dibujo)")
 
         probe = MediaPoller(interval=0.3)
         probe.start()
@@ -700,7 +766,7 @@ def main() -> int:
     print("\n-- colores de la barra de progreso y de las ondas --")
     try:
         from PIL import ImageGrab
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
+        w_now = widget_ventana()
         wr = rect(w_now)
         ww2 = wr[2] - wr[0]
         check("los colores se entienden en hex, en lista y en corto",
@@ -885,7 +951,7 @@ def main() -> int:
     # --- vigilancia del pintado --------------------------------------------
     print("\n-- vigilancia del pintado (30 muestras, ~9 s) --")
     try:
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
+        w_now = widget_ventana()
         posicion(w_now, 0xFFFF, 232)
         tt = rect(p["tray"])[1]
         malos = 0
@@ -904,7 +970,7 @@ def main() -> int:
         check("vigilancia del pintado", False, repr(exc))
 
     try:
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
+        w_now = widget_ventana()
         posicion(w_now, 0xFFFF, int(cfg.get("chip_alpha", 232)))  # dejar como estaba
     except Exception:
         pass
@@ -912,7 +978,7 @@ def main() -> int:
     # --- volumen: celda del altavoz, fila de volumen y sesion de audio ---------
     print("\n-- volumen de la app --")
     # (a) geometria: el altavoz va despues de los botones y no pisa nada
-    w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
+    w_now = widget_ventana()
     ww3 = (rect(w_now)[2] - rect(w_now)[0]) if w_now else int(cfg.get("width", 300) * k)
     wlog3 = int(cfg.get("width", 260))     # ancho logico: lo que piden progress_span
     ctrls = draw.control_rects(ww3, k, cfg)
@@ -950,39 +1016,53 @@ def main() -> int:
             return draw.render(st_v, cfg_rojo, k=k, base=(28, 30, 38),
                                height=int(40 * k), volume=vol).convert("RGB")
 
-        def filas_rojas(im, x=100, exacto=True):
+        def filas_rojas(im, x, exacto=True, y_ini=None, y_fin=None):
             """Filas con relleno rojo en esa columna.
 
             Con exacto=True se cuentan solo los pixeles de rojo puro (el nucleo del
             relleno); con exacto=False se toleran los bordes suavizados, que es lo
-            que hace falta para comparar grosores.
+            que hace falta para comparar grosores. Las filas salen de la geometria de
+            la barra (y no de un 26..40 fijo): con la barra de tareas de 48 px la
+            barra vive mas abajo y un rango fijo no la veia.
             """
             n = 0
-            for y in range(26, 40):
+            for y in range(y_ini, min(y_fin, im.height)):
                 r, g, b = im.getpixel((x, y))
                 if (255, 0, 0) == (r, g, b) if exacto else (r > 140 and g < 120 and b < 120):
                     n += 1
             return n
 
+        # Columnas de prueba, sacadas de donde se dibuja la barra: una adentro del
+        # relleno del progreso (15%) y otra donde solo llega el volumen (45%).
+        prg = draw.progress_rect(int(cfg.get("width", 260)), k, cfg)
+        if prg:
+            x_dentro = prg[0] + 6
+            x_solo_vol = prg[0] + int((prg[2] - prg[0]) * 0.30)
+            y_ini, y_fin = max(0, prg[1] - 3), prg[3] + 5
+        else:
+            x_dentro, x_solo_vol, y_ini, y_fin = 50, 100, 26, 40
+
         normal = cuadro(None)
         volumen = cuadro((0.45, False, True, True))
         mudo = cuadro((0.45, True, True, True))
         sin_sesion = cuadro((0.45, False, True, False))
-        # La cancion esta en 30 s de 200 (15%): a 100 px del borde izquierdo el
-        # progreso no llega, pero el volumen al 45% si. Y la barra ademas se dibuja
-        # 1,8 veces mas gruesa cuando esta activa.
-        rojo_n = filas_rojas(cuadro_rojo(None))
-        rojo_v = filas_rojas(cuadro_rojo((0.45, False, True, True)))
-        rojo_m = filas_rojas(cuadro_rojo((0.45, True, True, True)))
-        # grosor: en x=50 el progreso tambien tiene relleno (15%), asi que ahi se
-        # comparan grosores; en x=100 solo el volumen llega
-        grue_n = filas_rojas(cuadro_rojo(None), 50, exacto=False)
-        grue_v = filas_rojas(cuadro_rojo((0.45, False, True, True)), 50, exacto=False)
+        # La cancion esta en 30 s de 200 (15%): en x_dentro tienen relleno el progreso y
+        # el volumen (ahi se comparan los grosores) y en x_solo_vol (30% de la barra) solo
+        # llega el volumen al 45%, que ademas se dibuja 1,8 veces mas grueso.
+        rojo_n = filas_rojas(cuadro_rojo(None), x_solo_vol, True, y_ini, y_fin)
+        rojo_v = filas_rojas(cuadro_rojo((0.45, False, True, True)), x_solo_vol, True,
+                             y_ini, y_fin)
+        rojo_m = filas_rojas(cuadro_rojo((0.45, True, True, True)), x_solo_vol, True,
+                             y_ini, y_fin)
+        grue_n = filas_rojas(cuadro_rojo(None), x_dentro, False, y_ini, y_fin)
+        grue_v = filas_rojas(cuadro_rojo((0.45, False, True, True)), x_dentro, False,
+                             y_ini, y_fin)
         check("con el volumen a la vista la fila muestra el nivel donde el progreso no llega",
               rojo_v >= 2 and rojo_n == 0,
-              f"filas de rojo puro en x=100: progreso {rojo_n}, volumen {rojo_v}")
+              f"filas de rojo puro en x={x_solo_vol}: progreso {rojo_n}, volumen {rojo_v}")
         check("la barra de volumen se dibuja mas gruesa que el progreso",
-              grue_v >= grue_n + 2, f"grosor en x=50: {grue_n} -> {grue_v} filas")
+              grue_v >= grue_n + 2,
+              f"grosor en x={x_dentro}: {grue_n} -> {grue_v} filas")
         check("silenciado, la barra de volumen queda vacia", rojo_m == 0,
               f"filas pintadas con silencio: {rojo_m}")
         dif = sum(1 for a, b in zip(normal.crop((0, 19, normal.width, 30)).getdata(),
@@ -1114,36 +1194,51 @@ def main() -> int:
     # --- el fundido de mostrar/ocultar, medido en vivo -------------------------
     try:
         from PIL import ImageGrab
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
+        w_now = widget_ventana()
         ctl = win32gui.FindWindow("AstraMusicCtl", None)
         wr = rect(w_now)
 
-        def claros(caja=wr):
-            """Cuantos pixeles claros hay: los elementos dibujados del widget."""
-            im = ImageGrab.grab(all_screens=True, bbox=caja).convert("L")
-            return sum(1 for v in im.get_flattened_data() if v > 60)
+        def captura():
+            return ImageGrab.grab(all_screens=True, bbox=wr).convert("RGB")
 
-        visible_antes = claros()
+        def distintos(a, b):
+            """Pixeles del widget: los que difieren del cuadro SIN el widget.
+
+            Antes se contaban los pixeles claros del recorte, y eso depende del papel
+            tapiz: con la barra clara (o el chip del color del sistema) el cuadro sin el
+            widget tiene mas pixeles claros que el widget mismo, y la cuenta daba al
+            reves (medido: visible 4330 -> oculto 14898). Comparar contra el cuadro
+            oculto mide el aporte del widget, no el brillo del fondo.
+            """
+            return sum(1 for pa, pb in zip(a.get_flattened_data(), b.get_flattened_data())
+                       if max(abs(pa[i] - pb[i]) for i in range(3)) > 25)
+
+        cap_visible = captura()
         win32gui.PostMessage(ctl, win32con.WM_HOTKEY, 1, 0)   # ocultar: arranca el fundido
         time.sleep(max(0.08, cfg.get("fade_step", 48) and 0.10))
-        medio = claros()
+        cap_medio = captura()
         time.sleep(0.7)
-        oculto = claros()
+        cap_oculto = captura()
+        visible_antes = distintos(cap_visible, cap_oculto)
+        medio = distintos(cap_medio, cap_oculto)
         check("al ocultar, el widget pasa por un estado intermedio (fundido)",
-              visible_antes > medio > oculto + 5,
-              f"pixeles dibujados: visible {visible_antes} -> mitad {medio} -> oculto {oculto}")
+              visible_antes > medio > 5,
+              f"pixeles del widget contra el fondo: visible {visible_antes} -> "
+              f"mitad {medio} -> oculto 0")
 
         win32gui.PostMessage(ctl, win32con.WM_HOTKEY, 1, 0)   # mostrar: fundido al reves
         time.sleep(max(0.08, 0.10))
-        medio2 = claros()
+        cap_medio2 = captura()
         time.sleep(0.7)
-        visible_despues = claros()
+        cap_visible2 = captura()
+        medio2 = distintos(cap_medio2, cap_oculto)
+        visible_despues = distintos(cap_visible2, cap_oculto)
         check("al mostrarlo tambien aparece con fundido",
-              visible_despues > medio2 > oculto + 5,
-              f"pixeles dibujados: oculto {oculto} -> mitad {medio2} -> visible "
-              f"{visible_despues}")
+              visible_despues > medio2 > 5,
+              f"pixeles del widget contra el fondo: oculto 0 -> mitad {medio2} -> "
+              f"visible {visible_despues}")
         check("el widget termina visible y completo",
-              abs(visible_despues - visible_antes) < max(60, 0.25 * visible_antes),
+              abs(visible_despues - visible_antes) <= max(80, 0.25 * max(1, visible_antes)),
               f"antes {visible_antes} pixeles, despues {visible_despues}")
     except Exception as exc:
         check("el fundido en vivo", False, repr(exc))
@@ -1295,10 +1390,14 @@ def main() -> int:
                   min(alfa) == piso > 0 and max(alfa) == 255,
                   f"alfa del panel sin fondo: min {min(alfa)}, max {max(alfa)}")
 
-            # ...y el texto tiene que contrastar con lo que hay DETRAS (se da vuelta)
+            # ...y el texto tiene que contrastar con lo que hay DETRAS (se da vuelta).
+            # Se prueba el caso "sin fondo" de verdad: sin fondo en el widget y en el
+            # panel (con el chip del color del sistema a la vista, el texto contrasta
+            # con ESE color y no con el fondo, que es lo correcto).
             contrastes = []
+            cfg_sf = dict(cfg_chico, chip_alpha=0, panel_bg_alpha=0)
             for base in ((235, 235, 235), (30, 30, 36)):
-                th = draw.theme_for_base(cfg_chico, base)
+                th = draw.theme_for_base(cfg_sf, base)
                 lt = draw._lum(th.get("title") or (238, 240, 248))
                 lb = draw._lum(base)
                 contrastes.append((lt - lb, abs(lt - lb)))
@@ -1412,10 +1511,25 @@ def main() -> int:
                   + ("" if movido else f"; widget arriba y={wr_w[1]}"))
             im_vivo = ImageGrab.grab(all_screens=True, bbox=pr).convert("L")
             vals = list(im_vivo.get_flattened_data())
+            # Si otra ventana tapa el panel (una consola abierta encima, por ejemplo), la
+            # captura muestra esa ventana y la medida no dice nada del panel: se informa
+            # como interferencia, igual que hace la prueba de los atajos, en vez de
+            # inventar un fallo. Pasa cuando el panel vive en una esquina donde hay otra
+            # ventana, que es lo que ocurre si lo arrastraste ahi.
+            try:
+                encima = win32gui.WindowFromPoint(((pr[0] + pr[2]) // 2,
+                                                   (pr[1] + pr[3]) // 2))
+            except Exception:
+                encima = 0
+            tapado = bool(encima) and encima != w_panel
             check("el panel esta pintado (no es un rectangulo negro)",
-                  max(vals) - min(vals) > 100 and sum(1 for v in vals if v > 150) > 300,
+                  (not tapado) and max(vals) - min(vals) > 100
+                  and sum(1 for v in vals if v > 150) > 300,
+                  f"otra ventana (0x{encima:X}) tapa el panel: no se puede medir el panel"
+                  if tapado else
                   f"min {min(vals)} max {max(vals)}, "
-                  f"{sum(1 for v in vals if v > 150)} pixeles claros")
+                  f"{sum(1 for v in vals if v > 150)} pixeles claros",
+                  skipped=tapado)
 
             # (f) modo gaming: chico, sin robar el foco y sin cerrarse al tocar afuera
             auto_antes = float(cfg.get("panel_auto_hide_s", 0) or 0)
@@ -1434,8 +1548,13 @@ def main() -> int:
             w_panel = win32gui.FindWindow("AstraMusicPanel", None)
             pr_g = rect(w_panel)
             ex_g = win32gui.GetWindowLong(w_panel, win32con.GWL_EXSTYLE)
-            L = panel_mod.layout(cfgmod.load())
-            esperado = panel_mod.size((pr_g[3] - pr_g[1]) / float(L["H"]), cfgmod.load())
+            # El modo gaming usa SIEMPRE la disposicion chica: el tamano esperado sale de
+            # esa, no de la que el usuario tenga guardada (si guardo la "tira", la cuenta
+            # con su alto no cierra y la prueba fallaba sin que hubiera nada roto), y se
+            # calcula con la escala de la barra (la misma que usa el panel), no con la que
+            # se deduce de su alto ya redondeado (101/84 daba 1,2024 en vez de 1,2).
+            cfg_chico = dict(cfgmod.load(), panel_size="chico")
+            esperado = panel_mod.size(k, cfg_chico)
             check("modo gaming: el panel queda chico",
                   (pr_g[2] - pr_g[0], pr_g[3] - pr_g[1]) == esperado
                   and pr_g[3] - pr_g[1] < pr_antes[3] - pr_antes[1],
