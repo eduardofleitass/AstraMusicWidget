@@ -813,7 +813,7 @@ muestra.
 ### Instalador (Inno Setup)
 
     "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" instalador\Astra-Music-widget.iss
-    # deja instalador\Astra-Music-widget-1.0.1-setup.exe (30 MB)
+    # deja instalador\Astra-Music-widget-1.0.2-setup.exe (30 MB)
 
 Lo que hace el instalador:
 
@@ -829,7 +829,7 @@ Lo que hace el instalador:
   (Windows no deja sobrescribir un ejecutable en uso).
 - Al desinstalar **pregunta si conservar los ajustes** antes de borrar `config.json`.
 - El ejecutable lleva version en las Propiedades (`instalador/version_info.txt` →
-  Astra-Music-widget 1.0.1), asi que Windows muestra quien lo firma y que version es.
+  Astra-Music-widget 1.0.2), asi que Windows muestra quien lo firma y que version es.
 
 Lo que **no** se puede evitar sin pagar: sin firma digital, tanto el .exe como el
 instalador disparan el aviso de SmartScreen ("Windows protegio tu PC" → *Mas informacion*

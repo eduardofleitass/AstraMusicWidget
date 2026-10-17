@@ -202,5 +202,40 @@ def main() -> int:
     return run(cfg, embed=not args.no_embed, log_path=log_path, flotante=flotante)
 
 
+def _error_visible(exc: BaseException) -> None:
+    """Si algo revienta antes de que aparezca el widget, que se VEA y quede escrito.
+
+    El ejecutable no tiene consola: sin esto, un error de arranque no deja nada en pantalla y
+    el programa parece "no hacer nada" (es lo que reporto un usuario en Windows 11). Deja el
+    detalle en el log y muestra un cartel con la causa y donde esta el log.
+    """
+    import traceback
+    log = os.path.join(HERE, "astra-widget.log")
+    detalle = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    try:
+        with open(log, "a", encoding="utf-8") as fh:
+            fh.write("[%s] ERROR AL ARRANCAR\n%s\n" % (time.strftime("%H:%M:%S"), detalle))
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            "Astra-Music-widget no pudo arrancar.\n\n%s: %s\n\n"
+            "El detalle quedo en:\n%s\n\n"
+            "Para ver mas, abrilo desde una consola asi:\n"
+            "    Astra-Music-widget.exe --diagnose"
+            % (type(exc).__name__, exc, log),
+            "Astra-Music-widget", 0x10)   # MB_ICONERROR
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except BaseException as exc:            # noqa: BLE001 - ultimo recurso
+        _error_visible(exc)
+        raise SystemExit(1)

@@ -382,6 +382,25 @@ class WidgetApp:
                 pass  # ya registrada
 
     # ------------------------------------------------------------------ ciclo
+    def _avisar_ya_corre(self) -> None:
+        """Avisa en pantalla que ya hay otra instancia y no se la pudo traer al frente.
+
+        Volver a abrir el programa no hacia NADA visible (ni consola ni cartel) y parecia
+        roto: es el reporte de un usuario en Windows 11, donde el widget flotante puede
+        quedar tapado por la barra de tareas. El cartel dice donde buscarlo y como salir.
+        """
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                None,
+                "Astra-Music-widget ya se esta ejecutando, pero no pude traerlo al frente.\n\n"
+                "Buscá el widget en la barra de tareas o en el borde inferior de la pantalla.\n\n"
+                "Si no lo ves: cerralo desde el Administrador de tareas "
+                "(Astra-Music-widget) y volvé a abrirlo.",
+                "Astra-Music-widget", 0x30)   # MB_ICONWARNING
+        except Exception:
+            pass
+
     def run(self) -> int:
         set_dpi_aware()
         # COM en ESTE hilo: las llamadas de audio (ctypes) se hacen desde los
@@ -406,6 +425,7 @@ class WidgetApp:
                 self.log("le pedi a la instancia viva (0x%X) que se muestre", vivo)
                 return 0
             self.log("no encontre la ventana de la instancia viva")
+            self._avisar_ya_corre()
             return 2
 
         self._register_classes()

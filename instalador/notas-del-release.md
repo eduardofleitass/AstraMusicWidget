@@ -1,4 +1,4 @@
-# Astra-Music-widget 1.0.1
+# Astra-Music-widget 1.0.2
 
 Widget de musica que vive **dentro** de la barra de tareas de Windows: muestra lo que esta
 sonando (caratula, titulo, artista, barra de progreso clicable, controles y el volumen de
@@ -8,12 +8,31 @@ de multimedia de Windows, no un reproductor en particular.
 
 ## Novedades de esta version
 
+- **Ahora, si el programa no puede arrancar, lo dice**: aparece un cartel con la causa y el
+  detalle queda escrito en el log. Antes, cualquier fallo de arranque era invisible (el
+  ejecutable no tiene consola) y el programa parecia "no hacer nada". Esa mejora vale para
+  todas las versiones, pero no podia faltar antes de que lo pruebe gente en otras maquinas.
+- **Si ya hay otra copia corriendo y no se la puede traer al frente, tambien avisa**: antes el
+  segundo intento salia en silencio total, asi que parecia que el programa estaba roto.
+
+Lo de la version anterior, que sigue valiendo:
+
 - Si la **barra de tareas no esta abajo** (a un costado o arriba del monitor), el widget ya no
-  intenta incrustarse ahi: pasa solo al **modo flotante**, que no le toca la barra. Antes
-  quedaba mal ubicado y encima tapaba la barra. La decision se toma **midiendo** el
-  rectangulo de la barra contra el del monitor, asi que no depende de la version ni del
-  idioma de Windows.
-- El log ahora dice *por que* eligio el modo flotante.
+  intenta incrustarse ahi: pasa solo al **modo flotante**, que no le toca la barra. La decision
+  se toma **midiendo** el rectangulo de la barra contra el del monitor, asi que no depende de
+  la version ni del idioma de Windows.
+
+## Si no arranca (para diagnosticar)
+
+1. Abrir una consola en la carpeta del programa y correr:
+   `Astra-Music-widget.exe --diagnose`
+   Si aparece texto con el estado del reproductor, el programa funciona y el problema es de
+   pantalla. Si **no aparece nada**, algo lo esta frenando fuera del programa.
+2. Mirar si se creo `astra-widget.log` al lado del ejecutable (o en la carpeta de instalacion).
+   Ahi dice que paso, con fecha y hora.
+3. Si el archivo ni se creo, revisar **Seguridad de Windows → Proteccion contra virus y
+   amenazas → Historial de proteccion**: Windows puede estar bloqueando un ejecutable sin
+   firma digital bajado de internet (elegir "Permitir en el dispositivo").
 
 ## Que se puede hacer
 
@@ -36,7 +55,7 @@ de multimedia de Windows, no un reproductor en particular.
 
 Dos opciones, las dos sin Python:
 
-- **Instalador** (`Astra-Music-widget-1.0.1-setup.exe`, 30 MB): instala por usuario en
+- **Instalador** (`Astra-Music-widget-1.0.2-setup.exe`, 30 MB): instala por usuario en
   `%LOCALAPPDATA%\Programs\Astra-Music-widget`, crea los accesos del menu Inicio y el
   arranque con Windows, y deja un desinstalador en Ajustes → Aplicaciones. No pide
   administrador.
