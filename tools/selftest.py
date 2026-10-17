@@ -1129,6 +1129,7 @@ def main() -> int:
 
             # (f) modo gaming: chico, sin robar el foco y sin cerrarse al tocar afuera
             auto_antes = float(cfg.get("panel_auto_hide_s", 0) or 0)
+            modo_antes = str(cfgmod.load().get("panel_mode", "normal")).lower()
             win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 7, 0)      # sin auto-ocultar
             # El tamano de partida no se asume: la configuracion puede estar ya en
             # chico (si el modo gaming quedo prendido de una corrida anterior).
@@ -1188,7 +1189,7 @@ def main() -> int:
             # volver al modo normal y cerrar (el HUD se apaga primero: si no, el
             # proximo cambio de cancion lo vuelve a abrir, que es su trabajo)
             win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 4, 0)
-            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 6, 0)
+            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 6, 1 if modo_antes == "gaming" else 0)
             time.sleep(0.8)
             win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 7, int(auto_antes * 10))
             win32gui.PostMessage(w_now, WM_APP_PANEL, 0, 1)
