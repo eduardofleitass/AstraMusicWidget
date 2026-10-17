@@ -77,7 +77,7 @@ def main() -> int:
 
     # 2) el panel normal, debajo, como flota sobre el escritorio
     py = y0 + alto + 28
-    d.text((x0, py - 18), "el panel (clic en la caratula)", fill=(150, 155, 175))
+    d.text((x0, py - 18), "el panel (clic en la carátula)", fill=(150, 155, 175))
     art = caratula(92, 10)
     pan = panel_mod.render(st, dict(cfg, panel_size="normal", panel_bg_alpha=250),
                            art=art, volume=(0.62, False, True, True), k=1.0,

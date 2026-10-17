@@ -93,16 +93,17 @@ def main() -> int:
     hoja.paste(icono, (72, 72), icono)
     f_nombre = draw._font("title", 76)
     d.text((204, 84), "Astra-Music-widget", font=f_nombre, fill=TEXTO)
-    d.text((208, 178), "Musica en la barra de tareas de Windows",
+    d.text((208, 178), "Música en la barra de tareas de Windows",
            font=draw._font("body", 30), fill=ACENTO)
 
     # --- lo que hace, en renglones cortos -----------------------------------------------
     f_chico = draw._font("body", 26)
+    # OJO: aca van los acentos. Es texto que se ve en la imagen, no codigo.
     lineas = (
-        "Caratula, titulo, controles y el volumen de la app que suena.",
+        "Carátula, título, controles y el volumen de la app que suena.",
         "Anda con Spotify, VLC y lo que suene en el navegador.",
-        "Panel con tres tamanos y modo gaming: no le roba el foco al juego.",
-        "Gratis y con licencia MIT. Instalador o un portatil de un solo archivo.",
+        "Panel con tres tamaños y modo gaming: no le roba el foco al juego.",
+        "Gratis y con licencia MIT. Instalador o un portátil de un solo archivo.",
     )
     for i, t in enumerate(lineas):
         d.text((76, 262 + i * 40), t, font=f_chico, fill=(206, 210, 224))
