@@ -190,11 +190,15 @@ def main() -> int:
     # Modo flotante: si la barra no sirve para incrustar (Windows 11), se pasa solo.
     # Con --flotante se fuerza en cualquier Windows, que es como se prueba en 10.
     from widget import taskbarwin
-    flotante = args.flotante or not taskbarwin.barras_usables()
+    if args.no_embed:
+        motivo = None                                  # ventana normal, para desarrollo
+    elif args.flotante:
+        motivo = "pedido con --flotante"
+    else:
+        motivo = taskbarwin.motivo_no_incrustable()    # None si la barra sirve para incrustar
+    flotante = args.flotante or (not args.no_embed and motivo is not None)
     if flotante and not args.no_embed:
-        print("modo flotante: %s" % ("pedido con --flotante" if args.flotante else
-                                     "la barra de tareas no admite incrustar (Windows 11)"),
-              file=sys.stderr)
+        print("modo flotante: %s" % motivo, file=sys.stderr)
     return run(cfg, embed=not args.no_embed, log_path=log_path, flotante=flotante)
 
 

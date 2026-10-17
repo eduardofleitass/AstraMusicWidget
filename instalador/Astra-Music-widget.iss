@@ -2,7 +2,7 @@
 ;
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" instalador\Astra-Music-widget.iss
 ;
-; Deja instalador\Astra-Music-widget-1.0.0-setup.exe (~27 MB).
+; Deja instalador\Astra-Music-widget-1.0.1-setup.exe (~27 MB).
 ;
 ; Decisiones que importan:
 ; - Se instala en %LOCALAPPDATA%\Programs (por usuario, SIN pedir administrador). Ademas

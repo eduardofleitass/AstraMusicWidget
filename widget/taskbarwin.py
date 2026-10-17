@@ -93,18 +93,49 @@ def list_bars() -> list[dict]:
     return barras
 
 
-def barras_usables() -> bool:
-    """True si hay una barra donde incrustar el widget.
+def barra_en_posicion_util(barra: dict | None) -> bool:
+    """True si el widget se puede incrustar en esa barra.
 
-    Windows 11 conserva `Shell_TrayWnd` pero **sin `ReBarWindow32`** ni ventanas hijas,
-    asi que el host se queda sin contenedor ni ancla: ahi hay que pasar al modo flotante
-    (una ventana propia pegada al borde). Se comprueba de verdad, no por version.
+    La geometria del widget (el tramo libre, encoger la lista de tareas, el ancho del chip)
+    asume una barra horizontal pegada al borde de abajo, que es como viene Windows. Si la
+    barra esta a un costado o arriba, el widget quedaria mal ubicado y encima tapando la
+    barra: ahi conviene el modo flotante, que no la toca.
+
+    La regla es geometrica a proposito (mide el rectangulo de la barra contra el del monitor)
+    en vez de preguntar por la version o el idioma de Windows.
+    """
+    if not barra:
+        return False
+    r = barra.get("rect") or (0, 0, 0, 0)
+    m = barra.get("mon_rect") or r
+    ancho, alto = r[2] - r[0], r[3] - r[1]
+    if ancho <= 0 or alto <= 0:
+        return False
+    if ancho < alto * 2:            # mas alta que ancha: esta a un costado
+        return False
+    return r[3] >= m[3] - 2         # pegada al borde de abajo del monitor
+
+
+def motivo_no_incrustable() -> str | None:
+    """Por que no se puede incrustar el widget (None = si se puede).
+
+    Devuelve un texto corto y humano, que es el que termina en el log: cuando algo no anda
+    en la maquina de otro, el log tiene que explicar la decision solo.
     """
     try:
         h = TaskbarHost()
-        return bool(h.refresh() and h.container and h.anchor)
-    except Exception:
-        return False
+        if not (h.refresh() and h.container and h.anchor):
+            return "esta version de Windows no admite ventanas en la barra (Windows 11)"
+        if not barra_en_posicion_util(h.barra):
+            return "la barra de tareas no esta abajo"
+        return None
+    except Exception as exc:
+        return "no pude revisar la barra (%s)" % (exc,)
+
+
+def barras_usables() -> bool:
+    """True si hay una barra donde incrustar el widget (Windows 10 con la barra abajo)."""
+    return motivo_no_incrustable() is None
 
 
 class TaskbarHost:

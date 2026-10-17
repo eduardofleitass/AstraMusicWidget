@@ -8,7 +8,7 @@ listos para pegar.
 ## Lo que ya esta hecho
 
 - Repo publico con **descripcion, 7 topics, pagina web apuntando al release y licencia MIT**.
-- Release **v1.0.0** con los dos adjuntos (portatil de 27 MB e instalador de 29 MB).
+- Release **v1.0.1** con los dos adjuntos (portatil de 27 MB e instalador de 29 MB).
 - README con **GIF animado**, distintivos (version, descargas, licencia), link de descarga
   arriba de todo y un **resumen en ingles**.
 - Tarjeta social **a medida** en `assets/social.png` (1280x640), lista para subir.
@@ -27,12 +27,12 @@ un grupo, se ve esa imagen o un cuadro gris. Es el multiplicador de todo lo dema
 
 ### Paso 2 — Publicarlo en winget (el canal que trae descargas sin que te busquen)
 
-Los archivos ya estan en `winget/manifests/e/EduardoFleitas/AstraMusicWidget/1.0.0/`.
+Los archivos ya estan en `winget/manifests/e/EduardoFleitas/AstraMusicWidget/1.0.1/`.
 
 1. **Fork** de `microsoft/winget-pkgs`.
 2. Copiar la carpeta `winget/manifests/...` al fork **con la misma ruta**.
 3. Abrir un **Pull Request** titulado:
-   `New package: EduardoFleitas.AstraMusicWidget version 1.0.0`
+   `New package: EduardoFleitas.AstraMusicWidget version 1.0.1`
 
 El robot valida solo: que la URL baje, que el SHA256 coincida, que se instale en silencio y
 que desinstale bien. Tarda unos dias y a veces pide un ajuste menor.

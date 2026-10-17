@@ -1,10 +1,19 @@
-# Astra-Music-widget 1.0.0
+# Astra-Music-widget 1.0.1
 
 Widget de musica que vive **dentro** de la barra de tareas de Windows: muestra lo que esta
 sonando (caratula, titulo, artista, barra de progreso clicable, controles y el volumen de
 la app) sin abrir ninguna ventana aparte. Anda con cualquier reproductor que respete el
 sistema (Spotify, VLC, Groove, y lo que suene en Chrome/Edge/Brave), porque lee la sesion
 de multimedia de Windows, no un reproductor en particular.
+
+## Novedades de esta version
+
+- Si la **barra de tareas no esta abajo** (a un costado o arriba del monitor), el widget ya no
+  intenta incrustarse ahi: pasa solo al **modo flotante**, que no le toca la barra. Antes
+  quedaba mal ubicado y encima tapaba la barra. La decision se toma **midiendo** el
+  rectangulo de la barra contra el del monitor, asi que no depende de la version ni del
+  idioma de Windows.
+- El log ahora dice *por que* eligio el modo flotante.
 
 ## Que se puede hacer
 
@@ -27,7 +36,7 @@ de multimedia de Windows, no un reproductor en particular.
 
 Dos opciones, las dos sin Python:
 
-- **Instalador** (`Astra-Music-widget-1.0.0-setup.exe`, 30 MB): instala por usuario en
+- **Instalador** (`Astra-Music-widget-1.0.1-setup.exe`, 30 MB): instala por usuario en
   `%LOCALAPPDATA%\Programs\Astra-Music-widget`, crea los accesos del menu Inicio y el
   arranque con Windows, y deja un desinstalador en Ajustes → Aplicaciones. No pide
   administrador.

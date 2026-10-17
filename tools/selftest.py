@@ -1375,6 +1375,26 @@ def main() -> int:
     except Exception as exc:
         check("el panel", False, repr(exc))
 
+    # --- la barra tiene que estar abajo para incrustar; si no, modo flotante ---------
+    try:
+        from widget.taskbarwin import barra_en_posicion_util, motivo_no_incrustable
+        casos = [
+            ("abajo", {"rect": (0, 1040, 1920, 1080), "mon_rect": (0, 0, 1920, 1080)}, True),
+            ("secundaria abajo", {"rect": (1920, 849, 3286, 889),
+                                  "mon_rect": (1920, 121, 3286, 889)}, True),
+            ("a un costado", {"rect": (0, 0, 62, 1080), "mon_rect": (0, 0, 1920, 1080)}, False),
+            ("arriba", {"rect": (0, 0, 1920, 40), "mon_rect": (0, 0, 1920, 1080)}, False),
+            ("sin datos", None, False),
+        ]
+        malos = [n for n, b, e in casos if barra_en_posicion_util(b) != e]
+        check("la barra tiene que estar abajo y horizontal", not malos,
+              ("mal: " + ", ".join(malos)) if malos else "")
+        m = motivo_no_incrustable()
+        check("el motivo se explica solo (texto o None)", m is None or isinstance(m, str),
+              repr(m) if m else "")
+    except Exception as exc:
+        check("la barra tiene que estar abajo y horizontal", False, repr(exc))
+
     fails = [r for r in RESULTS if not r[1] and not r[3]]
     skips = [r for r in RESULTS if r[3]]
     print(f"\n{len(RESULTS) - len(fails) - len(skips)}/{len(RESULTS)} pruebas pasaron"
