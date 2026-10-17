@@ -755,6 +755,33 @@ Si te gusta mas ancho o mas angosto: clic derecho sobre el widget > *Más ancho*
   copialo a `dist/` antes de correr el banco.
 
 
+### Instalador (Inno Setup)
+
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" instalador\Astra-Music-widget.iss
+    # deja instalador\Astra-Music-widget-1.0.0-setup.exe (30 MB)
+
+Lo que hace el instalador:
+
+- Instala **por usuario** en `%LOCALAPPDATA%\Programs\Astra-Music-widget`, o sea que
+  **no pide administrador** (nada de UAC). Esa carpeta ademas es escribible, asi que el
+  programa sigue guardando su `config.json` y su `astra-widget.log` al lado del .exe. En
+  `C:\Program Files` no se podria escribir y habria que mudarlos a `%APPDATA%`.
+- Crea el acceso del **menu Inicio**, ofrece **escritorio** (opcional) y **arrancar con
+  Windows** (viene marcado: es un adorno de la barra), y deja un **desinstalador** que
+  aparece en Ajustes → Aplicaciones.
+- El `AppId` es un GUID fijo, asi que una version nueva se instala **encima** y no como
+  una segunda copia. Y si el widget esta corriendo, lo cierra antes de reemplazar el .exe
+  (Windows no deja sobrescribir un ejecutable en uso).
+- Al desinstalar **pregunta si conservar los ajustes** antes de borrar `config.json`.
+- El ejecutable lleva version en las Propiedades (`instalador/version_info.txt` →
+  Astra-Music-widget 1.0.0), asi que Windows muestra quien lo firma y que version es.
+
+Lo que **no** se puede evitar sin pagar: sin firma digital, tanto el .exe como el
+instalador disparan el aviso de SmartScreen ("Windows protegio tu PC" → *Mas informacion*
+→ *Ejecutar de todas formas*). Un certificado de firma cuesta entre 200 y 400 dolares al
+anio; para un proyecto personal no vale la pena.
+
+
 ## Herramientas de desarrollo
 
 ```bash
@@ -770,6 +797,7 @@ python tools\preview.py hoja.png # hoja con todas las variantes visuales
 python tools\selftest.py         # suite de verificacion (widget en marcha)
 python toolslotante_test.py    # el modo de Windows 11 (ventana propia, sin barra)
 python toolsuild_exe.py        # empaqueta el .exe
+ISCC.exe instalador\Astra-Music-widget.iss   # arma el instalador (Inno Setup 6)
 python tools\clicktest.py        # prueba de clic real con el mouse (restaura el estado)
 python tools\hotkeytest.py       # atajos globales con teclas REALES y rueda con modificadores
 python tools\startup.py --status # ver si el arranque automatico esta activo

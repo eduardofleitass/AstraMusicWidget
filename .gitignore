@@ -21,3 +21,6 @@ dist/
 *.log
 tools/_selftest.json
 tools/_rig_state.json
+
+# el instalador armado (los fuentes .iss si se versionan)
+instalador/*.exe

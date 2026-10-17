@@ -20,6 +20,7 @@ import sys
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ICONO = os.path.join(HERE, "assets", "icono.ico")
+VERSION = os.path.join(HERE, "instalador", "version_info.txt")
 NOMBRE = "Astra-Music-widget"
 
 
@@ -38,6 +39,9 @@ def main() -> int:
         cmd.append("--onefile")
     if os.path.exists(ICONO):
         cmd += ["--icon", ICONO]
+    if os.path.exists(VERSION):
+        # version del .exe: es la que se ve en Propiedades y la que compara el instalador
+        cmd += ["--version-file", VERSION]
     cmd.append(os.path.join(HERE, "main.py"))
     print(" ".join(cmd))
     return subprocess.call(cmd, cwd=HERE)
