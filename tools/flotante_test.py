@@ -24,7 +24,7 @@ import win32con  # noqa: E402
 import win32gui  # noqa: E402
 import win32process  # noqa: E402
 
-from widget import config as cfgmod, draw, flotante as flotante_mod  # noqa: E402
+from widget import config as cfgmod, draw, panel as panel_mod  # noqa: E402
 from widget.media import MediaPoller  # noqa: E402
 from widget.taskbarwin import list_bars  # noqa: E402
 
@@ -131,6 +131,9 @@ def main() -> int:
         print(f"  (quedaban ventanas del widget: mate {restos} -> apagado={apagado})")
     time.sleep(0.8)
     lista_antes = ancho_lista()
+    # tamano del panel del usuario: la prueba lo cambia a la tira y hay que devolverlo
+    tam_antes = {"normal": 0, "chico": 1, "tira": 2}[
+        panel_mod.normalizar(cfgmod.load().get("panel_size", "normal"))]
     proc = subprocess.Popen([venv, os.path.join(HERE, "main.py"), "--flotante"], cwd=HERE)
     hp = 0
     for _ in range(30):
@@ -240,7 +243,7 @@ def main() -> int:
             check("el panel tambien anda en flotante (tira fina)",
                   pp and win32gui.IsWindowVisible(pp) and abs((rp[2] - rp[0]) - 320) <= 3,
                   f"panel {rp[2] - rp[0]}x{rp[3] - rp[1]}")
-            win32gui.PostMessage(hp, win32con.WM_APP + 11, 5, 0)
+            win32gui.PostMessage(hp, win32con.WM_APP + 11, 5, tam_antes)
             time.sleep(0.5)
             win32gui.PostMessage(hp, win32con.WM_APP + 10, 0, 1)
             time.sleep(0.6)

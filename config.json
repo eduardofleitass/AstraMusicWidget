@@ -28,7 +28,7 @@
   "progress_color": "#B08CFF",
   "waves_color": "#B08CFF",
   "panel_mode": "gaming",
-  "panel_size": "normal",
+  "panel_size": "chico",
   "panel_no_robar": true,
   "panel_topmost": true,
   "panel_clics_al_juego": false,
