@@ -37,8 +37,8 @@
   "panel_alpha": 255,
   "panel_bg_alpha": 250,
   "panel_pos": [
-    1259,
-    338
+    1210,
+    290
   ],
   "fade_cover": true,
   "fade_cover_ms": 220,
@@ -46,7 +46,7 @@
   "fade_step": 48,
   "show_volume": true,
   "volume_step": 5,
-  "taskbar_monitor": null,
+  "taskbar_monitor": "\\\\.\\DISPLAY5",
   "auto_contrast": true,
   "theme": {
     "chip": [

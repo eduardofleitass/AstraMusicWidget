@@ -27,6 +27,7 @@ from PIL import Image, ImageChops
 from . import config as cfgmod
 from . import draw
 from . import panel as panel_mod
+from . import ventanas
 from . import volume as volume_mod
 from .media import MediaPoller, MediaState
 from .taskbarwin import TaskbarHost, list_bars, set_dpi_aware
@@ -39,6 +40,13 @@ NUDGE_PX = 20
 CTL_CLASS = "GorusTaskbarMusicCtl"
 WIDGET_CLASS = "GorusTaskbarMusicWnd"
 PANEL_CLASS = "GorusTaskbarMusicPanel"
+
+# Tamanos del panel en el submenu (la etiqueta solo la usa el menu).
+PANEL_TAMANOS = (
+    ("normal", "Normal (caratula grande)"),
+    ("chico", "Chico (para jugar)"),
+    ("tira", "Tira fina (una sola fila)"),
+)
 MUTEX_NAME = "Local\\GorusTaskbarMusicWidget"
 TIMER_TICK = 1
 TIMER_LAYOUT = 2
@@ -352,6 +360,9 @@ class WidgetApp:
             wc.hInstance = hinst
             wc.lpszClassName = cls
             wc.lpfnWndProc = proc
+            # CS_DBLCLKS: sin este estilo el sistema no manda nunca WM_LBUTTONDBLCLK
+            # (el doble clic en la caratula del panel no llegaria)
+            wc.style = win32con.CS_DBLCLKS
             wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
             try:
                 win32gui.RegisterClass(wc)
@@ -1262,7 +1273,14 @@ class WidgetApp:
                 # a la ventana que esta bajo el cursor, no a la que tiene el foco.
                 steps = ctypes.c_short((wp >> 16) & 0xFFFF).value / 120.0
                 if steps:
-                    c = win32gui.ScreenToClient(hwnd, win32gui.GetCursorPos())
+                    # La posicion viene en el propio mensaje (coordenadas de pantalla):
+                    # es la fuente documentada, no depende de donde este el cursor y asi
+                    # la prueba puede mandar el mensaje en vez de mover el mouse (con el
+                    # mouse en uso, la medicion del salto salia -20 s por una muesca real
+                    # del usuario).
+                    sx = ctypes.c_short(lp & 0xFFFF).value
+                    sy = ctypes.c_short((lp >> 16) & 0xFFFF).value
+                    c = win32gui.ScreenToClient(hwnd, (sx, sy))
                     ctrl = win32api.GetKeyState(win32con.VK_CONTROL) < 0
                     shift = win32api.GetKeyState(win32con.VK_SHIFT) < 0
                     if self._hit_at(*c) == 5:
@@ -1371,7 +1389,8 @@ class WidgetApp:
                 claves = {1: "panel_no_robar", 2: "panel_topmost", 3: "panel_clics_al_juego",
                           4: "panel_hud"}
                 if int(wp) == 5:
-                    self.set_panel_size("chico" if lp else "normal")
+                    # 0 normal / 1 chico / 2 tira (lo usa el banco de pruebas)
+                    self.set_panel_size(("normal", "chico", "tira")[min(2, int(lp))])
                 elif int(wp) == 6:
                     self.set_panel_gaming(bool(lp))
                 elif int(wp) == 7:
@@ -2074,8 +2093,37 @@ class WidgetApp:
                 if not self.cfg.get("panel_no_robar", False):
                     self.toggle_panel(False)
                 return 0
-            if msg == win32con.WM_KEYDOWN and wp == win32con.VK_ESCAPE:
-                self.toggle_panel(False)
+            if msg == win32con.WM_KEYDOWN:
+                # Con el panel enfocado (modo escritorio) se maneja todo por teclado. En
+                # modo gaming el panel no toma el foco a proposito: ahi manda el atajo
+                # global, que anda igual con el juego adelante.
+                if wp == win32con.VK_ESCAPE:
+                    self.toggle_panel(False)
+                    return 0
+                if wp in (win32con.VK_SPACE, win32con.VK_RETURN):
+                    self.poller.toggle()
+                    self._panel_render(force=True)
+                    return 0
+                if wp in (win32con.VK_LEFT, win32con.VK_RIGHT,
+                          win32con.VK_UP, win32con.VK_DOWN):
+                    ctrl = win32api.GetKeyState(win32con.VK_CONTROL) < 0
+                    shift = win32api.GetKeyState(win32con.VK_SHIFT) < 0
+                    signo = 1 if wp in (win32con.VK_RIGHT, win32con.VK_UP) else -1
+                    if wp in (win32con.VK_UP, win32con.VK_DOWN):
+                        self._vol_step(signo, fino=ctrl)
+                    elif ctrl and not shift:
+                        self._seek_by(signo * self._seek_fino())
+                    elif shift and not ctrl:
+                        self._seek_by(signo * self._seek_grueso())
+                    else:
+                        self._seek_by(signo * self._seek_step())
+                    self._panel_render(force=True)
+                    return 0
+            if msg == 0x0203:      # WM_LBUTTONDBLCLK
+                # Doble clic en la caratula: traer al frente la ventana de lo que suena
+                x, y = self._xy(lp)
+                if panel_mod.hit(x, y, self._panel_k(), self.cfg) == 7:
+                    self.traer_reproductor()
                 return 0
             if msg == win32con.WM_MOUSEMOVE:
                 x, y = self._xy(lp)
@@ -2164,7 +2212,12 @@ class WidgetApp:
             if msg == win32con.WM_MOUSEWHEEL:
                 steps = ctypes.c_short((wp >> 16) & 0xFFFF).value / 120.0
                 if steps:
-                    c = win32gui.ScreenToClient(hwnd, win32gui.GetCursorPos())
+                    # La posicion viene en el propio mensaje (coordenadas de PANTALLA):
+                    # es la fuente documentada y no depende de donde este el cursor, asi
+                    # que la prueba puede mandar el mensaje sin mover el mouse.
+                    sx = ctypes.c_short(lp & 0xFFFF).value
+                    sy = ctypes.c_short((lp >> 16) & 0xFFFF).value
+                    c = win32gui.ScreenToClient(hwnd, (sx, sy))
                     ctrl = win32api.GetKeyState(win32con.VK_CONTROL) < 0
                     shift = win32api.GetKeyState(win32con.VK_SHIFT) < 0
                     if panel_mod.hit(*c, self._panel_k(), self.cfg) in (4, 5):
@@ -2224,9 +2277,53 @@ class WidgetApp:
                                   | win32con.SWP_NOACTIVATE)
             d["pantalla"] = (px, py)
 
+    def _panel_imantar(self, margen: int = 22) -> None:
+        """Pega el panel al borde o esquina del monitor si quedo a menos de `margen` px.
+
+        Un panel a 3 px del borde se ve como un error de dibujo. Se imanta al borde del
+        MONITOR donde esta (no al de la pantalla virtual) y al borde de arriba de la
+        barra de tareas de ese monitor, que es su piso natural. Ademas lo deja siempre
+        dentro del monitor.
+        """
+        try:
+            wr = win32gui.GetWindowRect(self.hwnd_panel)
+            w, h = wr[2] - wr[0], wr[3] - wr[1]
+            mon = win32api.MonitorFromRect(wr)
+            mx0, my0, mx1, my1 = win32api.GetMonitorInfo(mon)["Monitor"]
+            piso = my1
+            for b in list_bars():
+                br = b["rect"]
+                if br[0] <= (wr[0] + wr[2]) // 2 <= br[2] and my0 <= br[1] <= my1:
+                    piso = min(piso, br[1])       # arriba de la barra de tareas
+            nx, ny = panel_mod.imantar(wr[0], wr[1], w, h, (mx0, my0, mx1, my1),
+                                       piso, margen)
+            if (nx, ny) != (wr[0], wr[1]):
+                win32gui.SetWindowPos(self.hwnd_panel, 0, int(nx), int(ny), 0, 0,
+                                      win32con.SWP_NOSIZE | win32con.SWP_NOZORDER
+                                      | win32con.SWP_NOACTIVATE)
+                self.log("panel: imantado a (%d, %d)", nx, ny)
+        except Exception as exc:
+            self.log("panel: no se pudo imantar: %r", exc)
+
+    def traer_reproductor(self) -> None:
+        """Trae al frente la ventana de lo que suena (doble clic en la caratula)."""
+        try:
+            hwnd = ventanas.ventana_del_reproductor(self.state.app_id or self.state.app_name)
+            if not hwnd:
+                self.log("reproductor: no encontre su ventana (%s)", self.state.app_id)
+                return
+            if ventanas.traer_al_frente(hwnd):
+                self.log("reproductor: %s quedo al frente (%s)", self.state.app_id,
+                         hex(hwnd))
+            else:
+                self.log("reproductor: no pude ponerlo al frente (%s)", hex(hwnd))
+        except Exception as exc:
+            self.log("reproductor: fallo %r", exc)
+
     def _panel_end_drag(self, x: int) -> None:
         d, self.panel_drag = self.panel_drag, None
         if d and d.get("hit") == -1 and self.hwnd_panel:
+            self._panel_imantar()
             # el usuario lo dejo ahi: se recuerda (en modo gaming el panel vive donde
             # lo pusiste, no saltando detras del widget)
             try:
@@ -2270,8 +2367,8 @@ class WidgetApp:
 
     # ------------------------------------------------- ajustes del panel
     def set_panel_size(self, tam: str, save: bool = True) -> None:
-        """Tamano del panel: "normal" o "chico" (hay que rehacer la ventana)."""
-        tam = "chico" if str(tam).lower().startswith(("chi", "com", "min")) else "normal"
+        """Tamano del panel: normal / chico / tira (hay que rehacer la ventana)."""
+        tam = panel_mod.normalizar(tam)
         if self.cfg.get("panel_size") == tam:
             return
         self.cfg["panel_size"] = tam
@@ -2397,7 +2494,15 @@ class WidgetApp:
             gaming = str(self.cfg.get("panel_mode", "normal")).lower() == "gaming"
             pan_check(60, "Modo gaming (chico y sin robar el foco)", gaming)
             win32gui.AppendMenu(pan_sub, win32con.MF_SEPARATOR, 0, "")
-            pan_check(61, "Tamano chico", str(self.cfg.get("panel_size", "normal")) == "chico")
+            tam_sub = win32gui.CreatePopupMenu()
+            tam_actual = panel_mod.normalizar(self.cfg.get("panel_size", "normal"))
+            for i, (val, etq) in enumerate(PANEL_TAMANOS):
+                flags = win32con.MF_STRING
+                if val == tam_actual:
+                    flags |= win32con.MF_CHECKED
+                win32gui.AppendMenu(tam_sub, flags, 81 + i, etq)
+            win32gui.AppendMenu(pan_sub, win32con.MF_POPUP | win32con.MF_STRING,
+                                tam_sub, "Tamano")
             pan_check(64, "Dejar pasar los clics al juego", bool(self.cfg.get("panel_clics_al_juego", False)))
             alpha_sub = win32gui.CreatePopupMenu()
             alpha_actual = int(self.cfg.get("panel_alpha", 255))
@@ -2491,9 +2596,8 @@ class WidgetApp:
         elif cmd == 60:
             self.set_panel_gaming(not (str(self.cfg.get("panel_mode", "normal")).lower()
                                        == "gaming"))
-        elif cmd == 61:
-            self.set_panel_size("chico" if str(self.cfg.get("panel_size", "normal"))
-                                != "chico" else "normal")
+        elif 81 <= cmd <= 81 + len(PANEL_TAMANOS) - 1:
+            self.set_panel_size(PANEL_TAMANOS[cmd - 81][0])
         elif cmd == 64:
             self.set_panel_ajuste("panel_clics_al_juego",
                                   not self.cfg.get("panel_clics_al_juego", False))

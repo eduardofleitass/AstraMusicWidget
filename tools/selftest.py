@@ -716,8 +716,24 @@ def main() -> int:
             centro = ((wr2[0] + wr2[2]) // 2, (wr2[1] + wr2[3]) // 2)
             tapado = (win32gui.GetClassName(u32.WindowFromPoint(wt.POINT(int(centro[0]), int(centro[1]))))
                       if w2 else "-")
+            # Un juego en PANTALLA COMPLETA tapa la barra entera: ahi no hay nada que
+            # comprobar (Windows le entrega la pantalla al juego). Se detecta por la
+            # ventana que aparece encima y se salta, en vez de contarlo como falla.
+            juego = False
+            if w2 and tapado != "GorusTaskbarMusicWnd":
+                try:
+                    tr = win32gui.GetWindowRect(win32gui.WindowFromPoint(
+                        wt.POINT(int(centro[0]), int(centro[1]))))
+                    mr = win32gui.GetMonitorInfo(win32api.MonitorFromRect(tr))["Monitor"]
+                    juego = (tr[0] <= mr[0] and tr[1] <= mr[1]
+                             and tr[2] >= mr[2] and tr[3] >= mr[3])
+                except Exception:
+                    juego = False
             check("nadie lo tapa en la barra nueva", bool(w2) and tapado == "GorusTaskbarMusicWnd",
-                  f"en el centro devuelve {tapado}")
+                  f"en el centro devuelve {tapado}"
+                  + (" (hay una ventana en pantalla completa tapando la barra)" if juego
+                     else ""),
+                  skipped=juego)
             rb_act = rect(h_act.container) if h_act.container else (0, 0, 0, 0)
             check("la barra que dejo recupera su ancho natural",
                   abs((rb_act[2] - rb_act[0]) - (ancla_act[0] - rb_act[0])) <= 3,
@@ -1193,6 +1209,26 @@ def main() -> int:
             check(f"el panel {nombre} marca hover, arrastre y silencio",
                   all(v > 20 for v in difs.values()),
                   ", ".join(f"{n} {v}" for n, v in difs.items()))
+
+        # (c3) el iman del panel: la matematica sola, sin ventana ni mouse. Un panel
+        # a 3 px del borde se ve como un error de dibujo.
+        mon = (0, 0, 1920, 1080)
+        piso = 1040        # borde de arriba de la barra de tareas
+        casos = [
+            ("esquina con 10 px", (10, 10, 320, 34), (0, 0)),
+            ("borde izquierdo con 15 px", (15, 300, 320, 34), (0, 300)),
+            ("borde derecho con 12 px", (1920 - 320 - 12, 400, 320, 34), (1600, 400)),
+            ("piso de la barra con 8 px", (600, 1040 - 34 - 8, 320, 34), (600, 1006)),
+            ("lejos de todo no se toca", (600, 300, 320, 34), (600, 300)),
+            ("fuera del monitor se mete adentro", (2500, 2000, 320, 34), (1600, 1006)),
+        ]
+        malos = [(n, panel_mod.imantar(x, y, w, h, mon, piso), e)
+                 for n, (x, y, w, h), e in casos
+                 if panel_mod.imantar(x, y, w, h, mon, piso) != e]
+        check("el panel se imanta a los bordes y esquinas del monitor", not malos,
+              f"casos que no dan: {malos}" if malos else
+              f"{len(casos)} casos: esquina, los dos bordes, el piso de la barra, "
+              f"lejos y fuera del monitor")
 
         # (d) fracciones y prueba de impacto
         for nombre, c in (("normal", cfg_normal), ("chico", cfg_chico)):

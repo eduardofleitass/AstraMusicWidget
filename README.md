@@ -499,6 +499,23 @@ con lugar para leer y apuntar bien.
   solo si no hubo movimiento.
 - **Cierra** con la cruz, con `Escape`, con un clic afuera (pierde el foco) o con otro
   clic en la caratula.
+- **Tres tamanos** (menu > *Panel* > *Tamano*): *Normal* (320x178, caratula grande y tres
+  lineas), *Chico* (280x84, dos filas) y *Tira fina* (320x34, **una sola fila**: caratula
+  de 24, titulo y artista, barra de 2 px, los tres controles, el altavoz y la cruz). La
+  tira es para jugar en ventana sin tapar nada.
+- **Con el panel abierto, el teclado manda**: `Espacio` play/pausa, flechas `←` `→`
+  adelantan y atrasan (con `Ctrl` de a 1 s, con `Shift` de a 60 s), `↑` `↓` el volumen y
+  `Escape` lo cierra. Vale en el modo escritorio, que es cuando el panel tiene el foco; en
+  modo gaming el panel no toma el foco a proposito, asi que ahi se usan los atajos
+  globales (que andan igual con el juego adelante).
+- **La rueda tambien anda en el panel**: sobre el altavoz mueve el volumen y en el resto
+  adelanta o atrasa, igual que en el widget.
+- **Se imanta a los bordes**: al soltarlo, si quedo a menos de 22 px de un borde o de una
+  esquina del monitor (o del borde de arriba de la barra de tareas), se pega ahi. Nunca
+  queda a 3 px del borde, que se ve como un error de dibujo.
+- **Doble clic en la caratula**: trae al frente la ventana de lo que esta sonando (el
+  navegador o Spotify), para ver el video sin buscarlo. Funciona con cualquier
+  reproductor: se busca la ventana del proceso que suena.
 - Aparece **encima del widget** (alineado a su borde derecho) y siempre dentro del
   monitor; si no entra arriba, va debajo. Se puede **arrastrar desde cualquier parte
   libre** para moverlo donde quieras (con *Fondo* > *Sin fondo* tambien: las zonas
@@ -654,7 +671,7 @@ donde 12 son atajos de cosas que ya se hacen con el mouse es un menu que no se l
 | `fade_visible` | true | Fundido al mostrar/ocultar el widget (solo con fondo transparente) |
 | `fade_step` | 48 | Cuanto cambia el alfa por cuadro en ese fundido (255 / paso = cuadros) |
 | `panel_mode` | `"normal"` | `"gaming"` recuerda el estado del interruptor del menu |
-| `panel_size` | `"normal"` | `"normal"` (320x178) o `"chico"` (280x84) |
+| `panel_size` | `"normal"` | `"normal"` (320x178), `"chico"` (280x84) o `"tira"` (320x34, una fila) |
 | `panel_no_robar` | false | No le saca el foco a lo que este adelante y no se cierra al tocar afuera |
 | `panel_topmost` | false | Queda siempre arriba (util con juegos en ventana) |
 | `panel_clics_al_juego` | false | Los clics pasan al juego como si el panel no estuviera |

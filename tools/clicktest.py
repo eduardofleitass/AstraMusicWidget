@@ -25,6 +25,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import win32api  # noqa: E402
 import win32con  # noqa: E402
 import win32gui  # noqa: E402
 
@@ -142,6 +143,11 @@ def sobre_widget(x, y) -> bool:
 
 
 WIN = {}
+
+
+def lp(x, y) -> int:
+    """lParam con la posicion en PANTALLA (como lo manda Windows en la rueda)."""
+    return (int(x) & 0xFFFF) | ((int(y) & 0xFFFF) << 16)
 
 
 def click_en(hwnd, x, y) -> bool:
@@ -450,22 +456,16 @@ def main() -> int:
         check("la rueda adelanta el paso configurado", False,
               "este reproductor no admite saltos", skipped=True)
         check("la rueda atrasa el paso configurado", False, "no aplica", skipped=True)
-    elif not place_cursor(*centro) or not sobre_widget(*centro):
-        check("la rueda adelanta el paso configurado", False,
-              "el cursor no quedo sobre el widget (interferencia del mouse)",
-              skipped=True)
-        check("la rueda atrasa el paso configurado", False, "no aplica", skipped=True)
     else:
+        # La rueda se manda como MENSAJE, con la posicion del widget en su lParam (que
+        # es la fuente documentada). Antes se movia el cursor y se inyectaba con
+        # mouse_event: con el mouse en uso, una muesca real del usuario se sumaba a la
+        # de la prueba y el salto medido daba -20 s donde se esperaba -10 s.
+        place_cursor(*centro)          # se deja el cursor encima igual, por realismo
         antes = sample(poller).live_position()
-        if not sobre_widget(*centro):
-            check("la rueda adelanta el paso configurado", False,
-                  "el cursor se movio justo antes de mandar la rueda", skipped=True)
-            check("la rueda atrasa el paso configurado", False, "no aplica", skipped=True)
-            user32.SetCursorPos(wrect[0] - 300, 560)
-            poller.stop()
-            return _summary()
         r0, t0, ok0 = pos_reportada(poller)
-        user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, WHEEL_UP, 0)
+        win32gui.SendMessage(w, win32con.WM_MOUSEWHEEL, WHEEL_UP << 16, lp(*centro))
+
         r1, t1, ok1 = pos_reportada(poller, desde=r0)
         d = r1 - r0
         esperado = paso + (t1 - t0)
@@ -484,12 +484,12 @@ def main() -> int:
         # cualquier cosa (medido: -40 s en vez de -10 s).
         if r1 < paso * 2:
             for _ in range(3):
-                if not sobre_widget(*centro):
-                    break
-                user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, WHEEL_UP, 0)
+                win32gui.SendMessage(w, win32con.WM_MOUSEWHEEL, WHEEL_UP << 16,
+                                     lp(*centro))
                 time.sleep(0.6)
             r1, t1, ok1 = pos_reportada(poller, desde=r0)
-        user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, WHEEL_DOWN, 0)
+        win32gui.SendMessage(w, win32con.WM_MOUSEWHEEL,
+                             (WHEEL_DOWN & 0xFFFF) << 16, lp(*centro))
         r2, t2, ok2 = pos_reportada(poller, desde=r1)
         d2 = r2 - r1
         esperado2 = (t2 - t1) - paso
@@ -716,6 +716,9 @@ def main() -> int:
     # foco): si se ocultara solo en el medio, las comprobaciones fallarian por algo
     # que no es el objeto de esta prueba. Los ajustes se devuelven al final.
     cfg_panel = cfgmod.load()
+    # tamano del panel al arrancar la prueba (0 normal / 1 chico / 2 tira)
+    tam_panel = {"normal": 0, "chico": 1, "tira": 2}[
+        panel_mod.normalizar(cfg_panel.get("panel_size", "normal"))]
     auto_panel = float(cfg_panel.get("panel_auto_hide_s", 0) or 0)
     hud_panel = bool(cfg_panel.get("panel_hud", False))
     foco_panel = bool(cfg_panel.get("panel_no_robar", False))
@@ -815,7 +818,11 @@ def main() -> int:
             try:
                 pr0 = win32gui.GetWindowRect(hp)
                 agarre = (pr0[0] + (pr0[2] - pr0[0]) // 2, pr0[1] + 8)
-                dx, dy = 150, -90
+                mon = win32api.MonitorFromRect(pr0)
+                mx0, my0, mx1, my1 = win32api.GetMonitorInfo(mon)["Monitor"]
+                ancho, alto = pr0[2] - pr0[0], pr0[3] - pr0[1]
+                dx = 150 if pr0[0] + 150 + ancho + 60 <= mx1 else -150
+                dy = -90 if pr0[1] - 90 >= my0 + 60 else 90
                 if not place_cursor(*agarre):
                     check("arrastrar el panel desde una zona vacia lo mueve", False,
                           "el cursor no quedo donde se lo puso (interferencia)",
@@ -852,6 +859,218 @@ def main() -> int:
                           f"quedo en {pr2[:2]}, estaba en {pr0[:2]}")
             except Exception as exc:
                 check("arrastrar el panel desde una zona vacia lo mueve", False, repr(exc))
+
+            # (c4) la rueda sobre el panel: en el altavoz mueve el volumen, en el
+            # resto adelanta/atrasa. Misma logica que en el widget (Ctrl = fino).
+            try:
+                zvol = zp["volumen"]
+                pto_v = (pr[0] + (zvol[0] + zvol[2]) // 2, pr[1] + (zvol[1] + zvol[3]) // 2)
+                vol_ini = None
+                try:
+                    from widget import volume as volume_mod
+                    volume_mod.iniciar_com()
+                    vol_ini = volume_mod.estado(poller.state().app_id or "")
+                except Exception:
+                    volume_mod = None
+                if not (volume_mod and vol_ini):
+                    check("la rueda sobre el altavoz del panel mueve el volumen", False,
+                          "no hay sesion de audio", skipped=True)
+                else:
+                    # Al 100% no hay lugar para subir: se arranca en 50% y se restaura
+                    volume_mod.fijar(poller.state().app_id or "", 0.5)
+                    time.sleep(0.4)
+                    base_v = volume_mod.estado(poller.state().app_id or "")[0]
+                    # La rueda se manda como MENSAJE con la posicion en su lParam (que
+                    # es la fuente documentada): asi la prueba mide la logica del panel
+                    # sin depender de donde quede el cursor.
+                    win32gui.SendMessage(hp, win32con.WM_MOUSEWHEEL,
+                                         WHEEL_UP << 16, lp(*pto_v))
+                    time.sleep(0.5)
+                    ahora_v = volume_mod.estado(poller.state().app_id or "")
+                    check("la rueda sobre el altavoz del panel mueve el volumen",
+                          abs((ahora_v[0] - base_v) * 100 - 5) < 2.5,
+                          f"{base_v * 100:.0f}% -> {ahora_v[0] * 100:.0f}% (paso 5%)")
+                    volume_mod.fijar(poller.state().app_id or "", vol_ini[0])
+                    if vol_ini[1]:
+                        volume_mod.silenciar(poller.state().app_id or "", True)
+
+                # la rueda sobre el texto busca (sobre la zona de la barra tambien)
+                zt = zp["texto"]
+                pto_t = (pr[0] + (zt[0] + zt[2]) // 2, pr[1] + (zt[1] + zt[3]) // 2)
+                antes_pos = sample(poller).live_position()
+                if True:
+                    win32gui.SendMessage(hp, win32con.WM_MOUSEWHEEL, WHEEL_UP << 16,
+                                         lp(*pto_t))
+                    time.sleep(0.6)
+                    ahora_pos = sample(poller).live_position()
+                    check("la rueda sobre el panel busca la cancion",
+                          abs((ahora_pos - antes_pos) - 10) < 7,
+                          f"{antes_pos:.0f}s -> {ahora_pos:.0f}s (se esperaba +10)")
+                else:
+                    check("la rueda sobre el panel busca la cancion", False,
+                          "el cursor no quedo sobre el panel (interferencia)", skipped=True)
+            except Exception as exc:
+                check("la rueda sobre el panel busca la cancion", False, repr(exc))
+
+            # (c5) teclado con el panel enfocado (modo escritorio): espacio play/pausa.
+            #      En modo gaming el panel no toma el foco a proposito, asi que primero
+            #      se apaga "no robar el foco" y despues se restaura.
+            try:
+                win32gui.PostMessage(w, win32con.WM_APP + 11, 1, 0)
+                time.sleep(0.8)
+                sono_antes = bool(poller.state().playing)
+                if True:
+                    # Tecla por mensaje: lo que se prueba es el manejador del panel (que
+                    # el foco y el teclado lleguen es de Windows, y en modo gaming el
+                    # panel no toma el foco a proposito).
+                    win32gui.SendMessage(hp, win32con.WM_KEYDOWN, 0x20, 0)
+                    time.sleep(0.15)
+                    win32gui.SendMessage(hp, win32con.WM_KEYUP, 0x20, 0)
+                    time.sleep(0.9)
+                    sono_ahora = bool(poller.state().playing)
+                    check("espacio con el panel cambia play/pausa",
+                          sono_ahora != sono_antes,
+                          f"sonando {sono_antes} -> {sono_ahora}")
+                    win32gui.SendMessage(hp, win32con.WM_KEYDOWN, 0x20, 0)
+                    time.sleep(0.15)
+                    win32gui.SendMessage(hp, win32con.WM_KEYUP, 0x20, 0)
+                    time.sleep(0.6)
+                    # las flechas buscan (paso normal, Ctrl fino, Shift grueso)
+                    pos0 = sample(poller).live_position()
+                    win32gui.SendMessage(hp, win32con.WM_KEYDOWN, win32con.VK_RIGHT, 0)
+                    time.sleep(0.7)
+                    pos1 = sample(poller).live_position()
+                    check("la flecha derecha con el panel adelanta la cancion",
+                          abs((pos1 - pos0) - 10) < 7,
+                          f"{pos0:.0f}s -> {pos1:.0f}s (se esperaba +10)")
+                else:
+                    check("espacio con el panel cambia play/pausa", False, "no aplica",
+                          skipped=True)
+            except Exception as exc:
+                check("espacio con el panel enfocado cambia play/pausa", False, repr(exc))
+            finally:
+                try:
+                    win32gui.PostMessage(w, win32con.WM_APP + 11, 1, 1 if foco_panel else 0)
+                    time.sleep(0.4)
+                except Exception:
+                    pass
+
+            # (c6) doble clic en la caratula: trae al frente la ventana de lo que suena
+            try:
+                from widget import ventanas as ventanas_mod
+                h_rep = ventanas_mod.ventana_del_reproductor(poller.state().app_id)
+                zc2 = zp["tapa"]
+                # coordenadas de CLIENTE (las que manda Windows en un clic real):
+                # el lParam de un boton es relativo a la ventana, no a la pantalla
+                pto_c = ((zc2[0] + zc2[2]) // 2, (zc2[1] + zc2[3]) // 2)
+                frente_antes = win32gui.GetForegroundWindow()
+                if not h_rep:
+                    check("el doble clic en la caratula trae el reproductor al frente",
+                          False, "no encontre su ventana", skipped=True)
+                else:
+                    # Doble clic por mensaje (WM_LBUTTONDBLCLK con la posicion): la clase
+                    # del panel tiene CS_DBLCLKS, asi que este es el mismo mensaje que
+                    # manda el sistema.
+                    win32gui.SendMessage(hp, 0x0203, 0, lp(*pto_c))
+                    time.sleep(0.9)
+                    frente = win32gui.GetForegroundWindow()
+                    check("el doble clic en la caratula trae el reproductor al frente",
+                          frente == h_rep,
+                          f"al frente quedo {hex(frente)} ({win32gui.GetWindowText(frente)[:24]!r}), "
+                          f"se esperaba {hex(h_rep)} de {poller.state().app_id}")
+                    # devolverle el foco a quien lo tenia (SetForegroundWindow simple
+                    # no alcanza desde esta ventana: hay que enganchar los hilos)
+                    try:
+                        if frente_antes and win32gui.IsWindow(frente_antes):
+                            ventanas_mod.traer_al_frente(frente_antes)
+                    except Exception:
+                        pass
+            except Exception as exc:
+                check("el doble clic en la caratula trae el reproductor al frente", False,
+                      repr(exc))
+
+            # (c7) el iman: soltandolo a 10 px de la esquina, queda en la esquina exacta
+            try:
+                mon = win32api.MonitorFromRect(pr)
+                mx0, my0, _, _ = win32api.GetMonitorInfo(mon)["Monitor"]
+                pr_a = win32gui.GetWindowRect(hp)
+                ag = (pr_a[0] + 140, pr_a[1] + 8)
+                dx, dy = (mx0 + 10) - ag[0], (my0 + 10) - ag[1]
+                if not place_cursor(*ag):
+                    check("soltandolo cerca del borde queda pegado al borde", False,
+                          "el cursor no quedo donde se lo puso (interferencia)",
+                          skipped=True)
+                else:
+                    user32.mouse_event(0x0002, 0, 0, 0, 0)
+                    time.sleep(0.2)
+                    for i in (1, 2, 3, 4):
+                        place_cursor(ag[0] + dx * i // 4, ag[1] + dy * i // 4)
+                        time.sleep(0.12)
+                    user32.mouse_event(0x0004, 0, 0, 0, 0)
+                    time.sleep(0.6)
+                    pr_b = win32gui.GetWindowRect(hp)
+                    check("soltandolo cerca del borde queda pegado al borde",
+                          abs(pr_b[0] - mx0) <= 1 and abs(pr_b[1] - my0) <= 1,
+                          f"quedo en {(pr_b[0], pr_b[1])}, se esperaba la esquina "
+                          f"({mx0}, {my0})")
+                    # devolverlo a su lugar (dos arrastres reales: el iman no molesta
+                    # lejos de los bordes)
+                    pr_c = win32gui.GetWindowRect(hp)
+                    ag2 = (pr_c[0] + 140, pr_c[1] + 8)
+                    if place_cursor(*ag2):
+                        user32.mouse_event(0x0002, 0, 0, 0, 0)
+                        time.sleep(0.2)
+                        # el cursor arranca en ag2 y tiene que moverse el mismo delta
+                        # que la ventana (pr_a - pr_c): arrancar de pr_c dejaba el
+                        # panel 140 px corrido (el ancho del punto de agarre)
+                        for i in (1, 2, 3, 4):
+                            place_cursor(ag2[0] + (pr_a[0] - pr_c[0]) * i // 4,
+                                         ag2[1] + (pr_a[1] - pr_c[1]) * i // 4)
+                            time.sleep(0.12)
+                        user32.mouse_event(0x0004, 0, 0, 0, 0)
+                        time.sleep(0.6)
+                    pr_d = win32gui.GetWindowRect(hp)
+                    check("el panel vuelve a su lugar despues del iman",
+                          abs(pr_d[0] - pr_a[0]) <= 2 and abs(pr_d[1] - pr_a[1]) <= 2,
+                          f"quedo en {(pr_d[0], pr_d[1])}, estaba en {(pr_a[0], pr_a[1])}")
+            except Exception as exc:
+                check("soltandolo cerca del borde queda pegado al borde", False, repr(exc))
+
+            # (c8) tercer tamano: tira fina (320x34 a k=1) y sigue siendo usable
+            try:
+                win32gui.PostMessage(w, win32con.WM_APP + 11, 5, 2)     # tira
+                time.sleep(1.0)
+                k_t = 1.0
+                w_t, h_t = panel_mod.size(k_t, cfgmod.load())
+                hp_t = win32gui.FindWindow(PANEL_CLASS if "PANEL_CLASS" in dir() else
+                                           "GorusTaskbarMusicPanel", None)
+                rr = win32gui.GetWindowRect(hp_t) if hp_t else (0, 0, 0, 0)
+                check("el tamano tira fina achica el panel a una fila",
+                      hp_t and win32gui.IsWindowVisible(hp_t)
+                      and abs((rr[2] - rr[0]) - w_t) <= 2,
+                      f"ventana {rr[2] - rr[0]}x{rr[3] - rr[1]}, esperado {w_t}x{h_t}")
+                if hp_t and win32gui.IsWindowVisible(hp_t):
+                    zt = panel_mod.rects(k_t, cfgmod.load())
+                    pto_x = (rr[0] + (zt["cerrar"][0] + zt["cerrar"][2]) // 2,
+                             rr[1] + (zt["cerrar"][1] + zt["cerrar"][3]) // 2)
+                    if click_en(hp_t, *pto_x):
+                        time.sleep(0.8)
+                        check("la cruz de la tira fina lo cierra",
+                              not win32gui.IsWindowVisible(hp_t),
+                              f"visible={win32gui.IsWindowVisible(hp_t)}")
+                    else:
+                        check("la cruz de la tira fina lo cierra", False,
+                              "el cursor no quedo sobre el panel (interferencia)",
+                              skipped=True)
+                win32gui.PostMessage(w, win32con.WM_APP + 11, 5, tam_panel)
+                time.sleep(0.8)
+                hp = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+                win32gui.PostMessage(w, win32con.WM_APP + 10, 1, 1)     # reabrir
+                time.sleep(1.0)
+                hp = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+                pr = win32gui.GetWindowRect(hp)
+            except Exception as exc:
+                check("el tamano tira fina achica el panel a una fila", False, repr(exc))
 
             # (d) cerrar con la cruz
             zc = zp["cerrar"]

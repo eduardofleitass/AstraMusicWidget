@@ -8,6 +8,9 @@ buscar el reproductor. Tiene dos tamanos:
 - **chico**: la mitad de alto (una fila de caratula y texto, otra de controles, barra y
   volumen), sin la tercera linea y con los tiempos en el renglon del artista. Pensado
   para jugar: tapa menos pantalla.
+- **tira**: una sola fila de 34 px (caratula de 24, titulo y artista, una barra fina de
+  2 px, los tres controles, el altavoz y la cruz), del ancho de la barra de tareas.
+  Pensado para jugar en ventana sin tapar nada.
 
 En modo gaming la ventana ademas no le roba el foco al juego (`WS_EX_NOACTIVATE`), se
 cierra sola por inactividad y puede dejar pasar los clics (eso lo maneja `app.py`: aca
@@ -40,6 +43,20 @@ LAYOUTS = {
         "vol_zona": (246, 150, 66, 24),
         "cerrar": (293, 7, 13, 13),
     },
+    "tira": {
+        "W": 320, "H": 34,
+        "margen": 6,
+        "tapa": (6, 5, 24), "tapa_radio": 5,
+        # el ancho del texto se corta bien antes de los controles (146 de reserva)
+        "texto_x": 36, "titulo_y": 4, "titulo_px": 11, "texto_margen_extra": 146,
+        "artista_y": 19, "artista_px": 9, "tercera_y": None, "tercera_px": 9,
+        "tiempos_en_texto": True,
+        "barra": (36, 29, 138, 2), "barra_zona_alto": 8, "tiempos_y": 19,
+        "ctrls": (186, 5, 24, 24, 3), "icono_escala": 1.0,
+        "vol_icono": (266, 11, 14, 16), "vol_barra": (284, 16, 14, 4),
+        "vol_zona": (264, 9, 36, 20),
+        "cerrar": (308, 5, 10, 10),
+    },
     "chico": {
         "W": 280, "H": 84,
         "margen": 8,
@@ -56,10 +73,23 @@ LAYOUTS = {
 }
 
 
+def normalizar(nombre: str) -> str:
+    """Nombre canonico del tamano: normal / chico / tira.
+
+    Un solo lugar decide que variante pidio el usuario, para que el menu, la config y
+    el dibujo no discrepen (se aceptan los nombres que uno escribe de memoria).
+    """
+    n = str(nombre or "").strip().lower()
+    if n.startswith(("tir", "fin", "str")):
+        return "tira"
+    if n.startswith(("chi", "com", "min")):
+        return "chico"
+    return "normal"
+
+
 def layout(cfg: dict) -> dict:
-    """El tamano elegido. Acepta "chico"/"compacto" o "normal"."""
-    nombre = str(cfg.get("panel_size", "normal")).strip().lower()
-    return LAYOUTS["chico" if nombre.startswith(("chi", "com", "min")) else "normal"]
+    """El tamano elegido (normal / chico / tira)."""
+    return LAYOUTS[normalizar(cfg.get("panel_size", "normal"))]
 
 
 def size(k: float, cfg: dict) -> tuple[int, int]:
@@ -120,6 +150,31 @@ def hit(x: int, y: int, k: float, cfg: dict) -> int:
     if _dentro(z["tapa"], x, y):
         return 7
     return -1
+
+
+def imantar(x: int, y: int, w: int, h: int, monitor: tuple, piso: int,
+            margen: int = 22) -> tuple:
+    """Pega (x, y) al borde o esquina del monitor si esta a menos de `margen` px.
+
+    `monitor` es (x0, y0, x1, y1) y `piso` la y donde termina el monitor para el panel
+    (el borde de arriba de la barra de tareas de ese monitor). Devuelve la posicion
+    final, siempre dentro del monitor. Un panel a 3 px del borde se ve como un error de
+    dibujo, y esta es la parte que conviene poder medir sin mover el mouse.
+    """
+    mx0, my0, mx1, my1 = monitor
+    piso = min(max(piso, my0), my1)
+    nx, ny = x, y
+    if abs(nx - mx0) <= margen:
+        nx = mx0
+    elif abs(nx - (mx1 - w)) <= margen:
+        nx = mx1 - w
+    if abs(ny - my0) <= margen:
+        ny = my0
+    elif abs(ny - (piso - h)) <= margen:
+        ny = piso - h
+    nx = max(mx0, min(nx, mx1 - w))
+    ny = max(my0, min(ny, max(my0, piso - h)))
+    return (int(nx), int(ny))
 
 
 def _frac(x: int, z: tuple) -> float:
