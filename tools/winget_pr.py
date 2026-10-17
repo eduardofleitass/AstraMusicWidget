@@ -7,7 +7,7 @@ winget es el canal que trae descargas sin que nadie promocione nada: `winget ins
 aparece en winstall.app y compania. El PR va a microsoft/winget-pkgs, que es enorme, asi que
 no se clona: se crean los archivos por la API sobre una rama nueva del fork.
 
-El paquete apunta al instalador de la release v1.0.4, con el SHA256 que se verifico bajando
+El paquete apunta al instalador de la release v1.0.5, con el SHA256 que se verifico bajando
 el archivo publicado (mismo hash que el local: la release se sube primero, se baja el
 instalador y recien despues se corre esto).
 
@@ -29,9 +29,9 @@ TOKEN = next((l.split("=", 1)[1].strip() for l in TOKEN.splitlines()
 assert TOKEN, "no pude obtener el token del Gestor de Credenciales"
 ENTORNO = dict(os.environ, GH_TOKEN=TOKEN)
 
-VER = "1.0.4"
+VER = "1.0.5"
 ID = "EduardoFleitas.AstraMusicWidget"
-SHA = "CE1E39973E1159A3B9193326E26E1B64809C17773A737F8BAD4D9E169B74F98D"
+SHA = "FC2E036C0FEF0E3A806D07F999E693D0479D52D2DEAFA1990E632FE8F77CE490"
 URL = ("https://github.com/eduardofleitass/AstraMusicWidget/releases/download/"
        f"v{VER}/Astra-Music-widget-{VER}-setup.exe")
 CARPETA = f"manifests/e/EduardoFleitas/AstraMusicWidget/{VER}"
@@ -95,12 +95,17 @@ ManifestVersion: 1.6.0
 
 # --- 0) el mismo paquete, en el repo local -------------------------------------------
 LOCAL = os.path.join(RAIZ, "winget", "manifests", "e", "EduardoFleitas", "AstraMusicWidget")
-viejo = os.path.join(LOCAL, "1.0.2")
-if os.path.isdir(viejo):
+viejo = None
+if os.path.isdir(LOCAL):
+    # En el repo queda solo el manifiesto de la version actual (las anteriores viven en
+    # los PR; el de winget-pkgs las conserva). Se limpian todas las demas carpetas.
     import shutil
-    shutil.rmtree(viejo)
-    print("0. saque el manifiesto 1.0.3 (su PR quedo abierto pero la version cambia: la "
-          "1.0.4 arregla que las ondas congelaran el widget en Windows 11)")
+    for carpeta in sorted(os.listdir(LOCAL)):
+        if carpeta != VER and os.path.isdir(os.path.join(LOCAL, carpeta)):
+            viejo = viejo or carpeta
+            shutil.rmtree(os.path.join(LOCAL, carpeta))
+    if viejo:
+        print("0. saque el manifiesto %s (queda solo el de la %s)" % (viejo, VER))
 destino = os.path.join(LOCAL, VER)
 os.makedirs(destino, exist_ok=True)
 for nombre, texto in YAML.items():
