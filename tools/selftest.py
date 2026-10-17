@@ -25,13 +25,18 @@ from widget import draw  # noqa: E402
 
 WM_APP_MOVE = win32con.WM_APP + 1
 WM_APP_ALPHA = win32con.WM_APP + 2
+WM_APP_CANCEL_SCRUB = win32con.WM_APP + 3
+WM_MOUSEMOVE = 0x0200
+WM_LBUTTONDOWN = 0x0201
+WM_CAPTURECHANGED = 0x0215
 HERE = os.path.dirname(os.path.abspath(__file__))
 RESULTS = []
 
 
-def check(name: str, ok: bool, detail: str = "") -> bool:
-    RESULTS.append((name, ok, detail))
-    print(f"{'PASA' if ok else 'FALLA':5}  {name}" + (f"  -> {detail}" if detail else ""))
+def check(name: str, ok: bool, detail: str = "", skipped: bool = False) -> bool:
+    RESULTS.append((name, bool(ok), detail, bool(skipped)))
+    tag = "SALTA" if skipped else ("PASA" if ok else "FALLA")
+    print(f"{tag:5}  {name}" + (f"  -> {detail}" if detail else ""))
     return ok
 
 
@@ -66,6 +71,61 @@ def posicion(widget, frac, alpha=None, espera=0.9):
         win32gui.SendMessage(widget, WM_APP_ALPHA, alpha, 0)
     time.sleep(espera)
     return rect(widget)
+
+
+def franja_rgb(wr: tuple, y_rel: int, x0: int, x1: int) -> list:
+    """Pixeles de una fila del widget, en coordenadas relativas."""
+    from PIL import ImageGrab
+    return list(ImageGrab.grab(bbox=(wr[0] + x0, wr[1] + y_rel, wr[0] + x1, wr[1] + y_rel + 1))
+                .convert("RGB").getdata())
+
+
+def region_rgb(wr: tuple, y0: int, y1: int, x0: int, x1: int) -> list:
+    """Pixeles de una franja de varias filas (para medir TEXTO, que no se puede
+    medir con una sola fila: los glifos empiezan unos pixeles mas abajo)."""
+    from PIL import ImageGrab
+    return list(ImageGrab.grab(bbox=(wr[0] + x0, wr[1] + y0, wr[0] + x1, wr[1] + y1))
+                .convert("RGB").getdata())
+
+
+def fila_dif(a: list, b: list, umbral: int = 25) -> tuple:
+    """(cuanto cambia en promedio, x relativa del cambio mas a la derecha)."""
+    n = min(len(a), len(b))
+    d = [max(abs(a[i][c] - b[i][c]) for c in range(3)) for i in range(n)]
+    ultimo = max((i for i, v in enumerate(d) if v > umbral), default=-1)
+    return (sum(d) / max(1, len(d)), ultimo)
+
+
+def log_lineas() -> list:
+    try:
+        with open(os.path.join(os.path.dirname(HERE), "widget.log"), encoding="utf-8") as fh:
+            return fh.readlines()
+    except Exception:
+        return []
+
+
+def scrub_sim(hwnd, wx: int, y: int, mover_a=None) -> tuple:
+    """Arrastre simulado sobre la barra, SIN tocar la reproduccion ni el cursor.
+
+    El mensaje va directo a la ventana (no hay raton real de por medio), asi que se
+    ejercita el mismo procedimiento de la ventana. Al no soltar el boton, el salto
+    no se manda nunca: la prueba mira la previsualizacion y aborta.
+    """
+    win32gui.PostMessage(hwnd, WM_LBUTTONDOWN, 1, wx | (y << 16))
+    time.sleep(0.5)
+    if mover_a is not None:
+        win32gui.PostMessage(hwnd, WM_MOUSEMOVE, 1, mover_a | (y << 16))
+        time.sleep(0.5)
+    return rect(hwnd)
+
+
+def scrub_abortar(hwnd) -> tuple:
+    """Aborta el arrastre como lo haria el widget mismo: suelta la captura de raton
+    en su propio hilo. Con un WM_CAPTURECHANGED simulado la captura quedaba puesta y
+    el siguiente clic real se perdia (el sistema la reseteaba en el mousedown)."""
+    win32gui.PostMessage(hwnd, WM_APP_CANCEL_SCRUB, 0, 0)
+    time.sleep(0.7)
+    return rect(hwnd)
 
 
 def main() -> int:
@@ -259,6 +319,115 @@ def main() -> int:
     except Exception as exc:
         check("medicion del movimiento", False, repr(exc))
 
+    # --- barra de progreso: zona clicable y previsualizacion ---------------
+    print("\n-- barra de progreso: zona clicable y previsualizacion --")
+    try:
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        wr = rect(w_now)
+        ww2, wh2 = wr[2] - wr[0], wr[3] - wr[1]
+        pr = draw.progress_rect(ww2, k, cfg)
+        ctl = draw.control_rects(ww2, k, cfg)
+        check("la barra de progreso tiene zona clicable",
+              bool(pr) and (pr[2] - pr[0]) >= 40, f"{pr}")
+        check("la zona clicable de la barra no pisa los botones",
+              bool(pr) and (not ctl or pr[2] <= ctl[0][0]),
+              f"barra hasta x={pr[2] if pr else '?'} / botones desde "
+              f"x={ctl[0][0] if ctl else '-'}")
+        check("la franja clicable entra dentro del widget",
+              bool(pr) and pr[0] >= 0 and pr[2] < ww2 and pr[3] <= wh2,
+              f"franja {pr} dentro de {ww2}x{wh2}")
+        if pr:
+            medio = draw.progress_frac_at((pr[0] + pr[2]) / 2.0, ww2, k, cfg)
+            check("la mitad de la barra corresponde a la mitad del tema",
+                  abs(medio - 0.5) <= 0.06, f"fraccion {medio:.3f}")
+            check("los extremos de la barra dan 0 y 1",
+                  draw.progress_frac_at(pr[0], ww2, k, cfg) <= 0.01
+                  and draw.progress_frac_at(pr[2], ww2, k, cfg) >= 0.99,
+                  f"{draw.progress_frac_at(pr[0], ww2, k, cfg):.2f} / "
+                  f"{draw.progress_frac_at(pr[2], ww2, k, cfg):.2f}")
+
+            from widget.media import MediaPoller
+            probe = MediaPoller(interval=0.3)
+            probe.start()
+            probe.wait_ready(6)
+            time.sleep(0.9)
+            seekable = probe.state().can_seek
+            probe.stop()
+
+            destino = 0.88
+            x_dest = int(pr[0] + (pr[2] - pr[0]) * destino)
+            x_ini = int(pr[0] + (pr[2] - pr[0]) * 0.5)
+            y_barra = int(35.5 * k)
+            # El texto del renglon del artista va de ARTIST_Y hacia abajo; con una
+            # sola fila se mide el borde de los glifos y parece que no cambio nada.
+            y_txt0, y_txt1 = int(draw.ARTIST_Y * k) + 3, int(draw.ARTIST_Y * k) + 11
+            x_txt, x_txt1 = int(draw.TEXT_X * k), int(ww2 * 0.75)
+            barra_antes = franja_rgb(wr, y_barra, 0, ww2)
+            texto_antes = region_rgb(wr, y_txt0, y_txt1, x_txt, x_txt1)
+            n_log = len(log_lineas())
+
+            wr2 = scrub_sim(w_now, x_ini, y_barra, mover_a=x_dest)
+            barra_scrub = franja_rgb(wr, y_barra, 0, ww2)
+            texto_scrub = region_rgb(wr, y_txt0, y_txt1, x_txt, x_txt1)
+            check("el arrastre sobre la barra no mueve el widget", wr2 == wr,
+                  f"{wr} -> {wr2}")
+            if not seekable:
+                check("durante el arrastre la barra llega al destino", False,
+                      "este reproductor no admite saltos", skipped=True)
+                check("durante el arrastre se ve la hora destino", False,
+                      "no aplica", skipped=True)
+            else:
+                m, ultimo = fila_dif(barra_antes, barra_scrub)
+                check("durante el arrastre la barra llega al destino",
+                      ultimo >= x_dest - max(8, int(6 * k)),
+                      f"el cambio mas a la derecha esta en x={ultimo}, destino x={x_dest}"
+                      f" (diferencia media {m:.1f})")
+                check("la barra no se dibuja por debajo de los botones",
+                      ultimo <= pr[2] + 8,
+                      f"cambio hasta x={ultimo}, la barra termina en x={pr[2]}")
+                mt, _ = fila_dif(texto_antes, texto_scrub, umbral=10)
+                check("durante el arrastre se ve la hora destino", mt >= 3.0,
+                      f"diferencia media en el renglon del artista {mt:.1f}")
+
+            scrub_abortar(w_now)
+            barra_final = franja_rgb(wr, y_barra, 0, ww2)
+            saltos = [l for l in log_lineas()[n_log:] if "salto" in l]
+            check("al abortar el arrastre no se manda ningun salto", not saltos,
+                  f"{len(saltos)} lineas de salto en el log")
+            i_dest = min(max(0, x_dest - 3), len(barra_final) - 1)
+            dif_dest = max(abs(barra_final[i_dest][c] - barra_antes[i_dest][c]) for c in range(3))
+            check("al abortar, la barra vuelve al progreso real", dif_dest <= 60,
+                  f"diferencia en el destino {dif_dest} (era el indicador de arrastre)")
+    except Exception as exc:
+        check("medicion de la barra de progreso", False, repr(exc))
+
+    # --- superficie sensible al mouse ---------------------------------------
+    print("\n-- superficie sensible al mouse (con el fondo transparente) --")
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+        u32 = ctypes.windll.user32
+        u32.WindowFromPoint.restype = wt.HWND
+        u32.WindowFromPoint.argtypes = [wt.POINT]
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        # Sin fondo es el caso que fallaba: el alpha 0 por pixel hace que Windows
+        # le entregue el mouse a la barra de tareas en las zonas vacias.
+        posicion(w_now, 0xFFFF, 0)
+        wr = rect(w_now)
+        puntos = {
+            "centro": ((wr[0] + wr[2]) // 2, (wr[1] + wr[3]) // 2),
+            "hueco del boton play/pausa": (wr[0] + 263, (wr[1] + wr[3]) // 2),
+            "zona vacia arriba al medio": (wr[0] + 150, wr[1] + 8),
+            "esquina inferior derecha": (wr[2] - 8, wr[3] - 8),
+        }
+        malos = [n for n, (x, y) in puntos.items()
+                 if u32.WindowFromPoint(wt.POINT(int(x), int(y))) != w_now]
+        check("el widget recibe el mouse en toda su superficie (fondo transparente)",
+              not malos, f"puntos que se lleva la barra: {malos or 'ninguno'}")
+        posicion(w_now, 0xFFFF, int(cfg.get("chip_alpha", 232)))
+    except Exception as exc:
+        check("superficie sensible al mouse", False, repr(exc))
+
     # --- vigilancia del pintado --------------------------------------------
     print("\n-- vigilancia del pintado (30 muestras, ~9 s) --")
     try:
@@ -286,13 +455,15 @@ def main() -> int:
     except Exception:
         pass
 
-    fails = [r for r in RESULTS if not r[1]]
-    print(f"\n{len(RESULTS) - len(fails)}/{len(RESULTS)} pruebas pasaron")
+    fails = [r for r in RESULTS if not r[1] and not r[3]]
+    skips = [r for r in RESULTS if r[3]]
+    print(f"\n{len(RESULTS) - len(fails) - len(skips)}/{len(RESULTS)} pruebas pasaron"
+          + (f", {len(skips)} saltadas" if skips else ""))
     out = os.path.join(HERE, "_selftest.json")
     try:
         with open(out, "w", encoding="utf-8") as fh:
-            json.dump([{"prueba": n, "pasa": o, "detalle": d} for n, o, d in RESULTS],
-                      fh, indent=2, ensure_ascii=False)
+            json.dump([{"prueba": n, "pasa": o, "detalle": d, "salta": s}
+                       for n, o, d, s in RESULTS], fh, indent=2, ensure_ascii=False)
     except Exception:
         pass
     return 1 if fails else 0

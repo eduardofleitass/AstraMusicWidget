@@ -49,6 +49,7 @@ WM_SETTINGCHANGE = getattr(win32con, "WM_SETTINGCHANGE", 0x001A)
 # tools/selftest.py para verificar las dos cosas contra el widget en marcha).
 WM_APP_MOVE = win32con.WM_APP + 1   # wParam = fraccion de posicion x1000; 0xFFFF = extremo
 WM_APP_ALPHA = win32con.WM_APP + 2  # wParam = alpha del chip (0 = sin fondo)
+WM_APP_CANCEL_SCRUB = win32con.WM_APP + 3   # aborta un arrastre de la barra de progreso
 
 WS_EX_LAYERED = 0x00080000
 ULW_ALPHA = 0x02
@@ -210,6 +211,8 @@ class WidgetApp:
         self.pos_frac = cfg.get("position_frac", None)
         self._drag = None      # estado del arrastre en curso
         self._drag_x = None    # x (pantalla) mientras se arrastra
+        self._scrub = None     # estado del arrastre sobre la barra de progreso
+        self._scrub_t = None   # segundos destino mientras se arrastra la barra
         self._wall_x = None    # limite real: a partir de aca la lista de tareas tapa
         self._last_cover_check = 0.0
         self.visible = True
@@ -555,7 +558,8 @@ class WidgetApp:
         return (st.has_session, st.art_key, st.title, st.artist, st.playing,
                 int(frac * bar_px), int(self.marquee) if self._overflow() else 0,
                 self.hover, self.width_px, self.height_px, self.base, st.stopped,
-                int(self.cfg.get("chip_alpha", 232)), self.layered)
+                int(self.cfg.get("chip_alpha", 232)), self.layered,
+                -1 if self._scrub_t is None else int(self._scrub_t))
 
     def _overflow(self) -> bool:
         try:
@@ -577,7 +581,8 @@ class WidgetApp:
                                int(round(draw.ART * S)), int(round(draw.ART_RADIUS * S)))
         img = draw.render(self.state, self.cfg, art=art, hover=self.hover,
                           marquee=self.marquee, k=self.k, base=self.base,
-                          height=self.height_px, opaque=not self.layered)
+                          height=self.height_px, opaque=not self.layered,
+                          scrub=self._scrub_t)
         if self.layered:
             # Alpha real: la transparencia del chip se compone contra los pixeles
             # que estan detras, asi que no se mezcla contra ningun color muestreado.
@@ -701,11 +706,46 @@ class WidgetApp:
             self.log("ctl proc fallo: %r", exc)
         return win32gui.DefWindowProc(hwnd, msg, wp, lp)
 
-    def _hit_control(self, x: int, y: int) -> int:
+    def _hit_at(self, x: int, y: int) -> int:
+        """Que hay bajo el cursor: 0/1/2 = anterior/play-pausa/siguiente,
+        3 = barra de progreso (solo si ese reproductor admite saltos), -1 = nada.
+
+        Los botones se prueban primero: ocupan toda la altura, asi que si se
+        probara la barra antes, el borde de abajo de "siguiente" saltaria de tema.
+        """
         for i, (x0, y0, x1, y1) in enumerate(draw.control_rects(self.width_px, self.k, self.cfg)):
             if x0 <= x <= x1 and y0 <= y <= y1:
                 return i
+        r = draw.progress_rect(self.width_px, self.k, self.cfg)
+        if r and self._can_seek() and r[0] <= x <= r[2] and r[1] <= y <= r[3]:
+            return 3
         return -1
+
+    # ------------------------------------------------------------ salto de tiempo
+    def _can_seek(self) -> bool:
+        st = self.state
+        return bool(st.has_session and st.can_seek and st.duration > 0)
+
+    def _seek_step(self) -> float:
+        try:
+            return max(1.0, float(self.cfg.get("seek_step_s", 10)))
+        except Exception:
+            return 10.0
+
+    def _seek_target(self, x: int) -> float:
+        """Segundos que corresponden a una x del cliente sobre la barra."""
+        st = self.state
+        frac = draw.progress_frac_at(x, self.width_px, self.k, self.cfg)
+        return max(st.min_seek, min(frac * st.duration, st.max_seek or st.duration))
+
+    def _seek_by(self, delta: float) -> None:
+        st = self.state
+        if not self._can_seek():
+            return
+        target = st.live_position() + delta
+        self.poller.seek(max(st.min_seek, min(target, st.max_seek or st.duration)))
+        self.log("salto: %+.1f s", delta)
+        self._repaint_if_needed(force=True)
 
     def _widget_wndproc(self, hwnd, msg, wp, lp):
         try:
@@ -725,10 +765,13 @@ class WidgetApp:
                     return 0
                 x = lp & 0xFFFF
                 y = (lp >> 16) & 0xFFFF
+                if self._scrub is not None:
+                    self._scrub_move(x)
+                    return 0
                 if os.environ.get("GORUS_DEBUG_MOUSE"):
                     self.log("WM_MOUSEMOVE x=%s y=%s hit=%s hover_prev=%s",
-                             x, y, self._hit_control(x, y), self.hover)
-                hit = self._hit_control(x, y)
+                             x, y, self._hit_at(x, y), self.hover)
+                hit = self._hit_at(x, y)
                 if hit != self.hover:
                     self.hover = hit
                     self._repaint_if_needed(force=True)
@@ -743,29 +786,64 @@ class WidgetApp:
                     self.hover = -1
                     self._repaint_if_needed(force=True)
                 return 0
+            if msg == win32con.WM_MOUSEWHEEL:
+                # Rueda sobre el widget: adelanta o atrasa. Windows manda la rueda
+                # a la ventana que esta bajo el cursor, no a la que tiene el foco.
+                steps = ctypes.c_short((wp >> 16) & 0xFFFF).value / 120.0
+                if steps:
+                    self._seek_by(steps * self._seek_step())
+                return 0
             if msg == win32con.WM_LBUTTONDOWN:
                 x = lp & 0xFFFF
                 y = (lp >> 16) & 0xFFFF
-                # Arrastrar desde cualquier parte que no sea un boton mueve el
-                # widget a lo largo de la barra. Un clic seco (sin movimiento)
-                # sigue sin hacer nada, como antes.
-                if (self._hit_control(x, y) == -1
-                        and self.cfg.get("drag_to_move", True)):
+                hit = self._hit_at(x, y)
+                if os.environ.get("GORUS_DEBUG_MOUSE"):
+                    r = draw.progress_rect(self.width_px, self.k, self.cfg)
+                    dentro = bool(r and r[0] <= x <= r[2] and r[1] <= y <= r[3])
+                    self.log("WM_LBUTTONDOWN x=%s y=%s hit=%s barra=%s dentro=%s "
+                             "can_seek=%s dur=%.2f captura=%s arrastre=%s",
+                             x, y, hit, r, dentro, self._can_seek(), self.state.duration,
+                             hex(win32gui.GetCapture()), self._drag is not None)
+                if hit == 3:
+                    # Sobre la barra de progreso: arrastrar (o un clic seco) salta
+                    # a esa posicion.
+                    self._start_scrub(x)
+                elif hit == -1 and self.cfg.get("drag_to_move", True):
+                    # Arrastrar desde cualquier parte que no sea un boton ni la
+                    # barra mueve el widget a lo largo de la barra de tareas.
                     self._start_drag()
                 return 0
             if msg == win32con.WM_CAPTURECHANGED:
+                # Perder la captura NO se trata como "el arrastre no existio": si
+                # se cancelara, el clic del usuario se perderia en silencio (visto
+                # de verdad: con la captura en un estado inconsistente, el sistema
+                # la resetea en el mismo mousedown y el salto nunca se mandaba). Si
+                # el usuario esta arrastrando la barra, el salto se aplica igual.
+                if os.environ.get("GORUS_DEBUG_MOUSE"):
+                    self.log("WM_CAPTURECHANGED arrastre=%s arrastre_barra=%s",
+                             self._drag is not None, self._scrub is not None)
+                if self._scrub is not None:
+                    self._end_scrub(self._scrub.get("x", 0))
+                    return 0
                 if self._drag is not None:
                     self._drag = None
                     self._drag_x = None
                     self._apply_layout(force=True)
                 return 0
             if msg == win32con.WM_LBUTTONUP:
+                if os.environ.get("GORUS_DEBUG_MOUSE"):
+                    self.log("WM_LBUTTONUP x=%s y=%s arrastre=%s arrastre_barra=%s",
+                             lp & 0xFFFF, (lp >> 16) & 0xFFFF,
+                             self._drag is not None, self._scrub is not None)
                 if self._drag is not None:
                     self._end_drag()
                     return 0
                 x = lp & 0xFFFF
                 y = (lp >> 16) & 0xFFFF
-                hit = self._hit_control(x, y)
+                if self._scrub is not None:
+                    self._end_scrub(x)
+                    return 0
+                hit = self._hit_at(x, y)
                 if hit == 0:
                     self.poller.prev_track()
                 elif hit == 1:
@@ -780,6 +858,9 @@ class WidgetApp:
                 return 0
             if msg == WM_APP_ALPHA:
                 self.set_chip_alpha(int(wp), save=bool(lp))
+                return 0
+            if msg == WM_APP_CANCEL_SCRUB:
+                self.cancel_scrub()
                 return 0
             if msg == win32con.WM_RBUTTONUP:
                 if self.cfg.get("right_click_menu", True):
@@ -894,6 +975,65 @@ class WidgetApp:
             # clic seco sobre el cuerpo: no mover nada
             self._apply_layout(force=True)
 
+    # ---------------------------------------------------- arrastre de la barra
+    def _start_scrub(self, x: int) -> None:
+        self._scrub = {"x0": x, "x": x, "moved": False}
+        self._scrub_t = self._seek_target(x)
+        try:
+            win32gui.SetCapture(self.hwnd_widget)
+            win32gui.SetCursor(win32gui.LoadCursor(0, IDC_SIZEWE))
+        except Exception:
+            pass
+        self._repaint_if_needed(force=True)
+
+    def _scrub_move(self, x: int) -> None:
+        d = self._scrub
+        if not d:
+            return
+        if abs(x - d["x0"]) >= 3:
+            d["moved"] = True
+        d["x"] = x
+        # Mientras se arrastra no se toca la reproduccion: la barra y el renglon
+        # del artista muestran a donde va a saltar, y el salto se manda al soltar.
+        self._scrub_t = self._seek_target(x)
+        try:
+            win32gui.SetCursor(win32gui.LoadCursor(0, IDC_SIZEWE))
+        except Exception:
+            pass
+        self._repaint_if_needed(force=True)
+
+    def cancel_scrub(self) -> None:
+        """Aborta un arrastre de la barra sin mandar el salto (lo usan las pruebas).
+
+        Suelta la captura DE VERDAD. Si se dejara puesta, el proximo clic real
+        llegaria con la captura en un estado inconsistente: el sistema la resetea
+        en el mismo mousedown y el clic se perderia.
+        """
+        if self._scrub is None and self._scrub_t is None:
+            return
+        self._scrub = None
+        self._scrub_t = None
+        try:
+            win32gui.ReleaseCapture()
+        except Exception:
+            pass
+        self._repaint_if_needed(force=True)
+
+    def _end_scrub(self, x: int) -> None:
+        d, self._scrub = self._scrub, None
+        target, self._scrub_t = self._scrub_t, None
+        try:
+            win32gui.ReleaseCapture()
+        except Exception:
+            pass
+        if target is None:
+            target = self._seek_target(x)
+        # Un clic seco tambien salta: el objetivo es la posicion clickeada.
+        if self.poller.seek(target):
+            self.log("salto a %.0f s (%s)", target,
+                     "arrastre" if (d or {}).get("moved") else "clic")
+        self._repaint_if_needed(force=True)
+
     # ------------------------------------------------------------------- menu
     def _show_menu(self) -> None:
         try:
@@ -906,10 +1046,15 @@ class WidgetApp:
                     flags |= win32con.MF_CHECKED
                 win32gui.AppendMenu(alpha_sub, flags, 20 + i, label)
 
+            step = self._seek_step()
+            seek_ok = self._can_seek()
             items = [
                 ("item", 1, "Ocultar widget" if self.visible else "Mostrar widget", True),
                 ("sep", 0, "", None),
                 ("popup", alpha_sub, "Fondo", True),
+                ("sep", 0, "", None),
+                ("item", 13, f"◀◀   Atrasar {step:.0f} s", seek_ok),
+                ("item", 14, f"Adelantar {step:.0f} s   ▶▶", seek_ok),
                 ("sep", 0, "", None),
                 ("item", 3, "◀  Mover a la izquierda", True),
                 ("item", 4, "Mover a la derecha  ▶", True),
@@ -954,6 +1099,10 @@ class WidgetApp:
             self.toggle_visible()
         elif 20 <= cmd <= 20 + len(ALPHA_LEVELS) - 1:
             self.set_chip_alpha(ALPHA_LEVELS[cmd - 20][0])
+        elif cmd == 13:
+            self._seek_by(-self._seek_step())
+        elif cmd == 14:
+            self._seek_by(self._seek_step())
         elif cmd == 3:
             self._nudge(-int(round(NUDGE_PX * self.k)))
         elif cmd == 4:

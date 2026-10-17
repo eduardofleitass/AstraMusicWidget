@@ -29,6 +29,14 @@ DEFAULTS = {
     "position_frac": None,
     "min_tasklist_free": 140,
     "drag_to_move": True,
+    # Cuantos segundos adelanta/atrasa la rueda del mouse y los items del menu.
+    # La barra de progreso siempre se puede clickear para saltar a donde sea.
+    "seek_step_s": 10,
+    # Alpha minimo de cada pixel en modo transparente. Windows usa el alpha por
+    # pixel para decidir que ventana recibe el mouse: con 0, las zonas vacias del
+    # widget se vuelven "agujeros" y los clics van a la barra de tareas. 2 es
+    # invisible (0,8% de mezcla) y mantiene todo el widget sensible al mouse.
+    "hit_alpha_floor": 2,
     "auto_contrast": True,
     "theme": {
         "chip": [21, 23, 30],

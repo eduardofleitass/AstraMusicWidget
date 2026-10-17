@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(HERE, "_rig_state.json")
 PORT = 8765
+_last = {}
 
 TRACKS = [
     ("Gorus Test Track One", "Gorus Dev", (60, 120, 220), (250, 210, 90)),
@@ -105,14 +106,35 @@ function apply() {
   document.title = t.title;
 }
 function jump(d) { i = (i + d + TRACKS.length) % TRACKS.length; apply(); report(); audio.play(); }
+function logTime(extra) {
+  try { fetch("/log?track=" + i + "&time=" + audio.currentTime.toFixed(2) + (extra || "")); } catch (e) {}
+}
 if ("mediaSession" in navigator) {
   navigator.mediaSession.setActionHandler("play", () => audio.play());
   navigator.mediaSession.setActionHandler("pause", () => audio.pause());
   navigator.mediaSession.setActionHandler("nexttrack", () => jump(1));
   navigator.mediaSession.setActionHandler("previoustrack", () => jump(-1));
+  // El widget mueve la barra con try_change_playback_position_async, que el
+  // navegador entrega a este manejador (o al <audio> si no hay manejador).
+  navigator.mediaSession.setActionHandler("seekto", (d) => {
+    if (d && d.seekTime != null) audio.currentTime = d.seekTime;
+    logTime("&seek=1");
+  });
 }
 apply(); report();
 audio.play().catch(e => { document.getElementById("now").textContent = "autoplay bloqueado: " + e; });
+// Muestreo continuo: publica la posicion real para poder comprobarla desde afuera.
+setInterval(() => {
+  if ("setPositionState" in navigator.mediaSession && audio.duration) {
+    try {
+      navigator.mediaSession.setPositionState({
+        duration: audio.duration, playbackRate: audio.playbackRate,
+        position: audio.currentTime
+      });
+    } catch (e) {}
+  }
+  logTime("");
+}, 400);
 </script></body></html>"""
 
 
@@ -149,13 +171,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send(cover_png(idx), "image/png")
         elif p == "/log":
             q = parse_qs(u.query)
-            data = {"track": int(q.get("track", ["0"])[0])}
+            data = {"track": int(q.get("track", ["0"])[0]),
+                    "time": float(q.get("time", ["0"])[0])}
+            if q.get("seek"):
+                data["seek"] = True
             try:
                 with open(STATE_FILE, "w", encoding="utf-8") as fh:
                     json.dump(data, fh)
             except Exception:
                 pass
-            print(f"[rig] pista actual -> {data['track']}: {TRACKS[data['track']][0]}")
+            # Solo se habla cuando cambia de tema o cuando alguien pide un salto:
+            # el muestreo de posicion escribe el archivo 2 veces por segundo.
+            if data["track"] != _last.get("track") or data.get("seek"):
+                print(f"[rig] pista {data['track']}: {TRACKS[data['track']][0]}"
+                      f"  t={data['time']:.1f}s" + ("  (salto pedido)" if data.get("seek") else ""))
+                _last["track"] = data["track"]
             self._send(b"ok", "text/plain")
         else:
             self._send(b"no", "text/plain", 404)

@@ -24,10 +24,11 @@ Probado en Windows 10 22H2 (19045), escala 100% y 1920x1080.
 | Arrancar el widget | doble clic en `run.vbs` |
 | Que arranque solo con Windows | `install_startup.bat` |
 | Sacarlo del arranque y detenerlo | `uninstall_startup.bat` |
-| Mostrar / ocultar sin cerrarlo | `Ctrl + Alt + M` |
+| Mostrar / ocultar sin cerrarlo | `Ctrl + Alt + M` (la misma tecla lo vuelve a mostrar) |
+| Atrasarlo o adelantarlo | clic en la barra de progreso, o la rueda del mouse (±10 s) |
 | Fondo transparente | clic derecho > *Fondo* |
 | Moverlo a otra parte de la barra | arrastralo con el boton izquierdo, o clic derecho > *Mover / Centrar* |
-| Menu (fondo, mover, ancho, salir) | clic derecho sobre el widget |
+| Menu (fondo, adelantar/atrasar, mover, ancho, salir) | clic derecho sobre el widget |
 | Detenerlo | clic derecho > Salir, o `python tools\stop.py` |
 | Reinstalar dependencias | `setup.bat` |
 
@@ -42,7 +43,8 @@ Si nunca corriste nada todavia, empeza por `setup.bat`.
   principio.
 - **Artista** recortado con puntos suspensivos.
 - **Barra de progreso** que avanza suave aunque el reproductor informe la
-  posicion cada varios segundos (ver *Interpolacion del tiempo*).
+  posicion cada varios segundos (ver *Interpolacion del tiempo*), y que ademas
+  **se puede mover**: clic o arrastre para saltar a cualquier parte del tema.
 - **Botones** que se iluminan al pasar el mouse. Cuando un reproductor no ofrece
   algun control, el boton se dibuja atenuado.
 - **Sin reproduccion**: estado apagado con una nota musical y los controles
@@ -110,6 +112,49 @@ como fondo de barra vacio. Es el precio de poder moverlo; *Volver al extremo
 derecho* deja la barra prolija otra vez.
 
 
+## Atrasar y adelantar
+
+Tres formas, todas por SMTC (o sea, sirven con cualquier reproductor que respete
+el sistema, igual que los botones):
+
+- **Clic en la barra de progreso**: salta a esa parte del tema. La zona clicable
+  es una franja mas alta que la barra (que mide 2,5 px, imposible de acertar) y
+  termina donde empiezan los botones; al pasar el mouse la barra se engrosa.
+- **Arrastrar sobre la barra**: mientras se arrastra muestra a donde va a saltar
+  (el renglon del artista pasa a decir `2:35 / 4:20`) y recien manda el salto al
+  soltar. Si te arrepentis, no hay salto: soltar fuera del widget o abortar el
+  arrastre no toca la reproduccion.
+- **Rueda del mouse** sobre el widget: adelanta o atrasa `seek_step_s` segundos
+  (10 por defecto). El menu contextual tiene los mismos dos items.
+
+Detalles que costaron encontrar:
+
+- **La API de salto pide enteros, no tiempos.** `try_change_playback_position_async`
+  espera **ticks de 100 ns** (`int`): pasarle un `timedelta` —que es lo que
+  devuelve el timeline al leer— explota con `TypeError`. Y el techo real lo da el
+  propio timeline: `min_seek_time` / `max_seek_time`.
+- **El reproductor informa la posicion con atraso.** Justo despues de un salto
+  puede seguir informando la posicion vieja (medido: ~1 s en YouTube via Brave).
+  Si se adoptara ese reporte, la barra volveria sola y despues saltaria de nuevo.
+  Por eso hay una *ventana de gracia*: durante 2 s despues de un salto pedido por
+  el usuario se ignora un reporte que no coincida con la posicion esperada. El
+  ancla local, ademas, se mueve al instante (de forma optimista) para que la barra
+  no rebote.
+- **Un stream en vivo no admite saltos** (no tiene fin): ahi la barra no se
+  dibuja y el clic no hace nada. Los botones siguen funcionando igual.
+- **Con el fondo transparente, Windows decide el mouse por el alfa de cada pixel.**
+  Las zonas vacias del widget (los huecos entre iconos, el espacio libre) se
+  volvian "agujeros": `WindowFromPoint` devolvia `Shell_TrayWnd` y el clic, la
+  rueda y el arrastre se los quedaba la barra de tareas. Se arregla con un piso de
+  alfa de 2/255 por pixel (`hit_alpha_floor`), invisible (0,8% de mezcla) pero
+  suficiente para que toda la superficie reciba el mouse. Medido: la
+  transparencia del fondo sigue dando 0,00 de diferencia contra la barra pelada.
+- **La barra dibujada y la clicable tienen que terminar en el mismo lugar.** Si la
+  barra corre por debajo de los botones (como corria antes, hasta el borde
+  derecho), el clic cae en una x y el indicador aparece en otra: se clickea al 50%
+  y salta al 60%. Ahora las dos terminan donde empiezan los botones.
+
+
 ## Como funciona
 
 Tres piezas bien separadas:
@@ -136,9 +181,10 @@ Detalles que costaron encontrar:
   **cliente del padre**, no a la pantalla. Mezclarlas manda la barra fuera de
   lugar. Pasa igual al leer con `GetWindowRect`, que devuelve coordenadas de
   pantalla.
-- **El color de fondo se muestrea**: el chip del widget es levemente translucido,
-  asi que se lee el color real de la barra con `GetPixel` y se mezcla ahi. Asi se
-  ve integrado sin depender de `UpdateLayeredWindow`.
+- **El color de fondo se muestrea solo en modo opaco**: en `bg_mode: "opaque"` el
+  chip es levemente translucido, asi que se lee el color real de la barra con
+  `GetPixel` y se mezcla ahi. En `layered` (por defecto) no hay nada que muestrear:
+  la transparencia se resuelve con el alfa de cada pixel.
 - **`DynamicContent2` se mueve solo**: el bloque del clima cambia de tamano por su
   cuenta. Por eso el layout se recalcula periodicamente y el widget sigue a su
   ancla en lugar de quedar desalineado.
@@ -195,14 +241,20 @@ falla posible de esta tecnica:
 - `python tools\stop.py --force` mata el proceso y repara la barra si quedo
   inconsistente.
 
-26 de 26 pruebas pasan (`python tools\selftest.py` con el widget en marcha):
+38 de 38 pruebas pasan (`python tools\selftest.py` con el widget en marcha):
 anclaje, reconstruccion forzada, recuperacion de espacio, pixeles realmente
 pintados, transparencia del fondo medida contra la barra, recorrido completo del
-movimiento (que nunca quede tapado) y 30 muestras de vigilancia del pintado
-(30/30 cuadros correctos). Y 7 de 7 de interaccion real (`python tools\clicktest.py`):
-el hover ilumina los tres botones, un clic de verdad cambia el estado de
-reproduccion, el segundo clic lo restaura, y un clic en la caratula no dispara
-nada.
+movimiento (que nunca quede tapado), la barra de progreso (que su zona clicable
+no pise los botones, que el arrastre llegue al destino y muestre la hora, que al
+abortar no se mande ningun salto), que el widget reciba el mouse en toda su
+superficie con el fondo transparente, y 30 muestras de vigilancia del pintado
+(30/30 cuadros correctos). Y 12 de 12 de interaccion real
+(`python tools\clicktest.py`): el hover ilumina los tres botones, un clic de
+verdad cambia el estado de reproduccion, el segundo clic lo restaura, un clic en
+la caratula no dispara nada, un clic en la barra de progreso salta a esa posicion
+(medido: pedido 157 s, informado 157 s) sin mover el widget, el salto se puede
+devolver a donde estaba, y la rueda adelanta y atrasa el paso configurado
+(medido: -9,9 s para un paso de -10 s).
 
 En `clicktest.py`, si una lista de reproduccion cambia de tema justo mientras se
 mide, el comando se pierde y la prueba lo informa como `SALTA` (interferencia) en
@@ -227,6 +279,8 @@ encogimiento.
 | `width` | 260 | Ancho en px logicos (se escala solo con el DPI) |
 | `min_tasklist_width` | 420 | Minimo de lista de tareas que se respeta al reservar espacio |
 | `min_tasklist_free` | 140 | Piso de la lista de tareas cuando el widget se mueve libre (el limite real lo descubre el propio widget) |
+| `seek_step_s` | 10 | Cuantos segundos adelanta/atrasa la rueda del mouse y el menu. La barra de progreso se puede clickear en cualquier caso |
+| `hit_alpha_floor` | 2 | Alfa minimo por pixel en modo transparente, para que toda la superficie reciba el mouse (invisible; 0 lo desactiva, pero con el fondo sin nada los huecos se vuelven "agujeros" y los clics van a la barra de tareas) |
 | `position_frac` | `null` | `null` = pegado al extremo derecho. `0..1` = posicion libre dentro del tramo util |
 | `drag_to_move` | true | Permite moverlo arrastrando con el boton izquierdo |
 | `chip_alpha` | 232 | Transparencia del fondo: 232 solido, 170 translucido, 100 muy transparente, 0 sin fondo |
@@ -251,25 +305,30 @@ Si te gusta mas ancho o mas angosto: clic derecho sobre el widget > *Más ancho*
 python main.py --no-embed        # ventana flotante, sin tocar la barra
 python main.py --diagnose        # ver que esta leyendo del SMTC
 python main.py --diagnose --cmd next   # probar un comando contra el reproductor
+python main.py --diagnose --seek 120   # probar un salto y ver cuanto se movio
 python main.py --shot prev.png   # volcar el widget a un PNG
+python main.py --shot s.png --scrub 210   # como se ve el arrastre de la barra
 python tools\watch.py            # estado en vivo, muestreado cada 0,5 s
 python tools\preview.py hoja.png # hoja con todas las variantes visuales
 python tools\selftest.py         # suite de verificacion (widget en marcha)
 python tools\clicktest.py        # prueba de clic real con el mouse (restaura el estado)
 python tools\startup.py --status # ver si el arranque automatico esta activo
 python tools\stop.py             # cierre ordenado
+python tools\debug_mouse.vbs     # arranca con cada mensaje de mouse anotado en el log
 python tools\testrig.py          # banco de pruebas: reproductor simulado con 3 pistas
 ```
 
-Para depurar la entrada de mouse, arrancar con `GORUS_DEBUG_MOUSE=1`: cada
-`WM_MOUSEMOVE` queda anotado en `widget.log` con sus coordenadas y el boton
-detectado.
+Para depurar la entrada de mouse, arrancar con `tools\debug_mouse.vbs`: cada
+`WM_MOUSEMOVE`, `WM_LBUTTONDOWN` y `WM_LBUTTONUP` queda anotado en `widget.log`
+con sus coordenadas, que devolvio el analisis de zonas (`hit`) y si el punto cae
+dentro de la franja de la barra.
 
 `testrig.py` es el mas util para desarrollar: levanta un reproductor falso en
-`http://127.0.0.1:8765/` con tres pistas, caratulas distintas y los manejadores de
-play / pause / next / prev, asi se prueba todo el circuito sin depender de Spotify
-ni de YouTube. La pista actual queda en `tools/_rig_state.json` para poder
-comprobar desde afuera que un clic realmente cambio de tema.
+`http://127.0.0.1:8765/` con tres pistas, caratulas distintas y los manejadores
+de play / pause / next / prev / **seekto**, asi se prueba todo el circuito
+—incluido el salto de posicion— sin depender de Spotify ni de YouTube. La pista
+actual y la posicion quedan en `tools/_rig_state.json` para poder comprobar desde
+afuera que un clic realmente cambio de tema o movio la reproduccion.
 
 
 ## Requisitos

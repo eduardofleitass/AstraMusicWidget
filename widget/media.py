@@ -30,6 +30,15 @@ ST_STOPPED = 3
 ST_PLAYING = 4
 ST_PAUSED = 5
 
+# Unidad de la API de seek: 100 ns por tick. winsdk ENTREGA timedelta al leer el
+# timeline, pero try_change_playback_position_async espera un ENTERO de ticks
+# (pasarle un timedelta revienta con TypeError).
+TICKS = 10_000_000
+
+# Cuanto se ignora el timeline despues de un salto pedido por el usuario: el
+# reproductor puede tardar en reportar la posicion nueva.
+SEEK_GRACE_S = 2.0
+
 
 @dataclass(frozen=True)
 class MediaState:
@@ -50,6 +59,10 @@ class MediaState:
     can_prev: bool = True
     can_next: bool = True
     can_toggle: bool = True
+    # Salto de posicion: un stream en vivo (sin fin) no lo admite.
+    can_seek: bool = False
+    min_seek: float = 0.0
+    max_seek: float = 0.0
     error: str = ""
 
     def live_position(self, now: float | None = None) -> float:
@@ -107,6 +120,7 @@ class MediaPoller(threading.Thread):
         self._session = None
         self._art_key: str | None = None
         self._art_bytes: bytes | None = None
+        self._pending_seek: tuple[float, float] | None = None
         self._ready = threading.Event()
 
     # ---------------------------------------------------------------- lectura
@@ -118,12 +132,12 @@ class MediaPoller(threading.Thread):
         return self._ready.wait(timeout)
 
     # --------------------------------------------------------------- comandos
-    def _submit(self, action: str) -> bool:
+    def _submit(self, action: str, arg: float | None = None) -> bool:
         loop = self._loop
         if loop is None or loop.is_closed():
             return False
         try:
-            asyncio.run_coroutine_threadsafe(self._command(action), loop)
+            asyncio.run_coroutine_threadsafe(self._command(action, arg), loop)
             return True
         except Exception as exc:
             self._log("no se pudo despachar %s: %r", action, exc)
@@ -138,7 +152,43 @@ class MediaPoller(threading.Thread):
     def prev_track(self) -> bool:
         return self._submit("prev")
 
-    async def _command(self, action: str) -> None:
+    def seek(self, seconds: float) -> bool:
+        """Salta a una posicion absoluta (segundos).
+
+        El ancla local se mueve ya, de forma optimista: SMTC tarda en reportar el
+        salto, y sin esto la barra vuelve sola a la posicion vieja por un instante.
+        Si el reproductor rechaza el salto, el sondeo siguiente manda de nuevo.
+        """
+        st = self.state()
+        if not st.has_session:
+            self._log("salto descartado: no hay sesion de medios")
+            return False
+        if not st.can_seek:
+            self._log("salto descartado: esta sesion no admite saltos (%s)", st.app_id)
+            return False
+        if st.duration <= 0:
+            self._log("salto descartado: no se conoce la duracion")
+            return False
+        top = st.max_seek or st.duration
+        target = max(st.min_seek, min(float(seconds), top))
+        if not self._submit("seek", target):
+            self._log("salto a %.1f s no despachado: el hilo de SMTC no responde", target)
+            return False
+        with self._lock:
+            cur = self._state
+            if cur.has_session:
+                self._state = replace(cur, position=target, position_at=time.monotonic())
+            self._pending_seek = (target, time.monotonic())
+        return True
+
+    def seek_by(self, delta: float) -> bool:
+        """Adelanta (+) o atrasa (-) respecto de la posicion actual."""
+        st = self.state()
+        if not st.has_session or not st.can_seek:
+            return False
+        return self.seek(st.live_position() + float(delta))
+
+    async def _command(self, action: str, arg: float | None = None) -> None:
         session = self._manager.get_current_session() if self._manager else None
         if session is None:
             session = self._session
@@ -151,6 +201,13 @@ class MediaPoller(threading.Thread):
                 await session.try_skip_next_async()
             elif action == "prev":
                 await session.try_skip_previous_async()
+            elif action == "seek" and arg is not None:
+                ok = await session.try_change_playback_position_async(
+                    int(round(arg * TICKS)))
+                if not ok:
+                    self._log("el reproductor rechazo el salto a %.1f s", arg)
+                    with self._lock:
+                        self._pending_seek = None
         except Exception as exc:
             self._log("comando %s fallo: %r", action, exc)
         # refrescar sin esperar al proximo ciclo para que el boton responda ya
@@ -274,6 +331,13 @@ class MediaPoller(threading.Thread):
 
         position = _fmt_timedelta(tl.position)
         duration = _fmt_timedelta(tl.end_time)
+        min_seek = _fmt_timedelta(tl.min_seek_time)
+        max_seek = _fmt_timedelta(tl.max_seek_time)
+        # Un stream en vivo no tiene fin (duration 0) y no admite salto. Si el
+        # reproductor no informa el techo, se asume la duracion conocida.
+        can_seek = duration > 1.0 and (max_seek <= 0 or max_seek > min_seek)
+        if max_seek <= 0:
+            max_seek = duration
 
         prev = self.state()
         can_next = _flag(controls, "is_next_enabled") if controls else True
@@ -286,8 +350,20 @@ class MediaPoller(threading.Thread):
         # informan la posicion cada varios segundos, no de forma continua).
         same_source = prev.has_session and prev.art_key == key
         delta = position - prev.position
+        now = time.monotonic()
+        pend = self._pending_seek
+        # Justo despues de un salto pedido por el usuario, el reproductor puede
+        # seguir informando la posicion vieja (YouTube via Brave tarda ~1 s). Ese
+        # reporte es atrasado, no un salto hacia atras: si se adoptara, la barra
+        # volveria sola y despues saltaria de nuevo.
+        stale = (pend is not None and now - pend[1] < SEEK_GRACE_S
+                 and abs(position - prev.live_position(now)) > 2.0)
+
         if not same_source or playing != prev.playing or stopped != prev.stopped:
             adopt = True
+            self._pending_seek = None   # cambio de tema: el salto ya no aplica
+        elif stale:
+            adopt = False               # reporte atrasado: dejar extrapolar
         elif delta >= 0.1:
             adopt = True            # avance normal
         elif abs(delta) > 2.0:
@@ -301,12 +377,14 @@ class MediaPoller(threading.Thread):
                 album=album, playing=playing, stopped=stopped,
                 position=position, duration=duration,
                 position_at=time.monotonic(), art=self._art_bytes, art_key=key,
-                can_next=can_next, can_prev=can_prev, can_toggle=can_toggle)
+                can_next=can_next, can_prev=can_prev, can_toggle=can_toggle,
+                can_seek=can_seek, min_seek=min_seek, max_seek=max_seek)
         else:
             state = replace(prev, playing=playing, stopped=stopped,
                             duration=duration or prev.duration,
                             can_next=can_next, can_prev=can_prev,
-                            can_toggle=can_toggle)
+                            can_toggle=can_toggle, can_seek=can_seek,
+                            min_seek=min_seek, max_seek=max_seek)
         self._publish(state)
 
     async def _read_thumbnail(self, props) -> bytes | None:

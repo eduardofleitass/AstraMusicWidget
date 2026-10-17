@@ -27,10 +27,11 @@ def _demo_state():
         title="Bohemian Rhapsody (Remastered 2011 - Edicion Deluxe)",
         artist="Queen", album="A Night at the Opera",
         playing=True, position=87.0, duration=355.0, position_at=time.monotonic(),
-        art=None, art_key="demo", can_prev=True, can_next=True, can_toggle=True)
+        art=None, art_key="demo", can_prev=True, can_next=True, can_toggle=True,
+        can_seek=True, min_seek=0.0, max_seek=355.0)
 
 
-def do_shot(cfg, path, demo=False, state_kind="play", no_session=False):
+def do_shot(cfg, path, demo=False, state_kind="play", no_session=False, scrub=None):
     from widget import draw
     from widget.media import MediaPoller
     if demo:
@@ -53,15 +54,19 @@ def do_shot(cfg, path, demo=False, state_kind="play", no_session=False):
     art = draw.get_art(st.art, st.art_key, int(round(draw.ART * k * SS)),
                        int(round(draw.ART_RADIUS * k * SS)))
     img = draw.render(st, cfg, art=art, hover=-1, marquee=0.0, k=k,
-                      base=(28, 30, 38), height=40)
+                      base=(28, 30, 38), height=40, scrub=scrub)
     img.convert("RGB").save(path)
     print(f"ok -> {path}  ({img.size[0]}x{img.size[1]})")
     print(f"   titulo: {st.title!r}  artista: {st.artist!r}  suena: {st.playing}"
           f"  caratula: {'si' if st.art else 'no'} ({len(st.art or b'')} bytes)")
+    print(f"   salto: {'si' if st.can_seek else 'no'}  rango "
+          f"{st.min_seek:.0f}-{st.max_seek:.0f}s / {st.duration:.0f}s")
+    if scrub is not None:
+        print(f"   previsualizacion de arrastre en {scrub:.0f}s")
     return 0
 
 
-def do_diagnose(cfg, cmd=None):
+def do_diagnose(cfg, cmd=None, seek=None):
     from widget.media import MediaPoller
     p = MediaPoller(interval=0.4)
     p.start()
@@ -84,6 +89,8 @@ def do_diagnose(cfg, cmd=None):
     print(f"posicion      : {st.live_position():.1f}s / {st.duration:.1f}s")
     print(f"caratula      : {len(st.art) if st.art else 0} bytes  clave {st.art_key!r}")
     print(f"controles     : prev={st.can_prev} toggle={st.can_toggle} next={st.can_next}")
+    print(f"salto         : {'si' if st.can_seek else 'no'}  "
+          f"rango {st.min_seek:.0f}-{st.max_seek:.0f}s de {st.duration:.0f}s")
     if st.art:
         import io
         from PIL import Image
@@ -100,6 +107,25 @@ def do_diagnose(cfg, cmd=None):
         st2 = p.state()
         print(f"despues -> titulo {st2.title!r}  sonando {st2.playing}"
               f"  posicion {st2.live_position():.1f}s")
+
+    if seek is not None:
+        from widget.media import SEEK_GRACE_S
+        print(f"--- salto a {seek:.0f} s ---")
+        if not st.can_seek:
+            print("el reproductor no admite saltos (¿stream en vivo?)")
+        elif not p.seek(seek):
+            print("no se pudo despachar el salto")
+        else:
+            t0 = time.monotonic()
+            # Se espera MAS que la ventana de gracia del sondeo: antes de eso la
+            # posicion publicada es la optimista, no la que informa el reproductor.
+            time.sleep(SEEK_GRACE_S + 1.5)
+            st2 = p.state()
+            elapsed = time.monotonic() - t0
+            want = min(seek + elapsed, st2.duration or seek)
+            print(f"reportado {st2.position:.1f}s  (se esperaba ~{want:.1f}s = "
+                  f"pedido {seek:.0f}s + {elapsed:.1f}s de reproduccion)"
+                  f"  desvio {st2.position - want:+.1f}s")
     p.stop()
     return 0
 
@@ -110,19 +136,24 @@ def main() -> int:
                     help="ventana flotante en vez de incrustar en la barra")
     ap.add_argument("--diagnose", action="store_true", help="mostrar datos de SMTC y salir")
     ap.add_argument("--cmd", choices=["toggle", "next", "prev"], help="con --diagnose: probar un comando")
+    ap.add_argument("--seek", metavar="SEG", type=float,
+                    help="con --diagnose: saltar a esa posicion (segundos)")
     ap.add_argument("--shot", metavar="PNG", help="volcar el widget a un PNG y salir")
     ap.add_argument("--demo", action="store_true", help="con --shot: usar datos de ejemplo")
     ap.add_argument("--idle", action="store_true", help="con --shot: forzar estado sin reproduccion")
+    ap.add_argument("--scrub", metavar="SEG", type=float,
+                    help="con --shot: dibujar la previsualizacion de arrastre en esa posicion")
     ap.add_argument("--config", metavar="JSON", help="ruta alternativa de configuracion")
     args = ap.parse_args()
 
     cfg = cfgmod.load(args.config)
 
     if args.diagnose:
-        return do_diagnose(cfg, args.cmd)
+        return do_diagnose(cfg, args.cmd, args.seek)
     if args.shot:
         return do_shot(cfg, args.shot, demo=args.demo,
-                       state_kind="idle" if args.idle else "play", no_session=args.idle)
+                       state_kind="idle" if args.idle else "play", no_session=args.idle,
+                       scrub=args.scrub)
 
     log_path = os.path.join(HERE, cfg.get("log_file", "widget.log"))
     from widget.app import run

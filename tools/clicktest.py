@@ -35,6 +35,14 @@ PASS, FAIL, SKIP = "PASA", "FALLA", "SALTA"
 results = []
 interfered = []
 
+# La rueda: dwData lleva 120 por muesca y hace falta el tipo declarado para poder
+# pasar el valor negativo (-120) sin que ctypes se queje.
+WHEEL_UP = 120
+WHEEL_DOWN = 0xFFFFFF88          # -120 como DWORD de 32 bits
+MOUSEEVENTF_WHEEL = 0x0800
+user32.mouse_event.argtypes = [wt.DWORD, wt.DWORD, wt.DWORD, wt.DWORD, ctypes.c_size_t]
+user32.mouse_event.restype = None
+
 
 def check(name, ok, detail="", skipped=False):
     tag = SKIP if skipped else (PASS if ok else FAIL)
@@ -80,6 +88,21 @@ def find_widget():
     return tray, win32gui.FindWindowEx(tray, 0, "GorusTaskbarMusicWnd", None)
 
 
+def rect_actual():
+    """Handle y rectangulo del widget AHORA.
+
+    La barra de tareas cambia de ancho (se abren y cierran ventanas, y el widget se
+    corre con la lista de tareas), y el widget se puede arrastrar: una coordenada
+    tomada al arrancar la prueba puede terminar apuntando a otro lado, y entonces el
+    clic cae fuera y la prueba se salta sola por "interferencia" que no existe.
+    """
+    tray, w = find_widget()
+    if not w:
+        return 0, (0, 0, 0, 0)
+    WIN["widget"] = w
+    return w, win32gui.GetWindowRect(w)
+
+
 def button_centers(wrect, k, cfg):
     x0, y0, x1, y1 = wrect
     mid_y = (y0 + y1) // 2
@@ -87,8 +110,30 @@ def button_centers(wrect, k, cfg):
             for rx0, ry0, rx1, ry1 in draw.control_rects(x1 - x0, k, cfg)]
 
 
+def window_at(x, y):
+    try:
+        return win32gui.WindowFromPoint((x, y))
+    except Exception:
+        return 0
+
+
+def sobre_widget(x, y) -> bool:
+    """Confirma que el widget es la ventana bajo el cursor.
+
+    Windows entrega la rueda del mouse a la ventana que esta debajo del cursor, no
+    a la que tiene el foco: si el cursor se movio (o lo movio el usuario), la prueba
+    mediria un salto que nunca se pidio.
+    """
+    return window_at(x, y) == WIN.get("widget")
+
+
+WIN = {}
+
+
 def click(x, y) -> bool:
     if not place_cursor(x, y):
+        return False
+    if not sobre_widget(x, y):
         return False
     user32.mouse_event(0x0002, 0, 0, 0, 0)  # LEFTDOWN
     time.sleep(0.06)
@@ -124,6 +169,26 @@ def sample(poller, timeout=2.5):
     return poller.state()
 
 
+def pos_reportada(poller, desde=None, timeout=6.0):
+    """(segundos, instante, hubo_cambio) del primer reporte NUEVO del reproductor.
+
+    No alcanza con leer la posicion interpolada: los reproductores informan cada
+    varios segundos y el valor puede venir atrasado mas de 10 s, asi que medir un
+    salto de 10 s contra un valor viejo da cualquier cosa (medido: +33 s para un
+    salto de 10 s). Se espera a que el reproductor informe algo distinto del valor
+    de referencia; si no lo hace, se informa que no hubo reporte nuevo (y la
+    comprobacion se salta en vez de convertirse en un fallo inventado).
+    """
+    t0 = time.time()
+    ref = poller.state().position if desde is None else desde
+    while time.time() - t0 < timeout:
+        st = poller.state()
+        if st.position != ref:
+            return st.position, time.time(), True
+        time.sleep(0.12)
+    return poller.state().position, time.time(), False
+
+
 def cell_box(wrect, cx, k):
     wl = cx - wrect[0]
     return (wl - 11, int(6 * k), wl + 11, int(34 * k))
@@ -139,6 +204,7 @@ def main() -> int:
     if not w:
         print("el widget no esta corriendo")
         return 1
+    WIN["widget"] = w
     wrect = win32gui.GetWindowRect(w)
     k = (wrect[3] - wrect[1]) / 40.0
     centers = button_centers(wrect, k, cfg)
@@ -164,6 +230,9 @@ def main() -> int:
 
     # --- 1. hover sobre cada boton (sin efectos secundarios) -----------------
     print("\n-- hover sobre los botones (sin efectos secundarios) --")
+    w, wrect = rect_actual()
+    k = (wrect[3] - wrect[1]) / 40.0
+    centers = button_centers(wrect, k, cfg)
     hover_ok = []
     if not libre:
         for idx in range(len(centers)):
@@ -180,7 +249,7 @@ def main() -> int:
                 print(f"   boton {idx}: no se pudo posicionar el cursor (interferencia)")
                 continue
             time.sleep(0.2)
-            if not place_cursor(cx, cy):  # confirmar que sigue ahi
+            if not place_cursor(cx, cy) or not sobre_widget(cx, cy):
                 interfered.append(f"boton {idx}")
                 hover_ok.append(None)
                 print(f"   boton {idx}: el cursor se movio antes de capturar")
@@ -208,10 +277,13 @@ def main() -> int:
 
     # --- 2. clic real en play/pausa, y restauracion --------------------------
     print("\n-- clic real en play/pausa (se restaura al final) --")
+    w, wrect = rect_actual()
+    k = (wrect[3] - wrect[1]) / 40.0
+    centers = button_centers(wrect, k, cfg)
     toggle = centers[1]
     if not click(*toggle):
         check("el clic cambia el estado de reproduccion", False,
-              "cursor inalcanzable por interferencia", skipped=True)
+              "el cursor no quedo sobre el widget (interferencia del mouse)", skipped=True)
         check("el segundo clic restaura el estado original", False,
               "no aplica", skipped=True)
     else:
@@ -229,7 +301,7 @@ def main() -> int:
                   f"{before.playing} -> {mid.playing}")
         if not click(*toggle):
             check("el segundo clic restaura el estado original", False,
-                  "cursor inalcanzable por interferencia", skipped=True)
+                  "el cursor no quedo sobre el widget (interferencia del mouse)", skipped=True)
         else:
             time.sleep(1.8)
             after = sample(poller)
@@ -239,6 +311,8 @@ def main() -> int:
     # --- 3. clic sobre el area de la caratula: no debe hacer nada ------------
     print("\n-- clic sobre el area de la caratula (no debe disparar nada) --")
     ref = sample(poller)
+    w, wrect = rect_actual()
+    k = (wrect[3] - wrect[1]) / 40.0
     art_x = wrect[0] + int(20 * k)
     if click(art_x, (wrect[1] + wrect[3]) // 2):
         time.sleep(1.2)
@@ -248,7 +322,107 @@ def main() -> int:
               f"sonando={st.playing}")
     else:
         check("un clic fuera de los botones no cambia nada", False,
-              "cursor inalcanzable por interferencia", skipped=True)
+              "el cursor no quedo sobre el widget (interferencia del mouse)", skipped=True)
+
+    # --- 4. clic real sobre la barra de progreso ----------------------------
+    print("\n-- clic real sobre la barra de progreso (se devuelve a su lugar) --")
+    base = sample(poller)
+    w, wrect = rect_actual()
+    k = (wrect[3] - wrect[1]) / 40.0
+    pr = draw.progress_rect(wrect[2] - wrect[0], k, cfg)
+    y_barra = wrect[1] + int(35.5 * k)
+    if not (pr and base.can_seek and base.duration > 20):
+        check("un clic en la barra salta a la posicion clickeada", False,
+              "este reproductor no admite saltos (¿vivo?)", skipped=True)
+        check("el widget no se mueve al hacer clic en la barra", False, "no aplica",
+              skipped=True)
+        check("el salto se puede devolver a la posicion original", False, "no aplica",
+              skipped=True)
+    else:
+        frac = 0.8
+        x_obj = wrect[0] + int(pr[0] + (pr[2] - pr[0]) * frac)
+        quiere = frac * base.duration
+        r0, t0, ok0 = pos_reportada(poller)
+        pos_widget = win32gui.GetWindowRect(w)
+        tolerancia = max(6.0, 0.04 * base.duration)
+        if not click(x_obj, y_barra):
+            check("un clic en la barra salta a la posicion clickeada", False,
+                  "el cursor no quedo sobre el widget (interferencia del mouse)", skipped=True)
+            check("el widget no se mueve al hacer clic en la barra", False, "no aplica",
+                  skipped=True)
+            check("el salto se puede devolver a la posicion original", False, "no aplica",
+                  skipped=True)
+        else:
+            # El reproductor informa la posicion cada varios segundos: se espera al
+            # primer reporte nuevo y se le suma lo que el audio avanzo mientras tanto.
+            r1, t1, ok1 = pos_reportada(poller, desde=r0)
+            esperado = min(quiere + (t1 - t0), base.duration)
+            check("un clic en la barra salta a la posicion clickeada",
+                  abs(r1 - esperado) <= tolerancia,
+                  f"clic al {frac:.0%} = {quiere:.0f}s (venia de {r0:.0f}s) -> informado "
+                  f"{r1:.0f}s, se esperaba {esperado:.0f}s"
+                  f"  desvio {r1 - esperado:+.1f}s (tolerancia {tolerancia:.0f}s)",
+                  skipped=not ok1)
+            check("el widget no se mueve al hacer clic en la barra",
+                  win32gui.GetWindowRect(w) == pos_widget,
+                  f"{pos_widget} -> {win32gui.GetWindowRect(w)}")
+            # devolverlo a donde estaba: el audio siguio sonando mientras se medía
+            volver = min(r0 + (time.time() - t0) + 1.0, base.duration - 1)
+            poller.seek(volver)
+            time.sleep(1.6)
+            atras = poller.state().live_position()
+            check("el salto se puede devolver a la posicion original",
+                  abs(atras - (volver + 1.6)) <= tolerancia,
+                  f"pedido {volver:.0f}s -> {atras:.0f}s")
+
+    # --- 5. rueda del mouse sobre el widget ---------------------------------
+    print("\n-- rueda del mouse sobre el widget --")
+    base = sample(poller)
+    w, wrect = rect_actual()
+    k = (wrect[3] - wrect[1]) / 40.0
+    paso = float(cfg.get("seek_step_s", 10))
+    centro = ((wrect[0] + wrect[2]) // 2, (wrect[1] + wrect[3]) // 2)
+    if not (base.can_seek and base.duration > 20):
+        check("la rueda adelanta el paso configurado", False,
+              "este reproductor no admite saltos", skipped=True)
+        check("la rueda atrasa el paso configurado", False, "no aplica", skipped=True)
+    elif not place_cursor(*centro) or not sobre_widget(*centro):
+        check("la rueda adelanta el paso configurado", False,
+              "el cursor no quedo sobre el widget (interferencia del mouse)",
+              skipped=True)
+        check("la rueda atrasa el paso configurado", False, "no aplica", skipped=True)
+    else:
+        antes = sample(poller).live_position()
+        if not sobre_widget(*centro):
+            check("la rueda adelanta el paso configurado", False,
+                  "el cursor se movio justo antes de mandar la rueda", skipped=True)
+            check("la rueda atrasa el paso configurado", False, "no aplica", skipped=True)
+            user32.SetCursorPos(wrect[0] - 300, 560)
+            poller.stop()
+            return _summary()
+        r0, t0, ok0 = pos_reportada(poller)
+        user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, WHEEL_UP, 0)
+        r1, t1, ok1 = pos_reportada(poller, desde=r0)
+        d = r1 - r0
+        esperado = paso + (t1 - t0)
+        # El reproductor informa la posicion con un atraso propio (medido: el valor
+        # nuevo puede describir una posicion ~5 s vieja), asi que la tolerancia es
+        # amplia: igual distingue un salto de verdad de la simple reproduccion.
+        tolerancia = max(7.0, 0.5 * paso)
+        check("la rueda adelanta el paso configurado",
+              abs(d - esperado) <= tolerancia,
+              f"{r0:.0f}s -> {r1:.0f}s  ({d:+.1f}s, se esperaba +{esperado:.1f}s)"
+              f"  tolerancia {tolerancia:.0f}s",
+              skipped=not ok1)
+        user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, WHEEL_DOWN, 0)
+        r2, t2, ok2 = pos_reportada(poller, desde=r1)
+        d2 = r2 - r1
+        esperado2 = (t2 - t1) - paso
+        check("la rueda atrasa el paso configurado",
+              abs(d2 - esperado2) <= tolerancia,
+              f"{r1:.0f}s -> {r2:.0f}s  ({d2:+.1f}s, se esperaba {esperado2:+.1f}s)"
+              f"  tolerancia {tolerancia:.0f}s",
+              skipped=not ok2)
 
     user32.SetCursorPos(wrect[0] - 300, 560)
     poller.stop()

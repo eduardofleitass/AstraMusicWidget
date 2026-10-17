@@ -38,6 +38,11 @@ LINE_H = 14.0
 PROG_Y = 34.5
 PROG_H = 2.5
 FADE_W = 12.0
+# La barra mide 2.5 px de alto: inacertable con el mouse. La zona clicable es una
+# franja mas alta alrededor suyo, que ademas se corta donde empiezan los botones.
+PROG_HIT_TOP = 29.5
+PROG_HIT_BOTTOM = 40.0
+KNOB_R = 3.2
 
 _art_cache: dict[tuple[str, int], Image.Image] = {}
 
@@ -176,9 +181,55 @@ def control_rects(width: int, k: float, cfg: dict) -> list[tuple[int, int, int, 
     return rects
 
 
+def progress_span(width: int, cfg: dict) -> tuple[float, float] | None:
+    """Extremos de la barra, en px logicos: desde el texto hasta donde empiezan los
+    botones. No corre por debajo de ellos; si corriera, la fraccion del clic y el
+    lugar donde queda el indicador no coincidirian (se clickea en una x y el
+    indicador aparece en otra).
+    """
+    if not cfg.get("show_progress", True):
+        return None
+    x0 = float(TEXT_X)
+    x1 = float(width - RIGHT_PAD)
+    if cfg.get("show_controls", True):
+        x1 = min(x1, width - RIGHT_PAD - 3 * ICON_CELL)
+    if x1 <= x0:
+        return None
+    return (x0, x1)
+
+
+def progress_rect(width: int, k: float, cfg: dict) -> tuple[int, int, int, int] | None:
+    """Zona clicable de la barra de progreso (px reales, coordenadas de cliente)."""
+    sp = progress_span(width, cfg)
+    if not sp:
+        return None
+    return (int(round(sp[0] * k)), int(round(PROG_HIT_TOP * k)),
+            int(round(sp[1] * k)), int(round(PROG_HIT_BOTTOM * k)))
+
+
+def progress_frac_at(x_real: float, width: int, k: float, cfg: dict) -> float:
+    """Que fraccion (0..1) de la barra corresponde a una x del cliente."""
+    r = progress_rect(width, k, cfg)
+    if not r:
+        return 0.0
+    span = float(r[2] - r[0])
+    if span <= 0:
+        return 0.0
+    return max(0.0, min(1.0, (x_real - r[0]) / span))
+
+
+def fmt_time(seconds: float) -> str:
+    """mm:ss, o h:mm:ss si pasa de una hora."""
+    seconds = max(0, int(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
 def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
            marquee: float = 0.0, k: float = 1.0, base: tuple = (32, 34, 42),
-           height: int | None = None, opaque: bool = True) -> Image.Image:
+           height: int | None = None, opaque: bool = True,
+           scrub: float | None = None) -> Image.Image:
     """Devuelve el widget dibujado como imagen RGBA del tamano exacto a mostrar.
 
     opaque=True  -> la transparencia se resuelve mezclando contra `base` (el color
@@ -188,6 +239,9 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
                     UpdateLayeredWindow sobre lo que haya detras. En este modo los
                     canales RGB vuelven PREMULTIPLICADOS (que es lo que espera
                     AC_SRC_ALPHA), asi que no hay que volver a multiplicar.
+    scrub        -> segundos destino mientras se arrastra la barra de progreso: la
+                    barra y el texto muestran a donde va a saltar, sin tocar todavia
+                    la reproduccion.
     """
     SS = max(1, int(cfg.get("supersample", 3)))
     theme = theme_for_base(cfg, base)
@@ -259,6 +313,10 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
         artist = state.app_name or ""
     elif state.app_name:
         artist = f"{artist}"
+    if scrub is not None and state.duration > 0:
+        # mientras se arrastra la barra, el renglon del artista dice a donde va
+        artist = f"{fmt_time(scrub)} / {fmt_time(state.duration)}"
+        acol = _col(theme, "accent", 255)
     f_artist_max = area_w
     if d.textlength(artist, font=f_artist) > f_artist_max:
         while artist and d.textlength(artist + "…", font=f_artist) > f_artist_max:
@@ -293,16 +351,27 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
             _draw_icon(d, cx, cy, kind, S, icon_col if (enabled and not idle) else dim_col)
 
     # ----------------------------------------------------------------- progreso
-    if cfg.get("show_progress", True) and not idle and state.duration > 0:
-        x0 = text_x
-        x1 = W * SS - RIGHT_PAD * S
-        y0, y1 = PROG_Y * S, (PROG_Y + PROG_H) * S
+    sp = progress_span(int(cfg.get("width", 260)), cfg)
+    if sp and not idle and state.duration > 0:
+        active = scrub is not None or hover == 3
+        # al pasar el mouse la barra se engrosa: avisa que se puede mover sin
+        # cambiar el aspecto en reposo
+        bar_h = PROG_H * (1.8 if active else 1.0)
+        cy = (PROG_Y + PROG_H / 2.0) * S
+        x0, x1 = sp[0] * S, sp[1] * S
+        y0, y1 = cy - bar_h * S / 2.0, cy + bar_h * S / 2.0
         d.rounded_rectangle([x0, y0, x1, y1], radius=(y1 - y0) / 2.0,
-                            fill=_col(theme, "track", 240))
-        frac = max(0.0, min(1.0, state.live_position() / state.duration))
+                            fill=_col(theme, "track", 255 if active else 240))
+        shown = scrub if scrub is not None else state.live_position()
+        frac = max(0.0, min(1.0, shown / state.duration))
         if frac > 0:
             d.rounded_rectangle([x0, y0, x0 + max((y1 - y0), (x1 - x0) * frac), y1],
                                 radius=(y1 - y0) / 2.0, fill=_col(theme, "accent", 255))
+        if active:
+            r = KNOB_R * S
+            kx = x0 + (x1 - x0) * frac
+            d.ellipse([kx - r, cy - r, kx + r, cy + r], fill=_col(theme, "accent", 255),
+                      outline=_col(theme, "chip", 255), width=max(1, int(round(0.6 * S))))
 
     # --- presentacion: contra el color real de la barra, o con alpha real ------
     if opaque:
@@ -311,13 +380,23 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
             out = out.resize((W, H), Image.LANCZOS)
         return out
     # Alpha real. La reduccion se hace en espacio premultiplicado: reducir el RGBA
-    # directo deja que los pixeles transparentes (negros) sangren un halo oscuro en
-    # los bordes del chip y de la caratula.
+    # directo deja que los pixeles transparentes (negros) sangren un halo oscuro
+    # en los bordes del chip y de la caratula.
     pre = ImageChops.multiply(img.convert("RGB"), img.getchannel("A").convert("RGB"))
     alpha = img.getchannel("A")
     if SS > 1:
         pre = pre.resize((W, H), Image.LANCZOS)
         alpha = alpha.resize((W, H), Image.LANCZOS)
+    # Piso de alpha. Windows decide que ventana recibe el mouse mirando el alpha
+    # POR PIXEL en ventanas en capas: con el fondo sin nada, los pixeles vacios
+    # son "agujeros" y el clic, la rueda y el arrastre se los queda la barra de
+    # tareas. Se ve claro midiendo: sobre el hueco del icono de play/pausa
+    # WindowFromPoint devolvia Shell_TrayWnd y el clic no llegaba al widget.
+    # Un piso de 2 (0,8% de mezcla, invisible) mantiene toda la superficie
+    # sensible al mouse sin ensuciar el fondo.
+    piso = int(cfg.get("hit_alpha_floor", 2))
+    if piso > 0:
+        alpha = alpha.point(lambda v: max(v, piso))
     return Image.merge("RGBA", (*pre.split(), alpha))
 
 
