@@ -8,11 +8,12 @@ listos para pegar.
 ## Lo que ya esta hecho
 
 - Repo publico con **descripcion, 7 topics, pagina web apuntando al release y licencia MIT**.
-- Release **v1.0.1** con los dos adjuntos (portatil de 27 MB e instalador de 29 MB).
+- Release **v1.0.3** con los dos adjuntos (portatil de 28 MB e instalador de 30 MB).
 - README con **GIF animado**, distintivos (version, descargas, licencia), link de descarga
   arriba de todo y un **resumen en ingles**.
 - Tarjeta social **a medida** en `assets/social.png` (1280x640), lista para subir.
-- Paquete de **winget** listo en `winget/manifests/...`.
+- Paquete de **winget** en `winget/manifests/...` y el PR **#454943** abierto en
+  `microsoft/winget-pkgs` (lo unico que falta ahi es firmar el CLA, ver abajo).
 
 ---
 
@@ -27,15 +28,21 @@ un grupo, se ve esa imagen o un cuadro gris. Es el multiplicador de todo lo dema
 
 ### Paso 2 — Publicarlo en winget (el canal que trae descargas sin que te busquen)
 
-Los archivos ya estan en `winget/manifests/e/EduardoFleitas/AstraMusicWidget/1.0.1/`.
+Ya esta hecho y automatizado: `python tools\winget_pr.py` escribe el manifiesto en el repo,
+lo sube a una rama nueva del fork y abre el PR (el del 1.0.3 es el **#454943**). Para la
+proxima version se actualizan `VER` y `SHA` en ese script y se corre de nuevo; el SHA **se saca
+bajando el instalador ya publicado** en la release, nunca copiando el del archivo local.
 
-1. **Fork** de `microsoft/winget-pkgs`.
-2. Copiar la carpeta `winget/manifests/...` al fork **con la misma ruta**.
-3. Abrir un **Pull Request** titulado:
-   `New package: EduardoFleitas.AstraMusicWidget version 1.0.1`
+Lo unico que no resuelve el codigo es el **CLA de Microsoft**: el bot lo pide en un comentario
+del PR y hasta que el dueño de la cuenta responda
 
-El robot valida solo: que la URL baje, que el SHA256 coincida, que se instale en silencio y
-que desinstale bien. Tarda unos dias y a veces pide un ajuste menor.
+    @microsoft-github-policy-service agree
+
+el PR no se puede mergear. Es un tramite de una vez por cuenta, y la respuesta es publica (si
+el trabajo fuera para un empleador, el texto cambia).
+
+El robot despues valida solo: que la URL baje, que el SHA256 coincida, que se instale en
+silencio y que desinstale bien. Tarda unos dias y a veces pide un ajuste menor.
 
 **Por que primero esto y no los posts**: cuando publiques en Reddit, la instruccion mas
 fuerte que podes dar es `winget install EduardoFleitas.AstraMusicWidget` (una linea, sin
