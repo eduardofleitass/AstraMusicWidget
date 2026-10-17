@@ -86,26 +86,73 @@ class TaskbarHost:
         an = self._rect(self.anchor)
         return rb[0], an[0]
 
-    # -------------------------------------------------------------- operaciones
-    def reserve(self, width: int, min_tasklist: int) -> int:
-        """Encoge la lista de tareas para hacer sitio. Devuelve la x del widget
-        en coordenadas relativas al cliente de la barra."""
-        if not self.available:
-            return 0
-        tl, tt, tr, tb = win32gui.GetWindowRect(self.tray)
+    # ------------------------------------------------------------- posicion libre
+    def x_limits(self, width: int, min_free: int = 140) -> tuple[int, int]:
+        """Rango de x (coords de pantalla) donde puede vivir el widget.
+
+        El limite izquierdo deja siempre `min_free` px de lista de tareas; el
+        derecho es el ancla menos el ancho del widget. Si el widget se ubica en el
+        medio, el tramo entre el y el ancla queda como fondo de barra vacio: es el
+        precio de poder moverlo a cualquier lado.
+        """
+        rb = self._rect(self.rebar)
+        an = self._rect(self.anchor)
+        lo = rb[0] + max(60, int(min_free))
+        hi = max(lo, an[0] - width)
+        return lo, hi
+
+    def clamp_x(self, x: int, width: int, min_free: int = 140) -> int:
+        lo, hi = self.x_limits(width, min_free)
+        return int(max(lo, min(hi, x)))
+
+    def frac_from_x(self, x: int, width: int, min_free: int = 140) -> float:
+        lo, hi = self.x_limits(width, min_free)
+        if hi <= lo:
+            return 1.0
+        return max(0.0, min(1.0, (x - lo) / float(hi - lo)))
+
+    def x_from_frac(self, frac: float, width: int, min_free: int = 140) -> int:
+        lo, hi = self.x_limits(width, min_free)
+        f = max(0.0, min(1.0, float(frac)))
+        return int(round(lo + f * (hi - lo)))
+
+    def target_x(self, width: int, min_tasklist: int, frac: float | None = None,
+                 min_free: int = 140) -> int:
+        """x del widget en coords de pantalla. `frac=None` = extremo derecho."""
         rb = self._rect(self.rebar)
         an = self._rect(self.anchor)
         if not rb[0]:
             return 0
-        widget_x = an[0] - width
+        if frac is None:
+            # Comportamiento clasico: pegado al ancla, sin comerse nunca mas que el
+            # minimo de lista de tareas configurado.
+            return max(an[0] - width, rb[0] + int(min_tasklist))
+        return self.x_from_frac(frac, width, min_free)
+
+    # -------------------------------------------------------------- operaciones
+    def reserve(self, width: int, min_tasklist: int, x: int | None = None,
+                frac: float | None = None, min_free: int = 140) -> int:
+        """Encoge la lista de tareas para hacer sitio. Devuelve la x del widget
+        en coordenadas relativas al cliente de la barra.
+
+        Con `x` se coloca en una posicion exacta (arrastre); con `frac` se usa la
+        posicion fraccionaria guardada; sin ninguno de los dos, en el extremo.
+        """
+        if not self.available:
+            return 0
+        tl, tt, tr, tb = win32gui.GetWindowRect(self.tray)
+        rb = self._rect(self.rebar)
+        if not rb[0]:
+            return 0
+        if x is None:
+            x = self.target_x(width, min_tasklist, frac, min_free)
         # no dejar la lista de tareas por debajo del minimo configurado
-        widget_x = max(widget_x, rb[0] + min_tasklist)
-        new_w = max(80, (widget_x - 2) - rb[0])
+        new_w = max(80, (x - 2) - rb[0])
         if abs((rb[2] - rb[0]) - new_w) > 1:
             win32gui.SetWindowPos(self.rebar, 0, 0, 0, new_w, rb[3] - rb[1],
                                   win32con.SWP_NOMOVE | win32con.SWP_NOZORDER
                                   | win32con.SWP_NOACTIVATE)
-        return widget_x - tl
+        return x - tl
 
     def place(self, hwnd: int, x_rel: int, height: int) -> None:
         if not self.available or not win32gui.IsWindow(hwnd):

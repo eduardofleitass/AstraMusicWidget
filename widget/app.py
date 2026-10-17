@@ -22,9 +22,15 @@ import win32con
 import win32event
 import win32gui
 
+from . import config as cfgmod
 from . import draw
 from .media import MediaPoller, MediaState
 from .taskbarwin import TaskbarHost, set_dpi_aware
+
+# Niveles de fondo que ofrece el menu (alpha del chip)
+ALPHA_LEVELS = ((232, "Solido"), (170, "Translucido"), (100, "Muy transparente"),
+                (0, "Sin fondo (solo caratula, textos y botones)"))
+NUDGE_PX = 20
 
 CTL_CLASS = "GorusTaskbarMusicCtl"
 WIDGET_CLASS = "GorusTaskbarMusicWnd"
@@ -39,11 +45,24 @@ WM_DPICHANGED = 0x02E0
 WM_DISPLAYCHANGE = getattr(win32con, "WM_DISPLAYCHANGE", 0x007E)
 WM_SETTINGCHANGE = getattr(win32con, "WM_SETTINGCHANGE", 0x001A)
 
+# Mensajes propios: dejan mover y transparentar el widget desde afuera (los usa
+# tools/selftest.py para verificar las dos cosas contra el widget en marcha).
+WM_APP_MOVE = win32con.WM_APP + 1   # wParam = fraccion de posicion x1000; 0xFFFF = extremo
+WM_APP_ALPHA = win32con.WM_APP + 2  # wParam = alpha del chip (0 = sin fondo)
+
+WS_EX_LAYERED = 0x00080000
+ULW_ALPHA = 0x02
+IDC_SIZEWE = 32644
+
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 user32.SetTimer.restype = ctypes.c_void_p
 user32.SetTimer.argtypes = [wt.HWND, ctypes.c_void_p, wt.UINT, ctypes.c_void_p]
 user32.KillTimer.argtypes = [wt.HWND, ctypes.c_void_p]
+user32.UpdateLayeredWindow.restype = wt.BOOL
+user32.UpdateLayeredWindow.argtypes = [wt.HWND, wt.HDC, ctypes.c_void_p,
+                                       ctypes.c_void_p, wt.HDC, ctypes.c_void_p,
+                                       wt.DWORD, ctypes.c_void_p, wt.DWORD]
 
 
 class BITMAPINFOHEADER(ctypes.Structure):
@@ -62,6 +81,11 @@ class BITMAPINFO(ctypes.Structure):
 class TRACKMOUSEEVENT(ctypes.Structure):
     _fields_ = [("cbSize", wt.DWORD), ("dwFlags", wt.DWORD), ("hwndTrack", wt.HWND),
                 ("dwHoverTime", wt.DWORD)]
+
+
+class BLENDFUNCTION(ctypes.Structure):
+    _fields_ = [("BlendOp", ctypes.c_byte), ("BlendFlags", ctypes.c_byte),
+                ("SourceConstantAlpha", ctypes.c_byte), ("AlphaFormat", ctypes.c_byte)]
 
 
 class _Dib:
@@ -100,6 +124,63 @@ class _Dib:
             pass
 
 
+class _Layered:
+    """Superficie con alpha por pixel, presentada con UpdateLayeredWindow.
+
+    Requiere que la ventana se haya creado con WS_EX_LAYERED. En Windows 8+ ese
+    estilo tambien vale para ventanas hijas (hasta Windows 7 solo servia en
+    ventanas de nivel superior), y eso es justo lo que permite que el widget se
+    mezcle de verdad con la barra de tareas en vez de simularlo: el alpha del chip
+    se compone contra los pixeles reales de atras, incluso si la barra tiene un
+    degradado o un tema claro.
+    """
+
+    def __init__(self, hwnd: int, w: int, h: int):
+        self.hwnd, self.w, self.h = hwnd, w, h
+        self.bits = ctypes.c_void_p()
+        hdc = win32gui.GetDC(0)
+        try:
+            bmi = BITMAPINFO()
+            bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.bmiHeader.biWidth = w
+            bmi.bmiHeader.biHeight = -h  # filas de arriba hacia abajo
+            bmi.bmiHeader.biPlanes = 1
+            bmi.bmiHeader.biBitCount = 32
+            bmi.bmiHeader.biCompression = 0
+            self.bmp = gdi32.CreateDIBSection(hdc, ctypes.byref(bmi), 0,
+                                              ctypes.byref(self.bits), None, 0)
+            self.dc = gdi32.CreateCompatibleDC(hdc)
+            gdi32.SelectObject(self.dc, self.bmp)
+        finally:
+            win32gui.ReleaseDC(0, hdc)
+
+    def upload(self, raw: bytes) -> None:
+        ctypes.memmove(self.bits, raw, min(len(raw), self.w * self.h * 4))
+        self.apply()
+
+    def apply(self) -> None:
+        # pptDst en NULL: la posicion la manda SetWindowPos y no queremos dos
+        # fuentes de verdad sobre la geometria (la ventana es hija de la barra,
+        # asi que ahi las coordenadas son relativas al cliente del padre y
+        # mezclarlas es exactamente el bug que ya nos costo una barra fuera de lugar).
+        size = wt.SIZE(self.w, self.h)
+        src = wt.POINT(0, 0)
+        blend = BLENDFUNCTION(0, 0, 255, 1)  # AC_SRC_OVER | premultiplicado
+        user32.UpdateLayeredWindow(self.hwnd, 0, None, ctypes.byref(size),
+                                   self.dc, ctypes.byref(src), 0,
+                                   ctypes.byref(blend), ULW_ALPHA)
+
+    def blit(self, hdc: int) -> None:  # compatibilidad: nada que hacer por WM_PAINT
+        return
+
+    def free(self) -> None:
+        try:
+            gdi32.DeleteDC(self.dc)
+            gdi32.DeleteObject(self.bmp)
+        except Exception:
+            pass
+
+
 class WidgetApp:
     def __init__(self, cfg: dict, embed: bool = True, log_path: str | None = None):
         self.cfg = cfg
@@ -125,6 +206,12 @@ class WidgetApp:
         self.width_px = 0
         self.height_px = 0
         self.base = (26, 28, 36)
+        self.layered = str(cfg.get("bg_mode", "layered")).lower() == "layered"
+        self.pos_frac = cfg.get("position_frac", None)
+        self._drag = None      # estado del arrastre en curso
+        self._drag_x = None    # x (pantalla) mientras se arrastra
+        self._wall_x = None    # limite real: a partir de aca la lista de tareas tapa
+        self._last_cover_check = 0.0
         self.visible = True
         self._needs_show = False
         self._sig = None
@@ -248,11 +335,11 @@ class WidgetApp:
         self.width_px = int(round(self.cfg.get("width", 260) * self.k))
         # Reservar el espacio ANTES de crear la ventana y crearla ya en su sitio:
         # si naciera en (0,0) apareceria un parpadeo encima del boton Inicio.
-        x_rel = self.host.reserve(self.width_px,
-                                  int(self.cfg.get("min_tasklist_width", 420)))
+        x_rel = self._reserve_x()
         hinst = win32api.GetModuleHandle(None)
         self.hwnd_widget = win32gui.CreateWindowEx(
-            0, WIDGET_CLASS, "gorus-widget",
+            WS_EX_LAYERED if self.layered else 0,
+            WIDGET_CLASS, "gorus-widget",
             win32con.WS_CHILD | win32con.WS_CLIPSIBLINGS,
             x_rel, 0, self.width_px, self.height_px,
             self.host.tray, None, hinst, None)
@@ -261,7 +348,7 @@ class WidgetApp:
             return False
         self._needs_show = True
         self.dib = None
-        self._ensure_dib()
+        self._ensure_surface()
         self._sig = None
         return True
 
@@ -272,20 +359,93 @@ class WidgetApp:
         self.height_px = 40
         self.width_px = int(self.cfg.get("width", 260))
         self.hwnd_widget = win32gui.CreateWindowEx(
-            win32con.WS_EX_TOPMOST, WIDGET_CLASS, "Gorus - widget de musica",
-            win32con.WS_POPUP,
+            win32con.WS_EX_TOPMOST | (WS_EX_LAYERED if self.layered else 0),
+            WIDGET_CLASS, "Gorus - widget de musica", win32con.WS_POPUP,
             1200, 960, self.width_px, self.height_px, 0, None, hinst, None)
         self._needs_show = True
         self.dib = None
-        self._ensure_dib()
+        self._ensure_surface()
         self._sig = None
 
-    def _ensure_dib(self) -> None:
+    def _reserve_x(self) -> int:
+        """x del widget (relativa al cliente de la barra) segun el modo de posicion.
+
+        Tres fuentes de verdad, en orden: el arrastre en curso, la posicion
+        fraccionaria guardada, o el extremo derecho (por defecto).
+        """
+        min_free = int(self.cfg.get("min_tasklist_free", 140))
+        min_tasklist = int(self.cfg.get("min_tasklist_width", 420))
+        if self._drag_x is not None:
+            return self.host.reserve(self.width_px, min_tasklist,
+                                    x=self._drag_x, min_free=min_free)
+        return self.host.reserve(self.width_px, min_tasklist,
+                                 frac=self.pos_frac, min_free=min_free)
+
+    # ---------------------------------------------------- limite real de la barra
+    def _covered(self) -> bool:
+        """True si la lista de tareas quedo por encima del widget (la tapa)."""
+        try:
+            rb = win32gui.GetWindowRect(self.host.rebar)
+            wl = win32gui.GetWindowRect(self.hwnd_widget)[0]
+        except Exception:
+            return False
+        return rb[2] > wl + 1
+
+    def _place_at(self, x: int) -> None:
+        """Reserva y coloca el widget en una x concreta (pantalla), sin tocar la
+        posicion guardada. Devuelve nada: para saber si quedo tapado, _covered()."""
+        r = self.host.reserve(self.width_px, int(self.cfg.get("min_tasklist_width", 420)),
+                              x=x, min_free=self._min_free())
+        self.host.place(self.hwnd_widget, r, self.height_px)
+
+    def _free_x(self, x_want: int, hi: int) -> int:
+        """x mas cercana a x_want que no quede tapada por la lista de tareas.
+
+        Windows estira ReBarWindow32 cuando la dejariamos demasiado angosta, y esa
+        lista estirada tapa el widget (la lista de tareas esta por encima en el
+        orden Z y no se puede ganar esa pelea: explorer la vuelve a subir en cuanto
+        se toca la barra). El ancho minimo que Windows tolera depende de cuantas
+        ventanas haya abiertas, asi que no se adivina: se busca el limite real por
+        biseccion — la cobertura es monotona, cuanto mas a la izquierda peor.
+        """
+        x = self.host.clamp_x(x_want, self.width_px, self._min_free())
+        self._place_at(x)
+        if not self._covered():
+            return x
+        self._place_at(hi)
+        if self._covered():
+            # No hay posicion libre ni en el extremo: se lo deja arriba a la fuerza
+            # (tapa botones, pero al menos se ve; Ctrl+Alt+M lo oculta).
+            try:
+                win32gui.SetWindowPos(self.hwnd_widget, win32con.HWND_TOP, 0, 0, 0, 0,
+                                      win32con.SWP_NOMOVE | win32con.SWP_NOSIZE
+                                      | win32con.SWP_NOACTIVATE)
+            except Exception:
+                pass
+            return hi
+        a, b = x, hi  # a = tapado, b = libre
+        while b - a > 4:
+            m = (a + b) // 2
+            self._place_at(m)
+            if self._covered():
+                a = m
+            else:
+                b = m
+        self._place_at(b)
+        self.log("limite de la barra: la lista de tareas necesita su espacio, "
+                 "posicion ajustada de x=%d a x=%d", x_want, b)
+        return b
+
+    def _ensure_surface(self) -> None:
         if self.hwnd_widget and self.width_px and self.height_px:
-            if self.dib is None or self.dib.w != self.width_px or self.dib.h != self.height_px:
+            need = (self.dib is None or self.dib.w != self.width_px
+                    or self.dib.h != self.height_px
+                    or isinstance(self.dib, _Layered) != self.layered)
+            if need:
                 if self.dib:
                     self.dib.free()
-                self.dib = _Dib(self.hwnd_widget, self.width_px, self.height_px)
+                cls = _Layered if self.layered else _Dib
+                self.dib = cls(self.hwnd_widget, self.width_px, self.height_px)
 
     def _ensure_attached(self) -> None:
         """Reconstruye o re-ancla el widget si algo se movio por debajo."""
@@ -306,6 +466,7 @@ class WidgetApp:
             self.hwnd_widget = 0
         self.log("reconstruyendo widget")
         self.host.refresh()
+        self._wall_x = None
         self._create_widget()
         self._apply_layout(force=True)
         self._repaint_if_needed(force=True)
@@ -328,15 +489,43 @@ class WidgetApp:
         if want_h != self.height_px or want_w != self.width_px:
             self.height_px, self.width_px = want_h, want_w
             self.dib = None
-            self._ensure_dib()
+            self._ensure_surface()
             if self.hwnd_widget and win32gui.IsWindow(self.hwnd_widget):
                 win32gui.SetWindowPos(self.hwnd_widget, 0, 0, 0, want_w, want_h,
                                       win32con.SWP_NOMOVE | win32con.SWP_NOZORDER
                                       | win32con.SWP_NOACTIVATE)
             self._sig = None
-        x_rel = self.host.reserve(self.width_px, int(self.cfg.get("min_tasklist_width", 420)))
-        self.host.place(self.hwnd_widget, x_rel, self.height_px)
+        x_rel = self._apply_x(m)
         self.base = self.host.base_color(x_rel, self.width_px, self.height_px)
+
+    def _apply_x(self, m: dict) -> int:
+        """Coloca el widget segun la posicion pedida y devuelve su x relativa.
+
+        Si la posicion pedida dejaria a la lista de tareas tan angosta que Windows
+        la estira por encima del widget, se usa la posicion libre mas cercana.
+        """
+        hi = self.host.x_limits(self.width_px, self._min_free())[1]
+        if self._drag_x is not None:
+            x_want = self.host.clamp_x(self._drag_x, self.width_px, self._min_free())
+            if self._wall_x:
+                x_want = max(x_want, self._wall_x)
+        elif self.pos_frac is not None:
+            x_want = self.host.x_from_frac(self.pos_frac, self.width_px, self._min_free())
+            if self._wall_x:
+                x_want = max(x_want, self._wall_x)
+        else:
+            x_rel = self._reserve_x()   # extremo derecho (posicion automatica)
+            self.host.place(self.hwnd_widget, x_rel, self.height_px)
+            return x_rel
+        x = self._free_x(x_want, hi)
+        if x != x_want:
+            # la posicion pedida no era viable: se recuerda la lograda para no
+            # pelear con la lista de tareas en cada ciclo
+            self._wall_x = x
+            if self._drag_x is None:
+                self._set_frac_noauto(self.host.frac_from_x(x, self.width_px,
+                                                            self._min_free()))
+        return x - m["left"]
 
     def toggle_visible(self) -> None:
         if self.visible:
@@ -365,7 +554,8 @@ class WidgetApp:
         frac = (st.live_position() / st.duration) if (st.duration and st.playing) else 0.0
         return (st.has_session, st.art_key, st.title, st.artist, st.playing,
                 int(frac * bar_px), int(self.marquee) if self._overflow() else 0,
-                self.hover, self.width_px, self.height_px, self.base, st.stopped)
+                self.hover, self.width_px, self.height_px, self.base, st.stopped,
+                int(self.cfg.get("chip_alpha", 232)), self.layered)
 
     def _overflow(self) -> bool:
         try:
@@ -376,7 +566,7 @@ class WidgetApp:
     def _render(self) -> None:
         if not self.hwnd_widget or not win32gui.IsWindow(self.hwnd_widget):
             return
-        self._ensure_dib()
+        self._ensure_surface()
         if not self.dib:
             return
         SS = max(1, int(self.cfg.get("supersample", 3)))
@@ -387,14 +577,23 @@ class WidgetApp:
                                int(round(draw.ART * S)), int(round(draw.ART_RADIUS * S)))
         img = draw.render(self.state, self.cfg, art=art, hover=self.hover,
                           marquee=self.marquee, k=self.k, base=self.base,
-                          height=self.height_px)
-        self.dib.upload(draw.to_bgra(img))
+                          height=self.height_px, opaque=not self.layered)
+        if self.layered:
+            # Alpha real: la transparencia del chip se compone contra los pixeles
+            # que estan detras, asi que no se mezcla contra ningun color muestreado.
+            self.dib.upload(draw.to_premult_bgra(img))
+        else:
+            self.dib.upload(draw.to_bgra(img))
 
     def _repaint_if_needed(self, force: bool = False) -> None:
         sig = self._signature()
         if force or sig != self._sig:
             self._sig = sig
             self._render()
+        if self.layered:
+            # Con alpha por pixel no hace falta invalidar: la ventana en capas la
+            # compone DWM, la barra de tareas no pinta encima suyo.
+            return
         # Invalidar SIEMPRE, aunque no haga falta redibujar: el blit del DIB ya
         # renderizado cuesta casi nada, y la barra de tareas puede pintar encima
         # de sus ventanas hijas. Sin esto el widget queda borrado (se ve el fondo
@@ -430,6 +629,14 @@ class WidgetApp:
         try:
             self.state = self.poller.state()
             self._ensure_attached()
+            # Red de seguridad: si la lista de tareas crecio (mas ventanas abiertas)
+            # y quedo por encima del widget, se corrige la posicion enseguida.
+            if self.embed and self.hwnd_widget:
+                now_c = time.monotonic()
+                if now_c - self._last_cover_check >= 0.5:
+                    self._last_cover_check = now_c
+                    if self._covered():
+                        self._apply_layout(force=True)
             # marquesina: solo avanza si el titulo no cabe
             now = time.monotonic()
             if self.state.title != self._last_title:
@@ -462,6 +669,13 @@ class WidgetApp:
                 return 0
             if msg == win32con.WM_HOTKEY and wp == HOTKEY_TOGGLE:
                 self.toggle_visible()
+                return 0
+            if msg == WM_APP_MOVE:
+                self.set_position(None if wp >= 0xFFFF else wp / 1000.0,
+                                  save=bool(lp))
+                return 0
+            if msg == WM_APP_ALPHA:
+                self.set_chip_alpha(int(wp), save=bool(lp))
                 return 0
             if msg == win32con.WM_CLOSE:
                 # cerrar por pedido explicito (menu o script): terminar el bucle ya
@@ -506,6 +720,9 @@ class WidgetApp:
             if msg == win32con.WM_ERASEBKGND:
                 return 1
             if msg == win32con.WM_MOUSEMOVE:
+                if self._drag is not None:
+                    self._drag_move()
+                    return 0
                 x = lp & 0xFFFF
                 y = (lp >> 16) & 0xFFFF
                 if os.environ.get("GORUS_DEBUG_MOUSE"):
@@ -526,7 +743,26 @@ class WidgetApp:
                     self.hover = -1
                     self._repaint_if_needed(force=True)
                 return 0
+            if msg == win32con.WM_LBUTTONDOWN:
+                x = lp & 0xFFFF
+                y = (lp >> 16) & 0xFFFF
+                # Arrastrar desde cualquier parte que no sea un boton mueve el
+                # widget a lo largo de la barra. Un clic seco (sin movimiento)
+                # sigue sin hacer nada, como antes.
+                if (self._hit_control(x, y) == -1
+                        and self.cfg.get("drag_to_move", True)):
+                    self._start_drag()
+                return 0
+            if msg == win32con.WM_CAPTURECHANGED:
+                if self._drag is not None:
+                    self._drag = None
+                    self._drag_x = None
+                    self._apply_layout(force=True)
+                return 0
             if msg == win32con.WM_LBUTTONUP:
+                if self._drag is not None:
+                    self._end_drag()
+                    return 0
                 x = lp & 0xFFFF
                 y = (lp >> 16) & 0xFFFF
                 hit = self._hit_control(x, y)
@@ -537,6 +773,13 @@ class WidgetApp:
                 elif hit == 2:
                     self.poller.next_track()
                 self._repaint_if_needed(force=True)
+                return 0
+            if msg == WM_APP_MOVE:
+                self.set_position(None if wp >= 0xFFFF else wp / 1000.0,
+                                  save=bool(lp))
+                return 0
+            if msg == WM_APP_ALPHA:
+                self.set_chip_alpha(int(wp), save=bool(lp))
                 return 0
             if msg == win32con.WM_RBUTTONUP:
                 if self.cfg.get("right_click_menu", True):
@@ -553,20 +796,142 @@ class WidgetApp:
             self.log("widget proc fallo: %r", exc)
         return win32gui.DefWindowProc(hwnd, msg, wp, lp)
 
+    # ------------------------------------------------------- posicion y fondo
+    def _min_free(self) -> int:
+        return int(self.cfg.get("min_tasklist_free", 140))
+
+    def _widget_x(self) -> int:
+        """x actual del widget en pantalla (lo que se ve, no lo que dice el config)."""
+        try:
+            return win32gui.GetWindowRect(self.hwnd_widget)[0]
+        except Exception:
+            return self.host.target_x(self.width_px,
+                                      int(self.cfg.get("min_tasklist_width", 420)),
+                                      self.pos_frac, self._min_free())
+
+    def _set_frac_noauto(self, frac: float | None) -> None:
+        self.pos_frac = frac
+        self.cfg["position_frac"] = round(frac, 4) if frac is not None else None
+
+    def set_position(self, frac: float | None, save: bool = True) -> None:
+        """Mueve el widget a una fraccion del tramo util (None = extremo derecho)."""
+        if frac is not None:
+            frac = max(0.0, min(1.0, float(frac)))
+            # pegado al extremo derecho = comportamiento automatico, asi la barra
+            # queda ordenada (sin tramo vacio) cuando lo devuelven a su lugar
+            hi = self.host.x_limits(self.width_px, self._min_free())[1]
+            x = self.host.x_from_frac(frac, self.width_px, self._min_free())
+            if hi - x <= 6:
+                frac = None
+        self._drag_x = None
+        self._set_frac_noauto(frac)
+        self._apply_layout(force=True)
+        self._repaint_if_needed(force=True)
+        if save:
+            cfgmod.save(self.cfg)
+        self.log("posicion: %s", "extremo derecho" if self.pos_frac is None
+                 else f"fraccion {self.pos_frac:.3f}")
+
+    def set_chip_alpha(self, alpha: int, save: bool = True) -> None:
+        """Transparencia del fondo. 0 = sin fondo (queda flotando sobre la barra)."""
+        alpha = max(0, min(255, int(alpha)))
+        self.cfg["chip_alpha"] = alpha
+        if save:
+            cfgmod.save(self.cfg)
+        self._sig = None
+        self._repaint_if_needed(force=True)
+        self.log("fondo: alpha %d", alpha)
+
+    def _nudge(self, delta: int) -> None:
+        x = self.host.clamp_x(self._widget_x() + delta, self.width_px, self._min_free())
+        self.set_position(self.host.frac_from_x(x, self.width_px, self._min_free()))
+
+    # ------------------------------------------------------------------ arrastre
+    def _start_drag(self) -> None:
+        try:
+            cx, _ = win32gui.GetCursorPos()
+            x0 = win32gui.GetWindowRect(self.hwnd_widget)[0]
+        except Exception:
+            return
+        self._drag = {"cx0": cx, "x0": x0, "moved": False}
+        self._drag_x = x0
+        self._wall_x = None   # el limite se vuelve a descubrir en cada arrastre
+        try:
+            win32gui.SetCapture(self.hwnd_widget)
+            win32gui.SetCursor(win32gui.LoadCursor(0, IDC_SIZEWE))
+        except Exception:
+            pass
+
+    def _drag_move(self) -> None:
+        d = self._drag
+        try:
+            cx, _ = win32gui.GetCursorPos()
+        except Exception:
+            return
+        # El cursor se lee en coordenadas de PANTALLA. Los mensajes de mouse llegan
+        # relativos a la ventana, y como la ventana se mueve bajo el cursor, usarlos
+        # haria que el widget se escape o vibre.
+        dx = cx - d["cx0"]
+        if abs(dx) >= 3:
+            d["moved"] = True
+        self._drag_x = self.host.clamp_x(d["x0"] + dx, self.width_px, self._min_free())
+        self._apply_layout(force=True)
+        try:
+            win32gui.SetCursor(win32gui.LoadCursor(0, IDC_SIZEWE))
+        except Exception:
+            pass
+
+    def _end_drag(self) -> None:
+        d, self._drag = self._drag, None
+        try:
+            win32gui.ReleaseCapture()
+        except Exception:
+            pass
+        x, self._drag_x = self._drag_x, None
+        if x is not None and d and d.get("moved"):
+            self.set_position(self.host.frac_from_x(x, self.width_px, self._min_free()))
+        else:
+            # clic seco sobre el cuerpo: no mover nada
+            self._apply_layout(force=True)
+
     # ------------------------------------------------------------------- menu
     def _show_menu(self) -> None:
         try:
             menu = win32gui.CreatePopupMenu()
+            alpha_sub = win32gui.CreatePopupMenu()
+            cur = int(self.cfg.get("chip_alpha", 232))
+            for i, (alpha, label) in enumerate(ALPHA_LEVELS):
+                flags = win32con.MF_STRING
+                if alpha == cur:
+                    flags |= win32con.MF_CHECKED
+                win32gui.AppendMenu(alpha_sub, flags, 20 + i, label)
+
             items = [
-                (1, "Ocultar widget" if self.visible else "Mostrar widget", True),
-                (2, f"Ancho: {self.cfg.get('width', 260)} px", False),
-                (3, "  Más ancho", True),
-                (4, "  Más angosto", True),
-                (5, "Refrescar ahora", True),
-                (6, "Abrir carpeta del proyecto", True),
-                (7, "Salir", True),
+                ("item", 1, "Ocultar widget" if self.visible else "Mostrar widget", True),
+                ("sep", 0, "", None),
+                ("popup", alpha_sub, "Fondo", True),
+                ("sep", 0, "", None),
+                ("item", 3, "◀  Mover a la izquierda", True),
+                ("item", 4, "Mover a la derecha  ▶", True),
+                ("item", 5, "Centrar en la barra", True),
+                ("item", 6, "Volver al extremo derecho", True),
+                ("sep", 0, "", None),
+                ("item", 7, f"Ancho: {self.cfg.get('width', 260)} px", False),
+                ("item", 8, "   Más ancho", True),
+                ("item", 9, "   Más angosto", True),
+                ("sep", 0, "", None),
+                ("item", 10, "Refrescar ahora", True),
+                ("item", 11, "Abrir carpeta del proyecto", True),
+                ("item", 12, "Salir", True),
             ]
-            for ident, label, enabled in items:
+            for kind, ident, label, enabled in items:
+                if kind == "sep":
+                    win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
+                    continue
+                if kind == "popup":
+                    win32gui.AppendMenu(menu, win32con.MF_POPUP | win32con.MF_STRING,
+                                        ident, label)
+                    continue
                 flags = win32con.MF_STRING
                 flags |= win32con.MF_ENABLED if enabled else win32con.MF_GRAYED
                 win32gui.AppendMenu(menu, flags, ident, label)
@@ -585,28 +950,38 @@ class WidgetApp:
             self.log("menu fallo: %r", exc)
 
     def _handle_menu(self, cmd: int) -> None:
-        from . import config as cfgmod
         if cmd == 1:
             self.toggle_visible()
+        elif 20 <= cmd <= 20 + len(ALPHA_LEVELS) - 1:
+            self.set_chip_alpha(ALPHA_LEVELS[cmd - 20][0])
         elif cmd == 3:
+            self._nudge(-int(round(NUDGE_PX * self.k)))
+        elif cmd == 4:
+            self._nudge(int(round(NUDGE_PX * self.k)))
+        elif cmd == 5:
+            self.set_position(0.5)
+        elif cmd == 6:
+            self.set_position(None)
+        elif cmd == 8:
             self.cfg["width"] = min(520, int(self.cfg.get("width", 260)) + 20)
             cfgmod.save(self.cfg)
             self._apply_layout(force=True)
             self._repaint_if_needed(force=True)
-        elif cmd == 4:
+        elif cmd == 9:
             self.cfg["width"] = max(150, int(self.cfg.get("width", 260)) - 20)
             cfgmod.save(self.cfg)
             self._apply_layout(force=True)
             self._repaint_if_needed(force=True)
-        elif cmd == 5:
+        elif cmd == 10:
             self.state = self.poller.state()
+            self._sig = None
             self._repaint_if_needed(force=True)
-        elif cmd == 6:
+        elif cmd == 11:
             try:
                 os.startfile(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             except Exception:
                 pass
-        elif cmd == 7:
+        elif cmd == 12:
             win32gui.PostMessage(self.hwnd_ctl, win32con.WM_CLOSE, 0, 0)
 
 

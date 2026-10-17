@@ -59,6 +59,34 @@ def _col(theme: dict, key: str, alpha: int = 255) -> tuple:
     return (int(rgb[0]), int(rgb[1]), int(rgb[2]), alpha)
 
 
+def _lum(c: tuple) -> float:
+    return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+
+
+# Colores para una barra de tareas clara (tema claro de Windows): si el fondo es
+# claro, el texto blanco desaparece. Con el fondo transparente esto deja de ser
+# un caso raro y pasa a ser algo que hay que resolver.
+LIGHT_THEME = {
+    "chip": [243, 244, 248],
+    "border": [170, 174, 186],
+    "title": [20, 22, 28],
+    "artist": [84, 90, 106],
+    "icon": [28, 30, 38],
+    "icon_dim": [146, 150, 162],
+    "track": [188, 192, 202],
+}
+
+
+def theme_for_base(cfg: dict, base: tuple) -> dict:
+    """Tema efectivo: el configurado, o su version oscura/clara segun el fondo."""
+    theme = dict(cfg.get("theme") or {})
+    if not cfg.get("auto_contrast", True):
+        return theme
+    if _lum(tuple(base)[:3]) > 130:
+        theme.update(LIGHT_THEME)
+    return theme
+
+
 def _rounded_mask(size: tuple[int, int], radius: int) -> Image.Image:
     mask = Image.new("L", size, 0)
     ImageDraw.Draw(mask).rounded_rectangle([0, 0, size[0] - 1, size[1] - 1],
@@ -150,10 +178,19 @@ def control_rects(width: int, k: float, cfg: dict) -> list[tuple[int, int, int, 
 
 def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
            marquee: float = 0.0, k: float = 1.0, base: tuple = (32, 34, 42),
-           height: int | None = None) -> Image.Image:
-    """Devuelve el widget dibujado como imagen RGBA del tamano exacto a mostrar."""
+           height: int | None = None, opaque: bool = True) -> Image.Image:
+    """Devuelve el widget dibujado como imagen RGBA del tamano exacto a mostrar.
+
+    opaque=True  -> la transparencia se resuelve mezclando contra `base` (el color
+                    muestreado de la barra). El resultado es opaco y va a un DIB que
+                    se blitea con BitBlt.
+    opaque=False -> se conserva el alpha real, para presentarlo con
+                    UpdateLayeredWindow sobre lo que haya detras. En este modo los
+                    canales RGB vuelven PREMULTIPLICADOS (que es lo que espera
+                    AC_SRC_ALPHA), asi que no hay que volver a multiplicar.
+    """
     SS = max(1, int(cfg.get("supersample", 3)))
-    theme = cfg.get("theme") or {}
+    theme = theme_for_base(cfg, base)
     W = int(round(cfg.get("width", 260) * k))
     H = int(height if height is not None else round(REF_H * k))
     S = k * SS
@@ -162,10 +199,13 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
     img = Image.new("RGBA", canvas, (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    radius = cfg.get("corner_radius", 7) * S
-    d.rounded_rectangle([0, 1.5 * S, W * SS - 1, H * SS - 2.5 * S], radius=radius,
-                        fill=_col(theme, "chip", int(cfg.get("chip_alpha", 232))),
-                        outline=_col(theme, "border", 210), width=max(1, round(S)))
+    chip_alpha = max(0, min(255, int(cfg.get("chip_alpha", 232))))
+    if chip_alpha > 0:
+        radius = cfg.get("corner_radius", 7) * S
+        d.rounded_rectangle([0, 1.5 * S, W * SS - 1, H * SS - 2.5 * S], radius=radius,
+                            fill=_col(theme, "chip", chip_alpha),
+                            outline=_col(theme, "border", min(210, chip_alpha + 40)),
+                            width=max(1, round(S)))
 
     idle = not state.has_session
     dim = 0.55 if idle else 1.0
@@ -228,6 +268,20 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
 
     # ------------------------------------------------------------------ iconos
     if controls:
+        # El resaltado del hover va en una capa aparte y se compone de verdad:
+        # ImageDraw sobre RGBA reemplaza el pixel (no mezcla), asi que dibujar el
+        # circulo translucido directo sobre el chip lo dejaria con alpha 26, o sea
+        # un agujero casi transparente en vez de un resaltado.
+        if hover >= 0 and not idle and hover < len(controls):
+            x0, y0, x1, y1 = controls[hover]
+            hl = Image.new("RGBA", canvas, (0, 0, 0, 0))
+            hd = ImageDraw.Draw(hl)
+            r = (ICON_CELL * k * SS) / 2.0
+            ccx = (x0 + x1) / 2.0 * SS
+            ccy = (y0 + y1) / 2.0 * SS
+            hd.ellipse([ccx - r, ccy - r, ccx + r, ccy + r], fill=(255, 255, 255, 26))
+            img.alpha_composite(hl)
+
         icon_col = _col(theme, "icon", int(255 * dim))
         dim_col = _col(theme, "icon_dim", int(255 * dim))
         kinds = ["prev", "pause" if state.playing else "play", "next"]
@@ -236,9 +290,6 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
             cy = (y0 + y1) / 2.0 * SS
             enabled = (i == 1 and state.can_toggle) or (i == 0 and state.can_prev) \
                 or (i == 2 and state.can_next)
-            if hover == i and not idle:
-                r = (ICON_CELL * k * SS) / 2.0
-                d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255, 26))
             _draw_icon(d, cx, cy, kind, S, icon_col if (enabled and not idle) else dim_col)
 
     # ----------------------------------------------------------------- progreso
@@ -253,15 +304,35 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
             d.rounded_rectangle([x0, y0, x0 + max((y1 - y0), (x1 - x0) * frac), y1],
                                 radius=(y1 - y0) / 2.0, fill=_col(theme, "accent", 255))
 
-    # --- mezcla contra el color real de la barra y reduccion ------------------
-    out = Image.alpha_composite(Image.new("RGBA", canvas, tuple(base) + (255,)), img)
+    # --- presentacion: contra el color real de la barra, o con alpha real ------
+    if opaque:
+        out = Image.alpha_composite(Image.new("RGBA", canvas, tuple(base) + (255,)), img)
+        if SS > 1:
+            out = out.resize((W, H), Image.LANCZOS)
+        return out
+    # Alpha real. La reduccion se hace en espacio premultiplicado: reducir el RGBA
+    # directo deja que los pixeles transparentes (negros) sangren un halo oscuro en
+    # los bordes del chip y de la caratula.
+    pre = ImageChops.multiply(img.convert("RGB"), img.getchannel("A").convert("RGB"))
+    alpha = img.getchannel("A")
     if SS > 1:
-        out = out.resize((W, H), Image.LANCZOS)
-    return out
+        pre = pre.resize((W, H), Image.LANCZOS)
+        alpha = alpha.resize((W, H), Image.LANCZOS)
+    return Image.merge("RGBA", (*pre.split(), alpha))
 
 
 def to_bgra(img: Image.Image) -> bytes:
     return img.convert("RGBA").tobytes("raw", "BGRA")
+
+
+def to_premult_bgra(img: Image.Image) -> bytes:
+    """Bytes BGRA premultiplicados, listos para UpdateLayeredWindow (ULW_ALPHA).
+
+    No vuelve a multiplicar: `render(..., opaque=False)` ya entrega el RGB
+    premultiplicado. Aca solo se reordena a BGRA.
+    """
+    r, g, b, a = img.convert("RGBA").split()
+    return Image.merge("RGBA", (b, g, r, a)).tobytes()
 
 
 def title_overflows(state, cfg: dict, k: float, width: int | None = None) -> bool:

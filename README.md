@@ -25,7 +25,9 @@ Probado en Windows 10 22H2 (19045), escala 100% y 1920x1080.
 | Que arranque solo con Windows | `install_startup.bat` |
 | Sacarlo del arranque y detenerlo | `uninstall_startup.bat` |
 | Mostrar / ocultar sin cerrarlo | `Ctrl + Alt + M` |
-| Menu (ancho, refrescar, salir) | clic derecho sobre el widget |
+| Fondo transparente | clic derecho > *Fondo* |
+| Moverlo a otra parte de la barra | arrastralo con el boton izquierdo, o clic derecho > *Mover / Centrar* |
+| Menu (fondo, mover, ancho, salir) | clic derecho sobre el widget |
 | Detenerlo | clic derecho > Salir, o `python tools\stop.py` |
 | Reinstalar dependencias | `setup.bat` |
 
@@ -45,6 +47,67 @@ Si nunca corriste nada todavia, empeza por `setup.bat`.
   algun control, el boton se dibuja atenuado.
 - **Sin reproduccion**: estado apagado con una nota musical y los controles
   inactivos, en vez de desaparecer.
+- **Fondo regulable**: de chip solido a *sin fondo*, donde el widget queda
+  flotando sobre la barra y solo se ven la caratula, los textos y los botones.
+- **Posicion libre**: se lo puede arrastrar a cualquier parte de la barra donde
+  entre, y no vuelve solo a su lugar.
+
+
+
+## Fondo transparente
+
+Clic derecho > *Fondo*, con cuatro niveles: **solido** (por defecto),
+**translucido**, **muy transparente** y **sin fondo**.
+
+No es un truco de color: la ventana se crea con `WS_EX_LAYERED` y se presenta con
+`UpdateLayeredWindow`, asi que el alpha de cada pixel del chip se compone contra
+lo que hay de verdad detras. Medido comparando la misma franja de pantalla con el
+widget encima y con esa zona pelada: con *sin fondo* la diferencia es **0,00** (o
+sea, el widget es invisible y se ve la barra tal cual), y con los niveles
+intermedios 8,5 y 13,9, contra 19,1 del chip solido.
+
+Ese estilo servia solo para ventanas de nivel superior hasta Windows 7; desde
+Windows 8 tambien vale para ventanas **hijas**, que es lo que permite hacerlo
+dentro de la barra.
+
+Como el fondo ya no es fijo, los colores del tema se eligen solos segun la barra:
+si el fondo es claro, el texto y los iconos pasan a oscuros (`auto_contrast`), asi
+que tambien se lee bien con el tema claro de Windows.
+
+Si preferis el metodo clasico (mezclar el chip contra un color muestreado de la
+barra, sin alpha real), `"bg_mode": "opaque"` en `config.json`.
+
+
+## Mover el widget por la barra
+
+Se arrastra con el boton izquierdo desde cualquier parte que no sea un boton
+(sobre el titulo o la caratula). Mientras se arrastra el cursor cambia a ↔.
+Tambien esta el menu: *Mover a la izquierda*, *Mover a la derecha* (20 px por
+vez), *Centrar en la barra* y *Volver al extremo derecho*. La posicion se guarda
+en `config.json` (`position_frac`) y se respeta al arrancar.
+
+El widget reserva su espacio dentro del tramo libre de la barra (entre la lista
+de tareas y el bloque de la bandeja) y le pide a la lista de tareas el ancho que
+corresponda, asi que se mueve **junto con** los botones, no por encima.
+
+Dos cosas que Windows impone y conviene saber:
+
+- **La lista de tareas tiene un ancho minimo propio.** Si la dejariamos mas
+  angosta de lo que Windows tolera (~500 px con 10 ventanas abiertas), Windows la
+  estira sola — y esa lista estirada **tapa** el widget. El widget no adivina ese
+  minimo: cuando lo detecta, busca por biseccion la posicion libre mas cercana y
+  la usa como limite. O sea que el recorrido real es *desde donde la lista de
+  tareas conserva su espacio* hasta el borde del bloque de la bandeja: unos 450 px
+  de recorrido en 1920x1080, mas si tenes pocas ventanas abiertas.
+- **No se puede quedar por encima de la lista de tareas.** Una ventana hija de la
+  barra nace debajo de esa lista, y aunque se la suba con `HWND_TOP`, explorer la
+  vuelve a poner arriba en cuanto se toca la barra. Por eso la posicion siempre se
+  elige de forma que la lista de tareas no lo tape: es preferible respetar la
+  esquina que quedar invisible.
+
+Si el widget queda en el medio, el tramo entre el y el bloque de la bandeja queda
+como fondo de barra vacio. Es el precio de poder moverlo; *Volver al extremo
+derecho* deja la barra prolija otra vez.
 
 
 ## Como funciona
@@ -54,8 +117,8 @@ Tres piezas bien separadas:
 | Archivo | Responsabilidad |
 |---|---|
 | `widget/media.py` | Lee el SMTC en un hilo propio con su propio event loop asyncio. Publica una foto inmutable (`MediaState`) y despacha los comandos. |
-| `widget/draw.py` | Dibuja el widget con Pillow en un lienzo ampliado x3 y lo reduce con LANCZOS: asi los bordes redondeados, los iconos vectoriales y el texto salen suaves sin depender de GDI+ ni de un framework de UI. |
-| `widget/app.py` + `taskbarwin.py` | Ventana Win32, doble buffer, entrada de mouse y el anclaje en la barra. |
+| `widget/draw.py` | Dibuja el widget con Pillow en un lienzo ampliado x3 y lo reduce con LANCZOS: asi los bordes redondeados, los iconos vectoriales y el texto salen suaves sin depender de GDI+ ni de un framework de UI. Con el fondo transparente la reduccion se hace en espacio premultiplicado, para que no quede un halo oscuro en los bordes. |
+| `widget/app.py` + `taskbarwin.py` | Ventana Win32, superficie de doble buffer (DIB + `BitBlt`, o en capas con `UpdateLayeredWindow` cuando el fondo es transparente), entrada de mouse, arrastre, anclaje y posicion en la barra. |
 
 ### La incrustacion en la barra
 
@@ -132,11 +195,18 @@ falla posible de esta tecnica:
 - `python tools\stop.py --force` mata el proceso y repara la barra si quedo
   inconsistente.
 
-16 de 16 pruebas de anclaje y recuperacion pasan (`python tools\selftest.py` con el
-widget en marcha), incluidas la reconstruccion forzada y la recuperacion de
-espacio. Y 7 de 7 de interaccion real (`python tools\clicktest.py`): el hover
-ilumina los tres botones, un clic de verdad cambia el estado de reproduccion, el
-segundo clic lo restaura, y un clic en la caratula no dispara nada.
+26 de 26 pruebas pasan (`python tools\selftest.py` con el widget en marcha):
+anclaje, reconstruccion forzada, recuperacion de espacio, pixeles realmente
+pintados, transparencia del fondo medida contra la barra, recorrido completo del
+movimiento (que nunca quede tapado) y 30 muestras de vigilancia del pintado
+(30/30 cuadros correctos). Y 7 de 7 de interaccion real (`python tools\clicktest.py`):
+el hover ilumina los tres botones, un clic de verdad cambia el estado de
+reproduccion, el segundo clic lo restaura, y un clic en la caratula no dispara
+nada.
+
+En `clicktest.py`, si una lista de reproduccion cambia de tema justo mientras se
+mide, el comando se pierde y la prueba lo informa como `SALTA` (interferencia) en
+vez de inventar un fallo que no existe.
 
 `clicktest.py` mueve el cursor de verdad, asi que **si estas usando el mouse
 mientras corre tus movimientos compiten con los que inyecta**. La prueba lo
@@ -156,6 +226,12 @@ encogimiento.
 |---|---|---|
 | `width` | 260 | Ancho en px logicos (se escala solo con el DPI) |
 | `min_tasklist_width` | 420 | Minimo de lista de tareas que se respeta al reservar espacio |
+| `min_tasklist_free` | 140 | Piso de la lista de tareas cuando el widget se mueve libre (el limite real lo descubre el propio widget) |
+| `position_frac` | `null` | `null` = pegado al extremo derecho. `0..1` = posicion libre dentro del tramo util |
+| `drag_to_move` | true | Permite moverlo arrastrando con el boton izquierdo |
+| `chip_alpha` | 232 | Transparencia del fondo: 232 solido, 170 translucido, 100 muy transparente, 0 sin fondo |
+| `bg_mode` | `"layered"` | `"layered"` = alpha real con `UpdateLayeredWindow`; `"opaque"` = mezcla contra el color muestreado de la barra |
+| `auto_contrast` | true | Elige texto e iconos claros u oscuros segun el color de la barra |
 | `poll_interval_ms` | 500 | Cada cuanto se consulta el SMTC |
 | `timer_playing_ms` / `timer_idle_ms` | 100 / 500 | Cada cuanto se revisa si hay que redibujar |
 | `marquee_speed` / `marquee_gap` | 32 / 40 | Velocidad y separacion del bucle del titulo |
@@ -163,9 +239,10 @@ encogimiento.
 | `show_art` / `show_controls` / `show_progress` | true | Que elementos se dibujan |
 | `corner_radius` / `chip_alpha` | 7 / 232 | Forma y transparencia del chip |
 | `theme` | ver archivo | Colores del chip, borde, textos, acento, pista e iconos |
+| `right_click_menu` / `log_file` | true / `widget.log` | Menu contextual y archivo de log |
 
-Si te gusta mas ancho o mas angosto: clic derecho sobre el widget > *Mas ancho* /
-*Mas angosto*.
+Si te gusta mas ancho o mas angosto: clic derecho sobre el widget > *Más ancho* /
+*Más angosto*. Y el fondo, en el submenu *Fondo*.
 
 
 ## Herramientas de desarrollo
@@ -211,6 +288,12 @@ comprobar desde afuera que un clic realmente cambio de tema.
 - Se reserva el ancho de `config.json` de la lista de tareas. Con muchisimas
   ventanas abiertas la lista queda mas corta; `min_tasklist_width` limita cuanto
   puede ceder, y `Ctrl+Alt+M` lo oculta cuando necesites el espacio.
+- El recorrido del movimiento depende de cuantas ventanas tengas abiertas: cuanto
+  mas angosta necesite ser la lista de tareas, mas a la derecha empieza el tramo
+  donde el widget puede vivir. Con pocas ventanas el recorrido es mas largo.
+- Si el widget queda en el medio, el tramo que queda entre el y el bloque de la
+  bandeja es fondo de barra vacio (no hay forma de partirlo: la lista de tareas es
+  una sola ventana del sistema).
 - La caratula la entrega el reproductor ya reducida (YouTube via Edge da 150x150,
   Spotify da 300x300), asi que en pantallas con escalado alto puede verse algo
   blanda: se muestran a 32 px logicos, no hace falta mas.

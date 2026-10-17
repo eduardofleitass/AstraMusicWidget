@@ -20,6 +20,16 @@ DEFAULTS = {
     "show_art": True,
     "corner_radius": 7,
     "chip_alpha": 232,
+    # "layered" = transparencia real (alpha por pixel sobre lo que haya detras);
+    # "opaque"  = el metodo clasico, mezclando contra el color muestreado de la barra.
+    "bg_mode": "layered",
+    # None = pegado al extremo derecho (junto al bloque de la bandeja).
+    # 0..1 = posicion libre dentro de la zona util de la barra (0 = bien a la
+    # izquierda, 1 = extremo derecho). Lo fija el menu o el arrastre.
+    "position_frac": None,
+    "min_tasklist_free": 140,
+    "drag_to_move": True,
+    "auto_contrast": True,
     "theme": {
         "chip": [21, 23, 30],
         "border": [60, 64, 80],

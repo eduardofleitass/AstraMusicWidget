@@ -217,8 +217,16 @@ def main() -> int:
     else:
         time.sleep(1.6)
         mid = sample(poller)
-        check("el clic cambia el estado de reproduccion", mid.playing != before.playing,
-              f"{before.playing} -> {mid.playing}")
+        if mid.title != before.title:
+            # La lista de reproduccion puede cambiar de tema justo mientras se mide:
+            # en ese caso el comando se pierde y la prueba fallaria por algo que no
+            # tiene que ver con el widget. Se informa como interferencia.
+            check("el clic cambia el estado de reproduccion", False,
+                  f"cambio de tema durante la medicion ({before.title!r} -> {mid.title!r})",
+                  skipped=True)
+        else:
+            check("el clic cambia el estado de reproduccion", mid.playing != before.playing,
+                  f"{before.playing} -> {mid.playing}")
         if not click(*toggle):
             check("el segundo clic restaura el estado original", False,
                   "cursor inalcanzable por interferencia", skipped=True)

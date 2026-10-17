@@ -1,5 +1,5 @@
 {
-  "width": 260,
+  "width": 280,
   "min_tasklist_width": 420,
   "poll_interval_ms": 500,
   "timer_playing_ms": 100,
@@ -12,16 +12,53 @@
   "show_controls": true,
   "show_art": true,
   "corner_radius": 7,
-  "chip_alpha": 232,
+  "chip_alpha": 0,
+  "bg_mode": "layered",
+  "position_frac": null,
+  "min_tasklist_free": 140,
+  "drag_to_move": true,
+  "auto_contrast": true,
   "theme": {
-    "chip": [21, 23, 30],
-    "border": [60, 64, 80],
-    "title": [238, 240, 248],
-    "artist": [144, 151, 173],
-    "accent": [96, 205, 145],
-    "track": [74, 80, 98],
-    "icon": [222, 226, 238],
-    "icon_dim": [104, 110, 128]
+    "chip": [
+      21,
+      23,
+      30
+    ],
+    "border": [
+      60,
+      64,
+      80
+    ],
+    "title": [
+      238,
+      240,
+      248
+    ],
+    "artist": [
+      144,
+      151,
+      173
+    ],
+    "accent": [
+      96,
+      205,
+      145
+    ],
+    "track": [
+      74,
+      80,
+      98
+    ],
+    "icon": [
+      222,
+      226,
+      238
+    ],
+    "icon_dim": [
+      104,
+      110,
+      128
+    ]
   },
   "right_click_menu": true,
   "log_file": "widget.log"
