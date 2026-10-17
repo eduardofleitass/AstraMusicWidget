@@ -673,10 +673,24 @@ Como se hacen, y por que no cuestan CPU:
 ## Windows 11: modo flotante
 
 Windows 10 deja incrustar una ventana en la barra (hijo de `Shell_TrayWnd`), y de eso
-vive todo el anclaje. **Windows 11 no**: esa barra se rehizo, ya no tiene `ReBarWindow32`
-que encoja para hacer sitio ni ventanas hijas. El programa lo **comprueba** al arrancar
-(no por version: busca un contenedor y un ancla de verdad) y si la barra no sirve pasa
-solo al **modo flotante**:
+vive todo el anclaje. **Windows 11 no**: ahi la barra la dibuja XAML, y una ventana hija
+no se pinta nunca — existe, contesta que esta visible, esta bien ubicada y no aparece.
+El programa lo **comprueba** al arrancar mirando la estructura y no la version de Windows:
+
+1. tiene que haber contenedor (`ReBarWindow32`) y ancla (el reloj o la bandeja) de verdad, y
+2. la barra no puede ser la nueva, y esto se detecta por cualquiera de dos senales: el
+   **puente de composicion XAML** (`Windows.UI.Composition.DesktopWindowContentBridge`,
+   titulo `DesktopWindowXamlSource`) tapando el area de la barra, o la lista de tareas
+   legacy (`MSTaskListWClass`) apagada dentro del `ReBarWindow32`.
+
+Si la barra no sirve, pasa solo al **modo flotante**:
+
+> Por que hacen falta las dos senales: en Windows 11 24H2/25H2 (build 26300, medido) el
+> `ReBarWindow32` y el reloj **si existen y estan visibles**, asi que preguntar solo por
+> ellos daba "se puede incrustar": el widget se creaba como ventana hija de la barra,
+> Windows lo reportaba visible y quedaba enterrado debajo del puente XAML, sin dibujarse
+> jamas. Se veia igual que un programa que no arranca. `python tools\diagnostico_barra.py`
+> vuelca ese arbol (con el z-order) para comprobarlo en la maquina de cualquiera.
 
 - El widget se dibuja como **ventana propia**, pegada a la franja de abajo del monitor
   (encima de la barra, en el hueco libre entre los iconos y el reloj), con el mismo
@@ -850,8 +864,9 @@ python main.py --shot w.png --waves       # como se ven las ondas de sonido
 python tools\watch.py            # estado en vivo, muestreado cada 0,5 s
 python tools\preview.py hoja.png # hoja con todas las variantes visuales
 python tools\selftest.py         # suite de verificacion (widget en marcha)
-python toolslotante_test.py    # el modo de Windows 11 (ventana propia, sin barra)
-python toolsuild_exe.py        # empaqueta el .exe (y propaga la version)
+python tools\flotante_test.py    # el modo de Windows 11 (ventana propia, sin barra)
+python tools\diagnostico_barra.py   # por que se incrusta o pasa a flotante (arbol y z-order)
+python tools\build_exe.py        # empaqueta el .exe (y propaga la version)
 python tools\make_readme_shots.py   # regenera assets/captura.png (con datos de ejemplo)
 ISCC.exe instalador\Astra-Music-widget.iss   # arma el instalador (Inno Setup 6)
 python tools\clicktest.py        # prueba de clic real con el mouse (restaura el estado)

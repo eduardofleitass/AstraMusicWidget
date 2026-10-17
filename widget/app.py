@@ -260,9 +260,10 @@ class _Layered:
 
 class WidgetApp:
     def __init__(self, cfg: dict, embed: bool = True, log_path: str | None = None,
-                 flotante: bool = False):
+                 flotante: bool = False, motivo: str | None = None):
         self.cfg = cfg
         self.embed = embed
+        self.motivo = motivo
         if flotante:
             # Sin barra que lo aloje (Windows 11): el widget vive como ventana propia
             # pegada al borde de abajo. Mismo contrato, otro respaldo.
@@ -454,6 +455,11 @@ class WidgetApp:
         self._show_when_ready()
         self._set_timer(self.cfg.get("timer_idle_ms", 500))
         user32.SetTimer(self.hwnd_ctl, TIMER_LAYOUT, int(self.cfg.get("layout_check_ms", 1000)), None)
+        if self.motivo:
+            # El motivo de haber pasado a flotante, en el log y no solo en stderr: el
+            # .exe no tiene consola y este es el unico rastro que queda en la maquina
+            # de otro (junto con el "modo flotante: ventana propia en ..." de arriba).
+            self.log("modo flotante: %s", self.motivo)
         self.log("widget iniciado (embed=%s)", self.embed)
 
         try:
@@ -2716,5 +2722,6 @@ class WidgetApp:
 
 
 def run(cfg: dict, embed: bool = True, log_path: str | None = None,
-        flotante: bool = False) -> int:
-    return WidgetApp(cfg, embed=embed, log_path=log_path, flotante=flotante).run()
+        flotante: bool = False, motivo: str | None = None) -> int:
+    return WidgetApp(cfg, embed=embed, log_path=log_path, flotante=flotante,
+                     motivo=motivo).run()

@@ -198,8 +198,13 @@ def main() -> int:
         motivo = taskbarwin.motivo_no_incrustable()    # None si la barra sirve para incrustar
     flotante = args.flotante or (not args.no_embed and motivo is not None)
     if flotante and not args.no_embed:
+        # stderr sirve cuando se corre desde una consola. El .exe no tiene, asi que el
+        # motivo va tambien al log (lo escribe la app: es la unica forma de que quede
+        # registrado POR QUE se eligio el modo, que es lo que se pregunta cuando algo
+        # no anda en la maquina de otro).
         print("modo flotante: %s" % motivo, file=sys.stderr)
-    return run(cfg, embed=not args.no_embed, log_path=log_path, flotante=flotante)
+    return run(cfg, embed=not args.no_embed, log_path=log_path, flotante=flotante,
+               motivo=motivo)
 
 
 def _error_visible(exc: BaseException) -> None:
