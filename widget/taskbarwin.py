@@ -37,6 +37,13 @@ ANCHOR_CLASSES = ("DynamicContent2", "ClockButton", "TrayNotifyWnd")
 CONTAINER_CLASSES = ("ReBarWindow32", "WorkerW")
 TRAY_CLASS = "Shell_TrayWnd"
 SECONDARY_CLASS = "Shell_SecondaryTrayWnd"
+# La barra nueva (Windows 11) sigue teniendo Shell_TrayWnd, ReBarWindow32 y el reloj,
+# pero su contenido lo dibuja XAML: el area entera de la barra queda tapada por el
+# puente de composicion y la lista de tareas legacy (MSTaskListWClass) se apaga.
+# Son pistas ESTRUCTURALES, no la version de Windows: en la 24H2/25H2 (build 26300
+# probado) el ReBar y el ancla existen y estan "visibles", asi que preguntar solo por
+# ellos daba "se puede incrustar" y el widget terminaba invisible, debajo del puente.
+XAML_BRIDGE_CLASS = "Windows.UI.Composition.DesktopWindowContentBridge"
 
 user32 = ctypes.windll.user32
 
@@ -116,6 +123,29 @@ def barra_en_posicion_util(barra: dict | None) -> bool:
     return r[3] >= m[3] - 2         # pegada al borde de abajo del monitor
 
 
+def barra_xaml(tray: int) -> bool:
+    """True si esa barra la dibuja XAML (Windows 11) y no admite ventanas hijas.
+
+    Se mira lo que hay, no la version: si el puente de composicion tapa el area de la
+    barra, o si la lista de tareas legacy quedo apagada (la barra nueva dibuja los
+    botones por su cuenta), no hay donde alojar el widget por mas que ReBarWindow32
+    siga existiendo.
+    """
+    try:
+        h = _child(tray, XAML_BRIDGE_CLASS)
+        if h and win32gui.IsWindowVisible(h):
+            return True
+        rebar = _child(tray, "ReBarWindow32")
+        if rebar:
+            caja = _child(rebar, "MSTaskSwWClass") or rebar
+            lista = _child(caja, "MSTaskListWClass")
+            if lista and not win32gui.IsWindowVisible(lista):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def motivo_no_incrustable() -> str | None:
     """Por que no se puede incrustar el widget (None = si se puede).
 
@@ -126,6 +156,9 @@ def motivo_no_incrustable() -> str | None:
         h = TaskbarHost()
         if not (h.refresh() and h.container and h.anchor):
             return "esta version de Windows no admite ventanas en la barra (Windows 11)"
+        if barra_xaml(h.tray):
+            return ("la barra de tareas es la nueva de Windows 11 (dibujada por XAML): "
+                    "no se puede alojar una ventana")
         if not barra_en_posicion_util(h.barra):
             return "la barra de tareas no esta abajo"
         return None
