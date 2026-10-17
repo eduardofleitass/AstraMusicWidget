@@ -29,6 +29,7 @@ Probado en Windows 10 22H2 (19045), escala 100% y 1920x1080.
 | Atrasarlo o adelantarlo | clic en la barra de progreso, o la rueda del mouse (±10 s; con `Ctrl` ±1 s, con `Shift` ±60 s) |
 | Ondas de sonido (animacion) | clic derecho > *Ondas de sonido* |
 | Color de la barra o de las ondas | clic derecho > *Color de la barra* / *Color de las ondas* |
+| Ver la cancion en grande | clic en la caratula (o clic derecho > *Abrir el panel*) |
 | Volumen de lo que suena | pasá el mouse por el altavoz y arrastrá la barra que aparece; rueda del mouse encima del altavoz (±5%); clic seco = silencio |
 | Ponerlo en la barra de otro monitor | arrastralo al otro monitor, o clic derecho > *Monitor* |
 | Fondo transparente | clic derecho > *Fondo* |
@@ -324,6 +325,7 @@ Tres piezas bien separadas:
 | Archivo | Responsabilidad |
 |---|---|
 | `widget/media.py` | Lee el SMTC en un hilo propio con su propio event loop asyncio. Publica una foto inmutable (`MediaState`) y despacha los comandos. |
+| `widget/panel.py` | El panel del mini reproductor: geometria (zonas clicables), dibujo con Pillow y que hay bajo el cursor. Separado del widget para poder verificarlo sin ventana. |
 | `widget/draw.py` | Dibuja el widget con Pillow en un lienzo ampliado x3 y lo reduce con LANCZOS: asi los bordes redondeados, los iconos vectoriales y el texto salen suaves sin depender de GDI+ ni de un framework de UI. Con el fondo transparente la reduccion se hace en espacio premultiplicado, para que no quede un halo oscuro en los bordes. Las ondas de sonido se dibujan aparte, en su propia tira, para poder animarlas sin repintar el chip. |
 | `widget/volume.py` | Volumen de la app que suena, por la API de audio de Windows (Core Audio) con `ctypes`: enumera las sesiones de audio del dispositivo por defecto, las empareja por ejecutable y lee/escribe volumen y silencio. |
 | `widget/app.py` + `taskbarwin.py` | Ventana Win32, superficie de doble buffer (DIB + `BitBlt`, o en capas con `UpdateLayeredWindow` cuando el fondo es transparente), entrada de mouse, arrastre, anclaje y posicion en la barra. |
@@ -415,8 +417,9 @@ falla posible de esta tecnica:
 - `python tools\stop.py --force` mata el proceso y repara la barra si quedo
   inconsistente.
 
-75 de 76 pruebas pasan (`python tools\selftest.py` con el widget en marcha; la que
-se salta es la de restaurar el color del tema, que no aplica cuando ya elegiste uno):
+87 de 89 pruebas pasan (`python tools\selftest.py` con el widget en marcha; las que
+se saltan son las que dependen de que haya musica sonando o de que el color sea el del
+tema):
 anclaje, reconstruccion forzada, recuperacion de espacio, pixeles realmente
 pintados, transparencia del fondo medida contra la barra, recorrido completo del
 movimiento (que nunca quede tapado), la barra de progreso (que su zona clicable
@@ -444,6 +447,16 @@ Ademas comprueba los fundidos: que el cuadro del medio del cambio de caratula es
 efectivamente mezclado (medido: 69,1 del lado de la tapa vieja y 70,5 del de la nueva,
 sobre un cambio total de 139,6) y que el mostrar/ocultar pase por un estado intermedio
 (medido: 1920 pixeles dibujados visibles -> 1590 a mitad del fundido -> 0 oculto).
+Del panel comprueba las dos mitades: el dibujo y la geometria sin ventana (que cada
+parte pinte donde tiene que pintar, que reaccione al hover, al arrastre y al silencio,
+que las zonas entren y no se pisen, que sepa que hay bajo el cursor) y en vivo que se
+abra, sea un globo (`WS_EX_TOOLWINDOW`), quede encima del widget y dentro del monitor,
+este pintado y se cierre.
+En `clicktest.py` se prueba con clic real: un clic seco en la caratula lo abre, el
+play/pausa cambia la reproduccion, un clic al 70% de su barra salta ahi (medido: pedido
+129 s, informado 128 s), un clic en su barra de volumen lo deja en el 30% (medido 29%) y
+la cruz lo cierra.
+
 Y 15 de 15 de atajos con **teclas reales** (`python tools\hotkeytest.py`): `Ctrl+Alt+P`
 cambia la reproduccion, `Ctrl+Alt+←/→` cambia de tema, `Ctrl+Alt+Shift+↑/↓` mueve
 exacto (+10,0 s y -10,0 s medidos con la musica en pausa, para que la interpolacion no
@@ -465,6 +478,41 @@ Ademas se probo a mano lo que mas duele: matar el proceso a la fuerza deja la
 barra encogida, y el arranque siguiente la sanea sola sin acumular el
 encogimiento.
 
+
+## Panel (mini reproductor)
+
+Un clic seco en la **caratula** abre un panel flotante con la cancion en grande:
+caratula de 92 px, titulo, artista, album (o el nombre de la app si no hay album),
+barra de progreso clickeable con los tiempos, los controles de transporte y el
+volumen de la app. Todo lo que se puede hacer ahi es lo mismo que en el widget, pero
+con lugar para leer y apuntar bien.
+
+- **Abre** con un clic seco en la caratula del widget o desde el menu (*Abrir el
+  panel*). Un arrastre sobre la caratula sigue moviendo el widget: el panel se abre
+  solo si no hubo movimiento.
+- **Cierra** con la cruz, con `Escape`, con un clic afuera (pierde el foco) o con otro
+  clic en la caratula.
+- Aparece **encima del widget** (alineado a su borde derecho) y siempre dentro del
+  monitor; si no entra arriba, va debajo. Se puede **arrastrar desde su fondo** para
+  moverlo donde quieras.
+- Se dibuja solo cuando algo cambia (la firma incluye la posicion redondeada, el hover,
+  el arrastre y el estado del volumen) y el widget le presta su ciclo: mientras el panel
+  esta abierto el temporizador va a 100 ms, como el de la barra de progreso.
+
+Detalles tecnicos que valen la pena:
+
+- Es una ventana **propia de nivel superior** con `WS_EX_TOOLWINDOW`: no aparece en la
+  barra de tareas ni en Alt+Tab, es un globo del widget y no una aplicacion aparte.
+  Con `WS_EX_LAYERED` tiene fondo redondeado y translucido (250/255) y se presenta con
+  `UpdateLayeredWindow`, igual que el widget.
+- El cierre por "clic afuera" es `WM_ACTIVATE` con `WA_INACTIVE`, el mismo mecanismo que
+  usan los globos del sistema.
+- Empezar un arrastre del widget (o mudarlo de barra) **cierra el panel primero**:
+  medido, si el panel se cerraba en el medio de un arrastre, la transicion de foco se
+  comia el `mousedown` y el arrastre no arrancaba.
+- Las zonas clicables se calculan en `widget/panel.py` y hay una prueba que comprueba
+  que entren en el panel y **no se pisen**: la de "siguiente" pisaba la del altavoz por
+  3 px y dos zonas que se pisan se roban clics.
 
 ## Fundidos
 

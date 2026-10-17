@@ -29,6 +29,7 @@ import win32con  # noqa: E402
 import win32gui  # noqa: E402
 
 from widget import config as cfgmod, draw  # noqa: E402
+from widget import panel as panel_mod  # noqa: E402
 from widget.media import MediaPoller  # noqa: E402
 from widget.taskbarwin import list_bars  # noqa: E402
 
@@ -143,6 +144,19 @@ def sobre_widget(x, y) -> bool:
 WIN = {}
 
 
+def click_en(hwnd, x, y) -> bool:
+    """Clic real sobre OTRA ventana (el panel), confirmando que esa es la de abajo."""
+    if not place_cursor(x, y):
+        return False
+    if win32gui.WindowFromPoint((x, y)) != hwnd:
+        return False
+    user32.mouse_event(0x0002, 0, 0, 0, 0)  # LEFTDOWN
+    time.sleep(0.06)
+    user32.mouse_event(0x0004, 0, 0, 0, 0)  # LEFTUP
+    time.sleep(0.4)
+    return True
+
+
 def click(x, y) -> bool:
     if not place_cursor(x, y):
         return False
@@ -184,8 +198,11 @@ def filas_barra(img, wrect):
             if img.getpixel((x, y)) > fondo + 25:
                 n += 1
         por_columna.append(n)
-    por_columna.sort()
-    return por_columna[len(por_columna) // 2]
+    # Se SUMAN las columnas (no mediana): lo que cambia con el volumen es el grosor,
+    # o sea cuantos pixeles se pintan en la franja. Medido: la barra de 2,5 px da 4
+    # filas por columna y la de volumen 5 (los bordes suavizados comprimen la
+    # diferencia), asi que exigir "+2 filas" es fragil; la suma pasa de ~18 a ~32.
+    return sum(por_columna)
 
 
 def mean_lum(img, box):
@@ -353,12 +370,14 @@ def main() -> int:
             check("el segundo clic restaura el estado original",
                   after.playing == before.playing, f"{mid.playing} -> {after.playing}")
 
-    # --- 3. clic sobre el area de la caratula: no debe hacer nada ------------
-    print("\n-- clic sobre el area de la caratula (no debe disparar nada) --")
+    # --- 3. clic sobre una zona neutra: no debe hacer nada -------------------
+    print("\n-- clic en una zona neutra (el titulo: no debe disparar nada) --")
     ref = sample(poller)
     w, wrect = rect_actual()
     k = (wrect[3] - wrect[1]) / 40.0
-    art_x = wrect[0] + int(20 * k)
+    # Sobre el TITULO y no sobre la caratula: un clic seco en la caratula abre el
+    # panel (a proposito), que es otra prueba. Aca se busca una zona que no haga nada.
+    art_x = wrect[0] + int(120 * k)
     if click(art_x, (wrect[1] + wrect[3]) // 2):
         time.sleep(1.2)
         st = sample(poller)
@@ -590,15 +609,29 @@ def main() -> int:
 
         # (a) el cursor sobre el altavoz convierte la fila del progreso en volumen
         park_away(wrect)
-        antes = filas_barra(grab(wrect), wrect)
+        img_antes = grab(wrect)
         if not place_cursor(*altavoz) or not sobre_widget(*altavoz):
             check("con el cursor en el altavoz la fila hace de barra de volumen", False,
                   "el cursor no quedo sobre el widget (interferencia)", skipped=True)
         else:
             time.sleep(0.6)
-            despues = filas_barra(grab(wrect), wrect)
+            img_despues = grab(wrect)
+            # Comparar los dos cuadros en la franja de la barra: al volverse barra de
+            # volumen se dibuja 1,8 veces mas gruesa y cambian las filas de arriba y de
+            # abajo del relleno. Contar por luminancia no sirve: 2,5 px y 4,5 px dan 4 y
+            # 5 filas "pintadas" (medido), y la diferencia parece chica.
+            kk = (wrect[3] - wrect[1]) / float(draw.REF_H)
+            y0 = max(0, int((draw.PROG_Y - 5) * kk))
+            y1 = min(img_antes.height, int((draw.PROG_Y + 6) * kk))
+            banda_a = img_antes.crop((0, y0, img_antes.width, y1))
+            banda_d = img_despues.crop((0, y0, img_despues.width, y1))
+            cambiados = sum(1 for p, q in zip(banda_a.get_flattened_data(),
+                                              banda_d.get_flattened_data())
+                            if abs(p - q) > 12)
             check("con el cursor en el altavoz la fila hace de barra de volumen",
-                  despues >= antes + 2, f"grosor de la barra {antes} -> {despues} filas")
+                  cambiados > 150,
+                  f"{cambiados} pixeles de la franja cambiaron "
+                  f"(la barra de volumen es 1,8 veces mas gruesa)")
 
             # (b) la rueda sobre el altavoz mueve el volumen, no el tiempo
             v0 = volume_mod.estado(app)
@@ -673,6 +706,112 @@ def main() -> int:
             pass
         print(f"   volumen restaurado a {inicial[0] * 100:.0f}%"
               + (" silenciado" if inicial[1] else ""))
+
+    # --- 8. panel (mini reproductor) ------------------------------------------
+    print("\n-- panel (clic real) --")
+    w, wrect = rect_actual()
+    k = (wrect[3] - wrect[1]) / 40.0
+    sonando_antes = sample(poller).playing
+    tapa = (int(wrect[0] + 20 * k), int(wrect[1] + 20 * k))   # sobre la caratula
+    if not (place_cursor(*tapa) and sobre_widget(*tapa)):
+        check("un clic seco en la caratula abre el panel", False,
+              "el cursor no quedo sobre el widget (interferencia)", skipped=True)
+    else:
+        click(*tapa)
+        time.sleep(1.1)
+        hp = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+        abierto = bool(hp and win32gui.IsWindowVisible(hp))
+        check("un clic seco en la caratula abre el panel", abierto,
+              f"panel {hex(hp or 0)}, rect {win32gui.GetWindowRect(hp) if hp else '-'}")
+        if abierto:
+            pr = win32gui.GetWindowRect(hp)
+            zp = panel_mod.rects(k)
+
+            # (a) play/pausa del panel
+            c_play = zp["controles"][1]
+            pto_play = (pr[0] + (c_play[0] + c_play[2]) // 2,
+                        pr[1] + (c_play[1] + c_play[3]) // 2)
+            antes_p = sample(poller).playing
+            if click_en(hp, *pto_play):
+                ahora_p = antes_p
+                for _ in range(12):
+                    time.sleep(0.35)
+                    ahora_p = sample(poller).playing
+                    if ahora_p != antes_p:
+                        break
+                check("el play/pausa del panel cambia la reproduccion",
+                      ahora_p != antes_p, f"sonando {antes_p} -> {ahora_p}")
+                click_en(hp, *pto_play)      # devolver el estado
+                time.sleep(0.6)
+            else:
+                check("el play/pausa del panel cambia la reproduccion", False,
+                      "el cursor no quedo sobre el panel (interferencia)", skipped=True)
+
+            # (b) salto con la barra del panel
+            zb = zp["barra"]
+            xb = int(pr[0] + zb[0] + (zb[2] - zb[0]) * 0.7)
+            yb = int(pr[1] + (zb[1] + zb[3]) // 2)
+            st_antes = sample(poller)
+            if st_antes.can_seek and st_antes.duration > 20 and click_en(hp, xb, yb):
+                time.sleep(1.3)
+                st_desp = sample(poller)
+                objetivo = 0.7 * st_desp.duration
+                tol = max(8.0, 0.06 * st_desp.duration)
+                check("un clic en la barra del panel salta a esa posicion",
+                      abs(st_desp.live_position() - objetivo) <= tol,
+                      f"clic al 70% = {objetivo:.0f}s -> informado "
+                      f"{st_desp.live_position():.0f}s (tolerancia {tol:.0f}s)")
+            else:
+                check("un clic en la barra del panel salta a esa posicion", False,
+                      "este reproductor no admite saltos", skipped=True)
+
+            # (c) el volumen del panel
+            zv = zp["volumen"]
+            xv = int(pr[0] + zv[0] + (zv[2] - zv[0]) * 0.3)
+            yv = int(pr[1] + (zv[1] + zv[3]) // 2)
+            try:
+                app_p = sample(poller).app_id
+                v_antes = volume_mod.estado(app_p) if app_p else None
+            except Exception:
+                v_antes = None
+            if v_antes and click_en(hp, xv, yv):
+                time.sleep(0.6)
+                v_ahora = volume_mod.estado(app_p)
+                check("un clic en la barra de volumen del panel lo pone ahi",
+                      bool(v_ahora and abs(v_ahora[0] - 0.3) < 0.08),
+                      f"{v_antes[0] * 100:.0f}% -> {v_ahora[0] * 100:.0f}% "
+                      f"(se apunto a 30%)")
+                volume_mod.fijar(app_p, v_antes[0])
+            else:
+                check("un clic en la barra de volumen del panel lo pone ahi", False,
+                      "no hay sesion de audio", skipped=True)
+
+            # (d) cerrar con la cruz
+            zc = zp["cerrar"]
+            pto_x = (pr[0] + (zc[0] + zc[2]) // 2, pr[1] + (zc[1] + zc[3]) // 2)
+            if click_en(hp, *pto_x):
+                time.sleep(0.9)
+                check("la cruz del panel lo cierra",
+                      not win32gui.IsWindowVisible(hp),
+                      f"visible={win32gui.IsWindowVisible(hp)}")
+            else:
+                check("la cruz del panel lo cierra", False,
+                      "el cursor no quedo sobre el panel (interferencia)", skipped=True)
+
+            # por si quedo abierto (una prueba fallo antes de cerrarlo)
+            try:
+                if win32gui.IsWindowVisible(hp):
+                    win32gui.PostMessage(w, win32con.WM_APP + 10, 0, 0xFFFF)
+                    time.sleep(0.6)
+            except Exception:
+                pass
+    # devolver la reproduccion como estaba
+    try:
+        if sample(poller).playing != sonando_antes:
+            poller.toggle()
+            time.sleep(0.5)
+    except Exception:
+        pass
 
     # devolver el widget a su barra y a su lugar de siempre
     w_fin = WIN.get("widget")

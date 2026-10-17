@@ -26,6 +26,7 @@ from PIL import Image, ImageChops
 
 from . import config as cfgmod
 from . import draw
+from . import panel as panel_mod
 from . import volume as volume_mod
 from .media import MediaPoller, MediaState
 from .taskbarwin import TaskbarHost, list_bars, set_dpi_aware
@@ -37,6 +38,7 @@ NUDGE_PX = 20
 
 CTL_CLASS = "GorusTaskbarMusicCtl"
 WIDGET_CLASS = "GorusTaskbarMusicWnd"
+PANEL_CLASS = "GorusTaskbarMusicPanel"
 MUTEX_NAME = "Local\\GorusTaskbarMusicWidget"
 TIMER_TICK = 1
 TIMER_LAYOUT = 2
@@ -89,6 +91,7 @@ WM_APP_MONITOR = win32con.WM_APP + 6  # wParam = indice de barra (0 = principal)
 WM_APP_VOLUME = win32con.WM_APP + 7  # wParam = volumen x1000; lParam 1 silenciar / 2 sonar
 WM_APP_SHOW = win32con.WM_APP + 8    # pedirle a la instancia viva que se muestre
 WM_APP_HOTKEYS = win32con.WM_APP + 9  # wParam = 1/0: prender o apagar los atajos
+WM_APP_PANEL = win32con.WM_APP + 10  # wParam = 1/0: abrir o cerrar el panel
 
 # Colores que ofrece el menu para la barra de progreso y las ondas (None = el del
 # tema). El menu guarda el hex en config.json; a mano tambien vale [r, g, b].
@@ -274,6 +277,14 @@ class WidgetApp:
         self._vol_info = None   # dato de volumen cacheado: nivel, mudo, disponible
         self._vol_app = None    # app de la que se leyo ese dato
         self._hotkeys_ok = []   # atajos globales que quedaron registrados
+        self.hwnd_panel = 0     # ventana del panel (mini reproductor)
+        self.dib_panel = None   # su superficie
+        self.panel_visible = False
+        self.panel_hover = -1
+        self.panel_drag = None  # arrastre en curso dentro del panel
+        self.panel_scrub = None # segundos destino mientras se arrastra ahi
+        self._panel_sig = None
+        self._panel_wndproc_ref = None
         self._vis_alpha = 255   # alfa global del widget (fundido de mostrar/ocultar)
         self._vis_target = 255
         self._fade_prev = None  # cuadro anterior, para el fundido de caratula
@@ -314,10 +325,15 @@ class WidgetApp:
         def wnd_proc(hwnd, msg, wp, lp):
             return self._widget_wndproc(hwnd, msg, wp, lp)
 
+        def panel_proc(hwnd, msg, wp, lp):
+            return self._panel_wndproc(hwnd, msg, wp, lp)
+
         self._ctl_wndproc_ref = ctl_proc
         self._widget_wndproc_ref = wnd_proc
+        self._panel_wndproc_ref = panel_proc
 
-        for cls, proc in ((CTL_CLASS, ctl_proc), (WIDGET_CLASS, wnd_proc)):
+        for cls, proc in ((CTL_CLASS, ctl_proc), (WIDGET_CLASS, wnd_proc),
+                          (PANEL_CLASS, panel_proc)):
             wc = win32gui.WNDCLASS()
             wc.hInstance = hinst
             wc.lpszClassName = cls
@@ -392,6 +408,10 @@ class WidgetApp:
         return 0
 
     def _shutdown(self) -> None:
+        try:
+            self.toggle_panel(False)
+        except Exception:
+            pass
         self.log("cerrando")
         self.poller.stop()
         try:
@@ -651,6 +671,9 @@ class WidgetApp:
             self.log("widget oculto (Ctrl+Alt+M para volver)")
             if self._fundido_activo() and self.hwnd_widget:
                 self._vis_target = 0      # el tick lo oculta al terminar el fundido
+                # y se apura el temporizador YA: con el ritmo normal (hasta 500 ms sin
+                # musica) el widget se quedaba visible un rato y recien despues fundia
+                self._set_timer(30)
             else:
                 self._ocultar_ya()
         else:
@@ -661,6 +684,7 @@ class WidgetApp:
                 if self.dib:
                     self.dib.alpha = 0
                     self.dib.apply()
+                self._set_timer(30)
             self.log("widget visible")
 
     # ------------------------------------------------------------------ pintar
@@ -883,6 +907,9 @@ class WidgetApp:
                 # la animacion necesita mas cuadros que la barra de progreso
                 ms = min(ms, max(20, int(round(1000.0 / max(1, int(
                     self.cfg.get("wave_fps", 20)))))))
+            if self.panel_visible:
+                self._panel_tick()
+                ms = min(ms, 100)     # el panel muestra la posicion: mas seguido
             if fundiendo or self._fade_prev is not None:
                 # 30 ms (~33 cuadros por segundo) para que los fundidos se vean
                 # suaves: con el ritmo normal de la barra de progreso (100 ms) un
@@ -1133,6 +1160,8 @@ class WidgetApp:
         self._wall_x = None      # el limite medido era de la barra anterior
         self._base_img = None
         self._sig = None
+        if self.panel_visible:
+            self.toggle_panel(False)
         self.host.select(monitor)
         self._create_widget()
         self._apply_layout(force=True)
@@ -1296,6 +1325,9 @@ class WidgetApp:
             if msg == WM_APP_HOTKEYS:
                 self.set_hotkeys(bool(wp), save=bool(lp))
                 return 0
+            if msg == WM_APP_PANEL:
+                self.toggle_panel(None if lp == 0xFFFF else bool(wp))
+                return 0
             if msg == WM_APP_WAVES:
                 self.set_waves(bool(wp), save=bool(lp))
                 return 0
@@ -1380,6 +1412,8 @@ class WidgetApp:
 
     # ------------------------------------------------------------------ arrastre
     def _start_drag(self) -> None:
+        if self.panel_visible:
+            self.toggle_panel(False)
         try:
             cx, _ = win32gui.GetCursorPos()
             x0 = win32gui.GetWindowRect(self.hwnd_widget)[0]
@@ -1434,8 +1468,17 @@ class WidgetApp:
         if x is not None and d and d.get("moved"):
             self.set_position(self.host.frac_from_x(x, self.width_px, self._min_free()))
         else:
-            # clic seco sobre el cuerpo: no mover nada
+            # clic seco sobre el cuerpo: si fue en la caratula, abre el panel (es el
+            # gesto que la gente ya espera para ver la cancion en grande)
             self._apply_layout(force=True)
+            try:
+                pt = win32gui.GetCursorPos()
+                cx, cy = win32gui.ScreenToClient(self.hwnd_widget, pt)
+                if (0 <= cx < draw.TEXT_X * self.k
+                        and 0 <= cy < self.height_px):
+                    self.toggle_panel(True)
+            except Exception:
+                pass
 
     # ---------------------------------------------------- arrastre de la barra
     def _start_scrub(self, x: int) -> None:
@@ -1693,6 +1736,287 @@ class WidgetApp:
         self._repaint_if_needed(force=True)
         self.log("altavoz: %s", "visible" if on else "oculto")
 
+    # ------------------------------------------------------------------- panel
+    def _panel_k(self) -> float:
+        """Escala del panel: la misma que el widget (alto de la barra / 40)."""
+        return max(0.6, self.k or 1.0)
+
+    def _create_panel(self) -> bool:
+        if self.hwnd_panel and win32gui.IsWindow(self.hwnd_panel):
+            return True
+        k = self._panel_k()
+        w, h = panel_mod.size(k)
+        hinst = win32api.GetModuleHandle(None)
+        # Ventana propia de nivel superior, con WS_EX_TOOLWINDOW para que no aparezca
+        # en la barra de tareas ni en el alt-tab: es un globo del widget, no una app.
+        self.hwnd_panel = win32gui.CreateWindowEx(
+            0x00080000 | 0x00000080,          # WS_EX_LAYERED | WS_EX_TOOLWINDOW
+            PANEL_CLASS, "gorus-panel",
+            win32con.WS_POPUP | win32con.WS_CLIPSIBLINGS,
+            0, 0, w, h, 0, None, hinst, None)
+        if not self.hwnd_panel:
+            self.log("no se pudo crear el panel")
+            return False
+        self.dib_panel = _Layered(self.hwnd_panel, w, h)
+        self._panel_sig = None
+        return True
+
+    def _panel_pos(self) -> tuple[int, int, int, int]:
+        """Donde va el panel: encima del widget si hay lugar, si no debajo."""
+        k = self._panel_k()
+        w, h = panel_mod.size(k)
+        wr = win32gui.GetWindowRect(self.hwnd_widget) if self.hwnd_widget else None
+        if not wr:
+            return (0, 0, w, h)
+        mon = win32api.MonitorFromWindow(self.hwnd_widget, 2)   # NEAREST
+        mi = win32api.GetMonitorInfo(mon)["Monitor"]
+        hueco = int(round(10 * k))
+        x = wr[2] - w                      # alineado al borde derecho del widget
+        x = max(mi[0] + 6, min(x, mi[2] - w - 6))
+        y = wr[1] - h - hueco
+        if y < mi[1] + 6:                  # no entra arriba: va debajo
+            y = min(wr[3] + hueco, mi[3] - h - 6)
+        y = max(mi[1] + 6, y)
+        return (x, y, w, h)
+
+    def toggle_panel(self, on: bool | None = None) -> None:
+        """Abre o cierra el panel (clic en la caratula, menu o las pruebas)."""
+        if on is None:
+            on = not self.panel_visible
+        if not on:
+            if self.hwnd_panel and win32gui.IsWindow(self.hwnd_panel):
+                win32gui.ShowWindow(self.hwnd_panel, win32con.SW_HIDE)
+            self.panel_visible = False
+            self.panel_hover = -1
+            self.panel_drag = None
+            self.panel_scrub = None
+            self.log("panel cerrado")
+            return
+        if not self._create_panel():
+            return
+        x, y, w, h = self._panel_pos()
+        try:
+            win32gui.SetWindowPos(self.hwnd_panel, 0, x, y, w, h,
+                                  win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
+        except Exception:
+            pass
+        self.panel_visible = True
+        self._panel_sig = None
+        self._panel_render(force=True)
+        try:
+            win32gui.ShowWindow(self.hwnd_panel, win32con.SW_SHOW)
+            # Se activa: asi Escape y el clic afuera (WM_ACTIVATE) funcionan
+            win32gui.SetForegroundWindow(self.hwnd_panel)
+        except Exception:
+            pass
+        self.log("panel abierto en %s", (x, y, w, h))
+
+    def _panel_render(self, force: bool = False) -> None:
+        if not self.panel_visible or not self.hwnd_panel or not self.dib_panel:
+            return
+        k = self._panel_k()
+        vol = self._vol_para_render()
+        sig = (self.state.art_key, self.state.title, self.state.display_artist,
+               self.state.album, self.state.app_id, self.state.playing,
+               int(self.state.live_position() * 2) if self.state.playing else 0,
+               self.panel_hover, self.panel_scrub is not None
+               and int(self.panel_scrub), vol, self.state.has_session,
+               self.state.can_toggle, self.state.can_prev, self.state.can_next,
+               self.state.error)
+        if not force and sig == self._panel_sig:
+            return
+        self._panel_sig = sig
+        S = k * max(1, int(self.cfg.get("supersample", 3)))
+        art = None
+        if self.cfg.get("show_art", True):
+            art = draw.get_art(self.state.art, self.state.art_key,
+                               int(round(panel_mod.TAPA * S)),
+                               int(round(10 * S)))
+        img = panel_mod.render(self.state, self.cfg, art=art, volume=vol,
+                               hover=self.panel_hover, k=k, scrub=self.panel_scrub)
+        self.dib_panel.upload(draw.to_premult_bgra(img))
+
+    def _panel_frac_barra(self, x: int) -> float:
+        return panel_mod.frac_en_barra(x, self._panel_k())
+
+    def _panel_seek_a(self, x: int) -> None:
+        if not self._can_seek():
+            return
+        st = self.state
+        frac = self._panel_frac_barra(x)
+        target = max(st.min_seek, min(frac * st.duration, st.max_seek or st.duration))
+        if self.poller.seek(target):
+            self.log("panel: salto a %.0f s", target)
+
+    def _panel_vol_a(self, x: int) -> None:
+        self._vol_aplicar(panel_mod.frac_en_volumen(x, self._panel_k()))
+
+    def toggle_panel_mute(self) -> None:
+        self._vol_toggle_mute()
+
+    def _panel_wndproc(self, hwnd, msg, wp, lp):
+        try:
+            if msg == win32con.WM_PAINT:
+                hdc, ps = win32gui.BeginPaint(hwnd)
+                try:
+                    if self.dib_panel:
+                        self.dib_panel.blit(hdc)
+                finally:
+                    win32gui.EndPaint(hwnd, ps)
+                return 0
+            if msg == win32con.WM_ERASEBKGND:
+                return 1
+            if msg == win32con.WM_ACTIVATE and (wp & 0xFFFF) == 0:   # WA_INACTIVE
+                # Clic afuera: el panel se cierra (como cualquier globo del sistema)
+                self.toggle_panel(False)
+                return 0
+            if msg == win32con.WM_KEYDOWN and wp == win32con.VK_ESCAPE:
+                self.toggle_panel(False)
+                return 0
+            if msg == win32con.WM_MOUSEMOVE:
+                x = lp & 0xFFFF
+                y = (lp >> 16) & 0xFFFF
+                if self.panel_drag is not None:
+                    self._panel_drag_move(x, y)
+                    return 0
+                hit = panel_mod.hit(x, y, self._panel_k())
+                if hit != self.panel_hover:
+                    self.panel_hover = hit
+                    self._panel_render(force=True)
+                try:
+                    tme = TRACKMOUSEEVENT(ctypes.sizeof(TRACKMOUSEEVENT), 0x00000002, hwnd, 0)
+                    user32.TrackMouseEvent(ctypes.byref(tme))
+                except Exception:
+                    pass
+                return 0
+            if msg == win32con.WM_MOUSELEAVE:
+                if self.panel_hover != -1:
+                    self.panel_hover = -1
+                    self._panel_render(force=True)
+                return 0
+            if msg == win32con.WM_LBUTTONDOWN:
+                x = lp & 0xFFFF
+                y = (lp >> 16) & 0xFFFF
+                hit = panel_mod.hit(x, y, self._panel_k())
+                if hit in (3, 4):
+                    self.panel_drag = {"hit": hit, "x0": x, "y0": y, "moved": False}
+                    if hit == 3:
+                        self.panel_scrub = (panel_mod.frac_en_barra(x, self._panel_k())
+                                            * self.state.duration)
+                    else:
+                        self._panel_vol_a(x)
+                    try:
+                        win32gui.SetCapture(hwnd)
+                        win32gui.SetCursor(win32gui.LoadCursor(0, IDC_SIZEWE))
+                    except Exception:
+                        pass
+                    self._panel_render(force=True)
+                elif hit == -1:
+                    # Arrastrar el panel desde el fondo: se mueve con el mouse
+                    self.panel_drag = {"hit": -1, "x0": x, "y0": y, "moved": False,
+                                       "pantalla": win32gui.GetCursorPos()}
+                return 0
+            if msg == win32con.WM_LBUTTONUP:
+                x = lp & 0xFFFF
+                y = (lp >> 16) & 0xFFFF
+                if self.panel_drag is not None:
+                    self._panel_end_drag(x)
+                    return 0
+                hit = panel_mod.hit(x, y, self._panel_k())
+                if hit == 0:
+                    self.poller.prev_track()
+                elif hit == 1:
+                    self.poller.toggle()
+                elif hit == 2:
+                    self.poller.next_track()
+                elif hit == 5:
+                    self.toggle_panel_mute()
+                elif hit in (6, 7):
+                    self.toggle_panel(False)
+                return 0
+            if msg == win32con.WM_CAPTURECHANGED:
+                if self.panel_drag is not None:
+                    self.panel_drag = None
+                    self.panel_scrub = None
+                    self._panel_render(force=True)
+                return 0
+            if msg == win32con.WM_MOUSEWHEEL:
+                steps = ctypes.c_short((wp >> 16) & 0xFFFF).value / 120.0
+                if steps:
+                    c = win32gui.ScreenToClient(hwnd, win32gui.GetCursorPos())
+                    ctrl = win32api.GetKeyState(win32con.VK_CONTROL) < 0
+                    shift = win32api.GetKeyState(win32con.VK_SHIFT) < 0
+                    if panel_mod.hit(*c, self._panel_k()) in (4, 5):
+                        self._vol_step(steps, fino=ctrl)
+                    elif ctrl and not shift:
+                        self._seek_by(steps * self._seek_fino())
+                    elif shift and not ctrl:
+                        self._seek_by(steps * self._seek_grueso())
+                    else:
+                        self._seek_by(steps * self._seek_step())
+                return 0
+            if msg == win32con.WM_DESTROY:
+                self.hwnd_panel = 0
+                self.panel_visible = False
+                return 0
+        except Exception as exc:
+            self.log("panel proc fallo: %r", exc)
+        return win32gui.DefWindowProc(hwnd, msg, wp, lp)
+
+    def _panel_drag_move(self, x: int, y: int) -> None:
+        d = self.panel_drag
+        if not d:
+            return
+        if abs(x - d["x0"]) >= 3 or abs(y - d["y0"]) >= 3:
+            d["moved"] = True
+        if d["hit"] == 3:
+            self.panel_scrub = (panel_mod.frac_en_barra(x, self._panel_k())
+                                * self.state.duration)
+            try:
+                win32gui.SetCursor(win32gui.LoadCursor(0, IDC_SIZEWE))
+            except Exception:
+                pass
+            self._panel_render(force=True)
+        elif d["hit"] == 4:
+            self._panel_vol_a(x)
+            self._panel_render(force=True)
+        elif d["hit"] == -1:
+            # mover el panel: se lee el cursor en coordenadas de pantalla
+            px, py = win32gui.GetCursorPos()
+            sx, sy = d.get("pantalla") or (px, py)
+            wr = win32gui.GetWindowRect(self.hwnd_panel)
+            win32gui.SetWindowPos(self.hwnd_panel, 0, wr[0] + (px - sx), wr[1] + (py - sy),
+                                  0, 0, win32con.SWP_NOSIZE | win32con.SWP_NOZORDER
+                                  | win32con.SWP_NOACTIVATE)
+            d["pantalla"] = (px, py)
+
+    def _panel_end_drag(self, x: int) -> None:
+        d, self.panel_drag = self.panel_drag, None
+        scrub, self.panel_scrub = self.panel_scrub, None
+        try:
+            win32gui.ReleaseCapture()
+        except Exception:
+            pass
+        if not d:
+            return
+        if d["hit"] == 3:
+            if scrub is None:
+                scrub = panel_mod.frac_en_barra(x, self._panel_k()) * self.state.duration
+            self._panel_seek_a(x)
+        elif d["hit"] == 4:
+            self._panel_vol_a(x)
+        self._panel_render(force=True)
+
+    def _panel_tick(self) -> None:
+        """El panel se refresca con el mismo ciclo del widget."""
+        if not self.panel_visible or not self.hwnd_panel:
+            return
+        if not win32gui.IsWindow(self.hwnd_panel):
+            self.hwnd_panel = 0
+            self.panel_visible = False
+            return
+        self._panel_render()
+
     # ------------------------------------------------------------------- menu
     def _show_menu(self) -> None:
         try:
@@ -1760,6 +2084,7 @@ class WidgetApp:
                 ("check", 15, "Ondas de sonido", bool(self.cfg.get("show_waves", False))),
                 ("check", 19, "Mostrar altavoz", bool(self.cfg.get("show_volume", True))),
                 ("check", 24, "Atajos globales (Ctrl+Alt+...)", bool(self.cfg.get("hotkeys", True))),
+                ("check", 26, "Abrir el panel (clic en la caratula)", bool(self.panel_visible)),
                 ("sep", 0, "", None),
                 ("check", 16, "Silenciar", bool(self._vol_estado()[1]) if self._vol_disponible() else False),
                 ("item", 17, f"Volumen +{self.cfg.get('volume_step', 5)}%", vol_ok),
@@ -1830,6 +2155,8 @@ class WidgetApp:
             self.set_volume_visible(not self.cfg.get("show_volume", True))
         elif cmd == 24:
             self.set_hotkeys(not self.cfg.get("hotkeys", True))
+        elif cmd == 26:
+            self.toggle_panel()
         elif 30 <= cmd <= 30 + len(COLOR_CHOICES) - 1:
             self.set_color("progress_color", COLOR_CHOICES[cmd - 30][0])
         elif 40 <= cmd <= 40 + len(COLOR_CHOICES) - 1:

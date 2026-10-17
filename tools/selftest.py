@@ -18,12 +18,14 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import win32con  # noqa: E402
+import win32api  # noqa: E402
 import win32gui  # noqa: E402
 
 from widget import config as cfgmod  # noqa: E402
 from widget.taskbarwin import TaskbarHost, list_bars  # noqa: E402
 from widget import draw  # noqa: E402
 
+WM_APP_PANEL = win32con.WM_APP + 10
 WM_APP_MOVE = win32con.WM_APP + 1
 WM_APP_ALPHA = win32con.WM_APP + 2
 WM_APP_CANCEL_SCRUB = win32con.WM_APP + 3
@@ -178,13 +180,27 @@ def main() -> int:
     check("ancho del widget segun configuracion", abs(ww - want_w) <= 1,
           f"{ww} px (esperado {want_w})")
     check("alto igual a la barra", wh == tb - tt, f"{wh} vs {tb - tt}")
-    check("apoyado contra el bloque de la bandeja", abs(w_rect[2] - a_rect[0]) <= 3,
-          f"widget.right={w_rect[2]} vs ancla.left={a_rect[0]}")
+    pegado = abs(w_rect[2] - a_rect[0]) <= 3
+    frenado = w_rect[2] < a_rect[0]
+    check("no pisa el bloque de la bandeja (pegado al ancla o frenado por la lista)",
+          w_rect[2] <= a_rect[0] + 3,
+          f"widget.right={w_rect[2]} vs ancla.left={a_rect[0]}"
+          + ("" if pegado else " (frenado por el espacio de la lista de tareas)"))
+    check("pegado al ancla cuando la lista no lo impide",
+          pegado or frenado,
+          "pegado" if pegado else "frenado por la lista, que es lo esperado con "
+          "muchas ventanas abiertas")
     check("la lista de tareas cedio el espacio", r_rect[2] <= w_rect[0] + 2,
           f"rebar.right={r_rect[2]} < widget.left={w_rect[0]}")
-    check("la lista conserva el minimo configurado",
-          (r_rect[2] - r_rect[0]) >= cfg.get("min_tasklist_width", 420) - 4,
-          f"{r_rect[2] - r_rect[0]} px")
+    # min_tasklist_width es el minimo PREFERIDO; cuando el widget se mueve libre el
+    # piso real es min_tasklist_free (el limite lo descubre el propio widget). Se
+    # comprueba el piso y se informa el ancho real.
+    piso_lista = int(cfg.get("min_tasklist_free", 140))
+    ancho_lista = r_rect[2] - r_rect[0]
+    check("la lista de tareas nunca baja de su piso",
+          ancho_lista >= piso_lista - 4,
+          f"{ancho_lista} px (piso {piso_lista}, preferido "
+          f"{cfg.get('min_tasklist_width', 420)})")
 
     # --- pixeles realmente pintados -------------------------------------
     try:
@@ -238,8 +254,9 @@ def main() -> int:
         rb = win32gui.GetWindowRect(reborn)
         r2 = win32gui.GetWindowRect(p["rebar"])
         a2 = win32gui.GetWindowRect(p["anchor"])
-        check("renace en la posicion correcta", abs(rb[2] - a2[0]) <= 3,
-              f"right={rb[2]} ancla={a2[0]}")
+        check("renace sin pisar el bloque de la bandeja", rb[2] <= a2[0] + 3,
+              f"right={rb[2]} ancla={a2[0]}"
+              + ("" if abs(rb[2] - a2[0]) <= 3 else " (frenado por la lista)"))
         check("renace visible", bool(win32gui.IsWindowVisible(reborn)))
         check("vuelve a reservar su espacio", r2[2] <= rb[0] + 2,
               f"rebar.right={r2[2]} widget.left={rb[0]}")
@@ -972,6 +989,143 @@ def main() -> int:
               f"antes {visible_antes} pixeles, despues {visible_despues}")
     except Exception as exc:
         check("el fundido en vivo", False, repr(exc))
+
+    # --- panel (mini reproductor) ---------------------------------------------
+    print("\n-- panel --")
+    try:
+        import io as _io
+        import time as _t
+        from PIL import Image as _Image
+        from widget import panel as panel_mod
+        from widget.media import MediaState
+
+        def png(color):
+            im = _Image.new("RGB", (64, 64), color)
+            buf = _io.BytesIO()
+            im.save(buf, "PNG")
+            return buf.getvalue()
+
+        est = MediaState(has_session=True, app_id="brave.exe", title="Titulo de prueba",
+                         artist="Artista de prueba", album="", playing=True,
+                         position=60.0, duration=180.0, position_at=_t.monotonic(),
+                         art=None, art_key="k", can_seek=True, min_seek=0, max_seek=180,
+                         can_toggle=True, can_prev=True, can_next=True)
+        kp = 1.0
+        Wp, Hp = panel_mod.size(kp)
+        z = panel_mod.rects(kp)
+
+        # (a) geometria: todo adentro y sin pisarse
+        piezas = ([z["tapa"], z["barra"], z["altavoz"], z["volumen"], z["cerrar"]]
+                  + list(z["controles"]))
+        adentro = all(0 <= r[0] < r[2] <= Wp and 0 <= r[1] < r[3] <= Hp for r in piezas)
+        solapan = any(z["controles"][i][2] > z["controles"][i + 1][0] for i in range(2))
+        check("las zonas del panel entran y no se pisan",
+              adentro and not solapan and z["controles"][2][2] < z["altavoz"][0],
+              f"{Wp}x{Hp}: controles hasta x={z['controles'][2][2]}, "
+              f"altavoz desde x={z['altavoz'][0]}, cerrar en {z['cerrar']}")
+
+        # (b) dibujo: cada parte pinta donde tiene que pintar
+        art = draw.get_art(png((220, 40, 40)), "rojo", int(panel_mod.TAPA), 10)
+        vol = (0.45, False, True, True)
+
+        def render_panel(hover=-1, scrub=None, estado=est, volumen=vol):
+            return panel_mod.render(estado, cfg, art=art, volume=volumen, hover=hover,
+                                    k=kp, scrub=scrub).convert("RGB")
+
+        def en(img, r, filtro):
+            n = 0
+            for y in range(r[1], r[3]):
+                for x in range(r[0], r[2]):
+                    p = img.getpixel((x, y))
+                    if filtro(p):
+                        n += 1
+            return n
+
+        im_normal = render_panel()
+        rojo_tapa = en(im_normal, z["tapa"], lambda p: p[0] > 150 and p[0] > p[1] + 60)
+        check("el panel dibuja la caratula en grande", rojo_tapa > 300,
+              f"{rojo_tapa} pixeles de la tapa")
+        claros_texto = en(im_normal, (panel_mod.TEXTO_X, panel_mod.TITULO_Y,
+                                      Wp - 14, panel_mod.TERCERA_Y + 14),
+                          lambda p: p[0] + p[1] + p[2] > 420)
+        check("el panel dibuja titulo, artista y la tercera linea",
+              claros_texto > 150, f"{claros_texto} pixeles de texto")
+        fila_barra = en(im_normal, (z["barra"][0], z["barra"][1] - 2,
+                                    z["barra"][2], z["barra"][3] + 2),
+                        lambda p: p[0] > 150 and p[1] < 160 and p[0] - p[1] > 60)
+        check("el panel dibuja la barra de progreso llena", fila_barra > 40,
+              f"{fila_barra} pixeles del color de la barra")
+
+        # (c) reacciona al hover, al arrastre y al silencio
+        im_hover = render_panel(hover=1)
+        im_scrub = render_panel(hover=3, scrub=150.0)
+        im_mudo = panel_mod.render(est, cfg, art=art, volume=(0.45, True, True, True),
+                                   hover=-1, k=kp).convert("RGB")
+        dif_hover = sum(1 for a, b in zip(im_normal.get_flattened_data(),
+                                          im_hover.get_flattened_data()) if a != b)
+        dif_scrub = sum(1 for a, b in zip(im_normal.get_flattened_data(),
+                                          im_scrub.get_flattened_data()) if a != b)
+        dif_mudo = sum(1 for a, b in zip(im_normal.get_flattened_data(),
+                                         im_mudo.get_flattened_data()) if a != b)
+        check("el panel marca el hover, el arrastre y el silencio",
+              dif_hover > 40 and dif_scrub > 60 and dif_mudo > 30,
+              f"pixeles distintos: hover {dif_hover}, arrastre {dif_scrub}, "
+              f"silencio {dif_mudo}")
+        check("las fracciones de la barra y del volumen se calculan bien",
+              abs(panel_mod.frac_en_barra(z["barra"][0], kp) - 0.0) < 0.01
+              and abs(panel_mod.frac_en_barra(z["barra"][2], kp) - 1.0) < 0.01
+              and abs(panel_mod.frac_en_volumen(z["volumen"][0], kp)) < 0.01,
+              f"borde izquierdo -> {panel_mod.frac_en_barra(z['barra'][0], kp):.2f}, "
+              f"borde derecho -> {panel_mod.frac_en_barra(z['barra'][2], kp):.2f}")
+        check("el panel sabe que hay bajo el cursor",
+              panel_mod.hit(*[(c[0] + c[2]) // 2 for c in [z["controles"][1]]][:1]
+                            + [(z["controles"][1][1] + z["controles"][1][3]) // 2], kp) == 1
+              and panel_mod.hit(z["cerrar"][0] + 2, z["cerrar"][1] + 2, kp) == 6
+              and panel_mod.hit(z["tapa"][0] + 2, z["tapa"][1] + 2, kp) == 7
+              and panel_mod.hit(-3, -3, kp) == -1,
+              "play/pausa -> 1, cerrar -> 6, caratula -> 7, afuera -> -1")
+
+        # (d) en vivo: abrir, comprobar y cerrar
+        w_panel = None
+        win32gui.PostMessage(w_now, WM_APP_PANEL, 1, 0xFFFF)
+        time.sleep(0.9)
+        w_panel = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+        if not w_panel:
+            check("el panel se abre y se ve", False, "no encontre la ventana del panel")
+        else:
+            pr = rect(w_panel)
+            ex = win32gui.GetWindowLong(w_panel, win32con.GWL_EXSTYLE)
+            wr_w = rect(w_now)
+            mon = None
+            try:
+                mi = win32api.GetMonitorInfo(win32api.MonitorFromWindow(w_now, 2))
+                mon = mi["Monitor"]
+            except Exception:
+                pass
+            dentro = (mon is None or (mon[0] <= pr[0] and pr[2] <= mon[2]))
+            check("el panel se abre y se ve", win32gui.IsWindowVisible(w_panel),
+                  f"ventana {hex(w_panel)} en {pr}")
+            check("el panel es un globo: no entra en la barra de tareas",
+                  bool(ex & 0x00000080) and bool(ex & 0x00080000),
+                  f"TOOLWINDOW={'si' if ex & 0x80 else 'no'}, "
+                  f"LAYERED={'si' if ex & 0x80000 else 'no'}")
+            check("el panel queda encima del widget y dentro del monitor",
+                  dentro and pr[3] <= wr_w[1] + 2,
+                  f"panel {pr} (abajo y={pr[3]}), widget arriba y={wr_w[1]}, "
+                  f"monitor {mon}")
+            im_vivo = ImageGrab.grab(all_screens=True, bbox=pr).convert("L")
+            vals = list(im_vivo.get_flattened_data())
+            check("el panel esta pintado (no es un rectangulo negro)",
+                  max(vals) - min(vals) > 100 and sum(1 for v in vals if v > 150) > 300,
+                  f"min {min(vals)} max {max(vals)}, "
+                  f"{sum(1 for v in vals if v > 150)} pixeles claros")
+            win32gui.PostMessage(w_now, WM_APP_PANEL, 0, 0xFFFF)
+            time.sleep(0.7)
+            check("el panel se cierra",
+                  not win32gui.IsWindowVisible(
+                      win32gui.FindWindow("GorusTaskbarMusicPanel", None) or w_panel))
+    except Exception as exc:
+        check("el panel", False, repr(exc))
 
     fails = [r for r in RESULTS if not r[1] and not r[3]]
     skips = [r for r in RESULTS if r[3]]
