@@ -12,9 +12,14 @@ Notas para el autor (no para quien entra al repo). Lo que ya esta y lo que falta
 
 ## 1. Dos clics que solo podes hacer vos
 
-**Imagen social**: GitHub → Settings → **Social preview** → subir `assets/captura.png`.
+**Imagen social**: GitHub → Settings → **Social preview** → subir `assets/social.png`.
 Es la que aparece cuando alguien pega el link en Discord, WhatsApp, X o Reddit: sin eso,
 queda un cuadro gris y el link se ve flojo.
+
+Esta hecha a medida (1280x640, que es la medida que pide GitHub), con el estilo de la app:
+el icono, el violeta de acento, la tipografia del widget y un **render real** del widget
+sobre una franja que simula la barra de tareas. Se regenera con
+`python tools/make_social_card.py` (por si cambia el nombre, el color o la frase).
 
 **Pagina web del repo**: ya la puse apuntando al release, pero conviene revisarla en
 Settings → General → Website.
