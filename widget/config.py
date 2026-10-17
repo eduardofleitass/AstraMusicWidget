@@ -32,6 +32,13 @@ DEFAULTS = {
     # Cuantos segundos adelanta/atrasa la rueda del mouse y los items del menu.
     # La barra de progreso siempre se puede clickear para saltar a donde sea.
     "seek_step_s": 10,
+    # Paso fino y grueso de la rueda con modificador: Ctrl = fino, Shift = grueso.
+    # El paso normal (seek_step_s) es sin modificador.
+    "seek_fine_s": 1,
+    "seek_coarse_s": 60,
+    # Atajos globales (Ctrl+Alt+M/arriba/abajo/izquierda/derecha y con Shift para
+    # adelantar y atrasar). Se pueden apagar desde el menu.
+    "hotkeys": True,
     # Alpha minimo de cada pixel en modo transparente. Windows usa el alpha por
     # pixel para decidir que ventana recibe el mouse: con 0, las zonas vacias del
     # widget se vuelven "agujeros" y los clics van a la barra de tareas. 2 es

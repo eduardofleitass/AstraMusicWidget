@@ -576,10 +576,33 @@ def main() -> int:
                     out += 1
             return out
 
-        caja_barra = (wr[0] + pr[0], y_barra, wr[0] + pr[2], y_barra + 1)
+        # La franja incluye unas filas de mas: si el tema esta al principio el
+        # relleno mide 1 px y solo la perilla tiene color; midiendo una sola fila esa
+        # perilla aporta 3 px y la comprobacion falla sin que haya nada roto.
+        caja_barra = (wr[0] + pr[0], y_barra - 3, wr[0] + pr[2], y_barra + 4)
         caja_ondas = (wr[0] + wrec[0], wr[1] + wrec[1], wr[0] + wrec[2], wr[1] + wrec[3])
         estaba_w = bool(cfg.get("show_waves", False))
         prob_antes, ond_antes = cfg.get("progress_color"), cfg.get("waves_color")
+
+        # El relleno de la barra solo se dibuja si hay progreso: con el tema recien
+        # empezado (0%) no hay ni un pixel del color elegido y la medicion da cero
+        # sin que haya nada roto. Se adelanta a la mitad para poder medir el color.
+        try:
+            from widget.media import MediaPoller as _MP
+            _pm = _MP(interval=0.3)
+            _pm.start()
+            _pm.wait_ready(6)
+            for _ in range(12):
+                if _pm.state().has_session:
+                    break
+                time.sleep(0.4)
+            _st_c = _pm.state()
+            if _st_c.can_seek and _st_c.duration > 8 and _st_c.live_position() < _st_c.duration * 0.3:
+                _pm.seek(_st_c.duration * 0.5)
+                time.sleep(1.2)
+            _pm.stop()
+        except Exception:
+            pass
 
         win32gui.SendMessage(w_now, WM_APP_WAVES, 1, 0)
         win32gui.SendMessage(w_now, WM_APP_COLOR, 1, 0xFF0000)   # barra roja

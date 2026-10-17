@@ -41,6 +41,36 @@ MUTEX_NAME = "Local\\GorusTaskbarMusicWidget"
 TIMER_TICK = 1
 TIMER_LAYOUT = 2
 HOTKEY_TOGGLE = 1
+# Atajos globales. Se registran sobre la ventana CONTROLADORA (que vive todo el
+# programa), no sobre el widget: asi siguen andando con el widget oculto, que es
+# justo cuando mas hacen falta.
+# Cada uno: (id, modificadores, tecla, para que sirve)
+VK_TECLAS = {0x4D: "M", 0x50: "P", 0x25: "Izq", 0x26: "Arriba", 0x27: "Der",
+             0x28: "Abajo"}
+HOTKEYS = (
+    (HOTKEY_TOGGLE, win32con.MOD_CONTROL | win32con.MOD_ALT, 0x4D, "mostrar/ocultar"),
+    (2, win32con.MOD_CONTROL | win32con.MOD_ALT, 0x50, "play/pausa"),
+    (3, win32con.MOD_CONTROL | win32con.MOD_ALT, 0x27, "siguiente"),
+    (4, win32con.MOD_CONTROL | win32con.MOD_ALT, 0x25, "anterior"),
+    (5, win32con.MOD_CONTROL | win32con.MOD_ALT, 0x26, "volumen +"),
+    (6, win32con.MOD_CONTROL | win32con.MOD_ALT, 0x28, "volumen -"),
+    (7, win32con.MOD_CONTROL | win32con.MOD_ALT | win32con.MOD_SHIFT, 0x26, "adelantar"),
+    (8, win32con.MOD_CONTROL | win32con.MOD_ALT | win32con.MOD_SHIFT, 0x28, "atrasar"),
+)
+MOD_NOREPEAT = 0x4000   # sin esto, mantener la tecla repite la accion sin parar
+
+
+def texto_atajo(mods: int, vk: int) -> str:
+    """Como se escribe el atajo (para el log y el menu)."""
+    partes = []
+    if mods & win32con.MOD_CONTROL:
+        partes.append("Ctrl")
+    if mods & win32con.MOD_ALT:
+        partes.append("Alt")
+    if mods & win32con.MOD_SHIFT:
+        partes.append("Shift")
+    partes.append(VK_TECLAS.get(vk, hex(vk)))
+    return "+".join(partes)
 
 WM_TASKBARCREATED = ctypes.windll.user32.RegisterWindowMessageW("TaskbarCreated")
 # win32con no define WM_DPICHANGED; el literal es 0x02E0
@@ -58,6 +88,7 @@ WM_APP_COLOR = win32con.WM_APP + 5  # wParam = 1 barra / 2 ondas; lParam = 0xRRG
 WM_APP_MONITOR = win32con.WM_APP + 6  # wParam = indice de barra (0 = principal)
 WM_APP_VOLUME = win32con.WM_APP + 7  # wParam = volumen x1000; lParam 1 silenciar / 2 sonar
 WM_APP_SHOW = win32con.WM_APP + 8    # pedirle a la instancia viva que se muestre
+WM_APP_HOTKEYS = win32con.WM_APP + 9  # wParam = 1/0: prender o apagar los atajos
 
 # Colores que ofrece el menu para la barra de progreso y las ondas (None = el del
 # tema). El menu guarda el hex en config.json; a mano tambien vale [r, g, b].
@@ -239,6 +270,7 @@ class WidgetApp:
         self._vol_last = None   # ultimo nivel aplicado (para no mandar de mas)
         self._vol_info = None   # dato de volumen cacheado: nivel, mudo, disponible
         self._vol_app = None    # app de la que se leyo ese dato
+        self._hotkeys_ok = []   # atajos globales que quedaron registrados
         self._wave_phase = 0.0    # fase de la animacion de ondas (solo avanza suena)
         self._wave_t = time.monotonic()
         self._levels: list[float] | None = None   # alturas de las ondas ahora mismo
@@ -324,8 +356,10 @@ class WidgetApp:
             self.log("no se pudo crear la ventana controladora")
             return 3
 
-        win32gui.RegisterHotKey(self.hwnd_ctl, HOTKEY_TOGGLE,
-                                win32con.MOD_CONTROL | win32con.MOD_ALT, ord("M"))
+        # Atajos globales. RegisterHotKey falla si otro programa ya tiene la
+        # combinacion (tipico con Ctrl+Alt+flechas y los drivers de video): se
+        # informa cual fallo en vez de dejar un atajo muerto en silencio.
+        self._hotkeys_ok = self._registrar_atajos()
 
         self.host.refresh()
         self.host.restore()  # sanea cualquier reserva que haya quedado de un cierre sucio
@@ -364,7 +398,11 @@ class WidgetApp:
             user32.KillTimer(self.hwnd_ctl, TIMER_TICK)
             user32.KillTimer(self.hwnd_ctl, TIMER_LAYOUT)
             try:
-                win32gui.UnregisterHotKey(self.hwnd_ctl, HOTKEY_TOGGLE)
+                for hk_id, _mods, _vk, _nombre in HOTKEYS:
+                    try:
+                        win32gui.UnregisterHotKey(self.hwnd_ctl, hk_id)
+                    except Exception:
+                        pass
             except Exception:
                 pass
         try:
@@ -790,8 +828,8 @@ class WidgetApp:
                 elif wp == TIMER_LAYOUT:
                     self.layout_tick()
                 return 0
-            if msg == win32con.WM_HOTKEY and wp == HOTKEY_TOGGLE:
-                self.toggle_visible()
+            if msg == win32con.WM_HOTKEY:
+                self._accion_atajo(int(wp))
                 return 0
             if msg == WM_APP_SHOW:
                 # mostrarse es idempotente: si ya esta visible no se oculta
@@ -865,6 +903,72 @@ class WidgetApp:
         st = self.state
         frac = draw.progress_frac_at(x, self.width_px, self.k, self.cfg)
         return max(st.min_seek, min(frac * st.duration, st.max_seek or st.duration))
+
+    def _registrar_atajos(self) -> list[str]:
+        """Registra (o libera) los atajos globales segun la configuracion."""
+        puestos = []
+        for hk_id, mods, vk, nombre in HOTKEYS:
+            try:
+                if self.cfg.get("hotkeys", True):
+                    # OJO: pywin32 devuelve None cuando el registro SALE BIEN y lanza
+                    # excepcion cuando falla (1409 = ya lo tiene otro programa). Un
+                    # `if RegisterHotKey(...)` da falso siempre y deja todos los
+                    # atajos sin registrar creyendo que fallaron.
+                    win32gui.RegisterHotKey(self.hwnd_ctl, hk_id,
+                                            mods | MOD_NOREPEAT, vk)
+                    puestos.append(nombre)
+                else:
+                    win32gui.UnregisterHotKey(self.hwnd_ctl, hk_id)
+            except Exception as exc:
+                self.log("atajo %s: %r", nombre, exc)
+        self.log("atajos globales: %s", ", ".join(puestos) if puestos else "ninguno")
+        return puestos
+
+    def _accion_atajo(self, hk_id: int) -> None:
+        """Que hace cada atajo. Es el mismo camino que el mouse y el menu."""
+        if hk_id == HOTKEY_TOGGLE:
+            self.toggle_visible()
+            return
+        nombre = next((n for i, _m, _v, n in HOTKEYS if i == hk_id), str(hk_id))
+        if hk_id == 2:
+            self.poller.toggle()
+        elif hk_id == 3:
+            self.poller.next_track()
+        elif hk_id == 4:
+            self.poller.prev_track()
+        elif hk_id == 5:
+            self._vol_step(1)
+        elif hk_id == 6:
+            self._vol_step(-1)
+        elif hk_id == 7:
+            self._seek_by(self._seek_step())
+        elif hk_id == 8:
+            self._seek_by(-self._seek_step())
+        else:
+            return
+        self.log("atajo: %s", nombre)
+        self._sig = None
+        self._repaint_if_needed(force=True)
+
+    def set_hotkeys(self, on: bool, save: bool = True) -> None:
+        """Prende o apaga los atajos globales (menu y pruebas)."""
+        self.cfg["hotkeys"] = bool(on)
+        if save:
+            cfgmod.save(self.cfg)
+        self._hotkeys_ok = self._registrar_atajos()
+        self.log("atajos globales: %s", "encendidos" if on else "apagados")
+
+    def _seek_fino(self) -> float:
+        try:
+            return max(0.1, float(self.cfg.get("seek_fine_s", 1)))
+        except Exception:
+            return 1.0
+
+    def _seek_grueso(self) -> float:
+        try:
+            return max(1.0, float(self.cfg.get("seek_coarse_s", 60)))
+        except Exception:
+            return 60.0
 
     def _seek_by(self, delta: float) -> None:
         st = self.state
@@ -1012,10 +1116,16 @@ class WidgetApp:
                 # a la ventana que esta bajo el cursor, no a la que tiene el foco.
                 steps = ctypes.c_short((wp >> 16) & 0xFFFF).value / 120.0
                 if steps:
-                    # Sobre el altavoz la rueda mueve el volumen; en el resto, el tiempo
                     c = win32gui.ScreenToClient(hwnd, win32gui.GetCursorPos())
+                    ctrl = win32api.GetKeyState(win32con.VK_CONTROL) < 0
+                    shift = win32api.GetKeyState(win32con.VK_SHIFT) < 0
                     if self._hit_at(*c) == 5:
-                        self._vol_step(steps)
+                        # Sobre el altavoz la rueda mueve el volumen; Ctrl = 1%
+                        self._vol_step(steps, fino=ctrl)
+                    elif ctrl and not shift:
+                        self._seek_by(steps * self._seek_fino())
+                    elif shift and not ctrl:
+                        self._seek_by(steps * self._seek_grueso())
                     else:
                         self._seek_by(steps * self._seek_step())
                 return 0
@@ -1102,6 +1212,9 @@ class WidgetApp:
                 return 0
             if msg == WM_APP_VOLUME:
                 self._vol_remoto(int(wp) / 1000.0, int(lp))
+                return 0
+            if msg == WM_APP_HOTKEYS:
+                self.set_hotkeys(bool(wp), save=bool(lp))
                 return 0
             if msg == WM_APP_WAVES:
                 self.set_waves(bool(wp), save=bool(lp))
@@ -1307,7 +1420,7 @@ class WidgetApp:
     VOL_TTL = 2.0          # vida del dato de volumen mientras el usuario lo usa
     VOL_TTL_QUIETO = 10.0  # ...y el resto del tiempo (cambios hechos afuera)
 
-    def _vol_estado(self) -> tuple[float, bool, bool]:
+    def _vol_estado(self, forzar: bool = False) -> tuple[float, bool, bool]:
         """(nivel 0..1, silenciado, disponible) de la app que esta sonando.
 
         El dato se cachea porque leerlo son un par de milisegundos de llamadas COM
@@ -1318,7 +1431,7 @@ class WidgetApp:
         app = self.state.app_id or ""
         ahora = time.monotonic()
         info = self._vol_info
-        vencido = (info is None or self._vol_app != app
+        vencido = (forzar or info is None or self._vol_app != app
                    or (ahora - info[3]) > (self.VOL_TTL if self._vol_mostrar()
                                            else self.VOL_TTL_QUIETO))
         if vencido:
@@ -1385,12 +1498,20 @@ class WidgetApp:
         self._vol_last = nivel
         return True
 
-    def _vol_step(self, muescas: float) -> None:
-        """Rueda sobre el altavoz: sube o baja el volumen por muescas."""
-        nivel, mudo, disp = self._vol_estado()
+    def _vol_step(self, muescas: float, fino: bool = False) -> None:
+        """Rueda sobre el altavoz: sube o baja el volumen por muescas.
+
+        Con `fino` el paso es del 1% (Ctrl+rueda): para dejar el volumen en el punto
+        justo sin pelearse con la rueda.
+
+        El nivel se lee FRESCO (sin cache): el paso es relativo, asi que partir de un
+        valor viejo da un salto. Medido: con el volumen cambiado desde el mezclador de
+        Windows, la rueda ponia 100% en vez de +5%.
+        """
+        nivel, mudo, disp = self._vol_estado(forzar=True)
         if not disp:
             return
-        paso = max(1, int(self.cfg.get("volume_step", 5))) / 100.0
+        paso = (1 if fino else max(1, int(self.cfg.get("volume_step", 5)))) / 100.0
         nuevo = max(0.0, min(1.0, nivel + muescas * paso))
         if self._vol_aplicar(nuevo, mudo=False):
             self.log("volumen: %.0f%% (rueda)", nuevo * 100)
@@ -1558,6 +1679,7 @@ class WidgetApp:
                 ("sep", 0, "", None),
                 ("check", 15, "Ondas de sonido", bool(self.cfg.get("show_waves", False))),
                 ("check", 19, "Mostrar altavoz", bool(self.cfg.get("show_volume", True))),
+                ("check", 24, "Atajos globales (Ctrl+Alt+...)", bool(self.cfg.get("hotkeys", True))),
                 ("sep", 0, "", None),
                 ("check", 16, "Silenciar", bool(self._vol_estado()[1]) if self._vol_disponible() else False),
                 ("item", 17, f"Volumen +{self.cfg.get('volume_step', 5)}%", vol_ok),
@@ -1626,6 +1748,8 @@ class WidgetApp:
             self._vol_step(-1)
         elif cmd == 19:
             self.set_volume_visible(not self.cfg.get("show_volume", True))
+        elif cmd == 24:
+            self.set_hotkeys(not self.cfg.get("hotkeys", True))
         elif 30 <= cmd <= 30 + len(COLOR_CHOICES) - 1:
             self.set_color("progress_color", COLOR_CHOICES[cmd - 30][0])
         elif 40 <= cmd <= 40 + len(COLOR_CHOICES) - 1:

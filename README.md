@@ -25,7 +25,8 @@ Probado en Windows 10 22H2 (19045), escala 100% y 1920x1080.
 | Que arranque solo con Windows | `install_startup.bat` |
 | Sacarlo del arranque y detenerlo | `uninstall_startup.bat` |
 | Mostrar / ocultar sin cerrarlo | `Ctrl + Alt + M` (la misma tecla lo vuelve a mostrar) |
-| Atrasarlo o adelantarlo | clic en la barra de progreso, o la rueda del mouse (±10 s) |
+| Manejar la musica desde cualquier lado | `Ctrl+Alt+P` play/pausa, `Ctrl+Alt+←/→` anterior/siguiente, `Ctrl+Alt+↑/↓` volumen, `Ctrl+Alt+Shift+↑/↓` ±10 s |
+| Atrasarlo o adelantarlo | clic en la barra de progreso, o la rueda del mouse (±10 s; con `Ctrl` ±1 s, con `Shift` ±60 s) |
 | Ondas de sonido (animacion) | clic derecho > *Ondas de sonido* |
 | Color de la barra o de las ondas | clic derecho > *Color de la barra* / *Color de las ondas* |
 | Volumen de lo que suena | pasá el mouse por el altavoz y arrastrá la barra que aparece; rueda del mouse encima del altavoz (±5%); clic seco = silencio |
@@ -229,6 +230,28 @@ Dos cosas a tener en cuenta:
 Ninguno de los dos cambia el chip, la caratula ni los textos.
 
 
+## Atajos globales
+
+Funcionan con cualquier ventana en primer plano: no hace falta apuntarle al widget ni
+al reproductor. Se registran sobre la ventana controladora, asi que siguen andando
+**con el widget oculto**, que es justo cuando mas hacen falta.
+
+| Atajo | Que hace |
+|---|---|
+| `Ctrl + Alt + M` | Mostrar / ocultar el widget |
+| `Ctrl + Alt + P` | Play / pausa |
+| `Ctrl + Alt + ←` / `→` | Anterior / siguiente |
+| `Ctrl + Alt + ↑` / `↓` | Volumen +5% / -5% |
+| `Ctrl + Alt + Shift + ↑` / `↓` | Adelantar / atrasar el paso configurado (10 s) |
+
+- La **rueda del mouse** sobre el widget tambien tiene pasos: sin modificador el paso
+  normal (±10 s), con `Ctrl` fino (±1 s, para enganchar un estribillo) y con `Shift`
+  grueso (±60 s). Sobre el altavoz, la rueda mueve el volumen (`Ctrl` = 1%).
+- **Si otro programa ya tiene una combinacion**, `RegisterHotKey` falla y el widget lo
+  escribe en el log con el nombre del atajo que quedo sin registrar (`Ctrl+Alt+flechas`
+  suele estar tomado por los drivers de video). No es un fallo silencioso.
+- Se pueden apagar desde el menu (*Atajos globales*) o con `"hotkeys": false`.
+
 ## Volumen
 
 El widget controla el volumen de **la aplicacion que esta sonando**, no el del
@@ -407,14 +430,23 @@ corto; que la barra tome el suyo —medido en rojo puro— que las ondas tomen e
 —medido en azul— y que ninguno tome el del otro), la barra de otro monitor (que el
 widget se mude, quede dentro de esa barra, que ese monitor le ceda el espacio y
 que la barra que deja recupere su ancho natural, ida y vuelta) y 30 muestras de
-vigilancia del pintado (30/30 cuadros correctos). Y 15 de 15 de interaccion real
+vigilancia del pintado (30/30 cuadros correctos). Y 20 de 20 de interaccion real
 (`python tools\clicktest.py`): el hover ilumina los tres botones, un clic de verdad
 cambia el estado de reproduccion, el segundo clic lo restaura, un clic en la
 caratula no dispara nada, un clic en la barra de progreso salta a esa posicion
 (medido: pedido 157 s, informado 157 s) sin mover el widget, el salto se puede
 devolver a donde estaba, la rueda adelanta y atrasa el paso configurado (medido:
 -9,9 s para un paso de -10 s) y arrastrar el widget a la barra del otro monitor lo
-muda de barra y la vuelta lo devuelve.
+muda de barra y la vuelta lo devuelve, el volumen de la app se mueve con la rueda
+(medido: 30% -> 35%), el arrastre sobre la fila del volumen lo deja donde se apunta
+(medido: 75%) y un clic real en el altavoz silencia y lo vuelve a sacar.
+Y 15 de 15 de atajos con **teclas reales** (`python tools\hotkeytest.py`): `Ctrl+Alt+P`
+cambia la reproduccion, `Ctrl+Alt+←/→` cambia de tema, `Ctrl+Alt+Shift+↑/↓` mueve
+exacto (+10,0 s y -10,0 s medidos con la musica en pausa, para que la interpolacion no
+contamine la medicion), `Ctrl+Alt+↑/↓` mueve el volumen (50% -> 55% -> 50%),
+`Ctrl+Alt+M` oculta y muestra, la rueda con `Ctrl`/`Shift` da pasos distintos (medido:
++1,0 s / +60,0 s / +10,0 s) y apagar los atajos desde el menu los desactiva de verdad
+(con los atajos apagados `Ctrl+Alt+P` no hace nada, y al prenderlos vuelve a andar).
 
 En `clicktest.py`, si una lista de reproduccion cambia de tema justo mientras se
 mide, el comando se pierde y la prueba lo informa como `SALTA` (interferencia) en
@@ -440,6 +472,9 @@ encogimiento.
 | `min_tasklist_width` | 420 | Minimo de lista de tareas que se respeta al reservar espacio |
 | `min_tasklist_free` | 140 | Piso de la lista de tareas cuando el widget se mueve libre (el limite real lo descubre el propio widget) |
 | `seek_step_s` | 10 | Cuantos segundos adelanta/atrasa la rueda del mouse y el menu. La barra de progreso se puede clickear en cualquier caso |
+| `seek_fine_s` | 1 | Paso de la rueda con `Ctrl` (fino) |
+| `seek_coarse_s` | 60 | Paso de la rueda con `Shift` (grueso) |
+| `hotkeys` | true | Atajos globales `Ctrl+Alt+...` (menu > *Atajos globales*) |
 | `hit_alpha_floor` | 2 | Alfa minimo por pixel en modo transparente, para que toda la superficie reciba el mouse (invisible; 0 lo desactiva, pero con el fondo sin nada los huecos se vuelven "agujeros" y los clics van a la barra de tareas) |
 | `show_waves` | false | Ondas de sonido animadas entre el texto y los botones (menu > *Ondas de sonido*) |
 | `wave_bars` | 4 | Cuantas barras tienen las ondas (1 a 12) |
@@ -481,6 +516,7 @@ python tools\watch.py            # estado en vivo, muestreado cada 0,5 s
 python tools\preview.py hoja.png # hoja con todas las variantes visuales
 python tools\selftest.py         # suite de verificacion (widget en marcha)
 python tools\clicktest.py        # prueba de clic real con el mouse (restaura el estado)
+python tools\hotkeytest.py       # atajos globales con teclas REALES y rueda con modificadores
 python tools\startup.py --status # ver si el arranque automatico esta activo
 python tools\stop.py             # cierre ordenado
 python tools\debug_mouse.vbs     # arranca con cada mensaje de mouse anotado en el log

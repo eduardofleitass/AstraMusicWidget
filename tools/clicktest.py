@@ -454,6 +454,14 @@ def main() -> int:
               f"{r0:.0f}s -> {r1:.0f}s  ({d:+.1f}s, se esperaba +{esperado:.1f}s)"
               f"  tolerancia {tolerancia:.0f}s",
               skipped=not ok1)
+        # Si el tema esta al principio no hay lugar para atras: el reproductor para
+        # en 0 y el salto medido seria -17 s en vez de -10 s. Se adelanta primero.
+        if r1 < paso * 2:
+            st_w = sample(poller)
+            if st_w.can_seek:
+                poller.seek(min(r1 + paso * 3, st_w.max_seek or r1 + paso * 3))
+                time.sleep(1.2)
+                r1, t1, ok1 = pos_reportada(poller, desde=r0)
         user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, WHEEL_DOWN, 0)
         r2, t2, ok2 = pos_reportada(poller, desde=r1)
         d2 = r2 - r1

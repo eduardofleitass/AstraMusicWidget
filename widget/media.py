@@ -49,6 +49,7 @@ class MediaState:
     title: str = ""
     artist: str = ""
     album: str = ""
+    subtitle: str = ""
     playing: bool = False
     stopped: bool = False
     position: float = 0.0
@@ -78,9 +79,14 @@ class MediaState:
 
     @property
     def display_artist(self) -> str:
-        if self.artist:
-            return self.artist
-        return self.album or ""
+        # Cadena de respaldo: artista -> album -> subtitulo -> nombre de la app. En
+        # videos de YouTube el campo de artista suele venir vacio (el canal va en el
+        # subtitulo) y sin respaldo el renglon quedaba en blanco; el nombre de la app
+        # como ultimo recurso al menos dice de donde viene el sonido.
+        for valor in (self.artist, self.album, self.subtitle):
+            if valor:
+                return valor
+        return self.app_name
 
     @property
     def app_name(self) -> str:
@@ -321,6 +327,10 @@ class MediaPoller(threading.Thread):
         title = props.title or ""
         artist = props.artist or props.album_artist or ""
         album = props.album_title or ""
+        # El subtitulo es el tercer dato de texto de SMTC (en YouTube suele ser el
+        # canal o "Official Video"): no se muestra si hay artista, pero evita el
+        # renglon vacio cuando el reproductor no manda ni artista ni album.
+        subtitle = props.subtitle or ""
         playing = status == ST_PLAYING
         stopped = status in (ST_CLOSED, ST_STOPPED)
 
@@ -374,7 +384,7 @@ class MediaPoller(threading.Thread):
         if adopt:
             state = MediaState(
                 has_session=True, app_id=app_id, title=title, artist=artist,
-                album=album, playing=playing, stopped=stopped,
+                album=album, subtitle=subtitle, playing=playing, stopped=stopped,
                 position=position, duration=duration,
                 position_at=time.monotonic(), art=self._art_bytes, art_key=key,
                 can_next=can_next, can_prev=can_prev, can_toggle=can_toggle,
