@@ -26,6 +26,7 @@ from widget.taskbarwin import TaskbarHost, list_bars  # noqa: E402
 from widget import draw  # noqa: E402
 
 WM_APP_PANEL = win32con.WM_APP + 10
+WM_APP_PANEL_CFG = win32con.WM_APP + 11
 WM_APP_MOVE = win32con.WM_APP + 1
 WM_APP_ALPHA = win32con.WM_APP + 2
 WM_APP_CANCEL_SCRUB = win32con.WM_APP + 3
@@ -990,7 +991,7 @@ def main() -> int:
     except Exception as exc:
         check("el fundido en vivo", False, repr(exc))
 
-    # --- panel (mini reproductor) ---------------------------------------------
+    # --- panel (mini reproductor): dos tamanos y modo gaming ------------------
     print("\n-- panel --")
     try:
         import io as _io
@@ -1011,83 +1012,91 @@ def main() -> int:
                          art=None, art_key="k", can_seek=True, min_seek=0, max_seek=180,
                          can_toggle=True, can_prev=True, can_next=True)
         kp = 1.0
-        Wp, Hp = panel_mod.size(kp)
-        z = panel_mod.rects(kp)
-
-        # (a) geometria: todo adentro y sin pisarse
-        piezas = ([z["tapa"], z["barra"], z["altavoz"], z["volumen"], z["cerrar"]]
-                  + list(z["controles"]))
-        adentro = all(0 <= r[0] < r[2] <= Wp and 0 <= r[1] < r[3] <= Hp for r in piezas)
-        solapan = any(z["controles"][i][2] > z["controles"][i + 1][0] for i in range(2))
-        check("las zonas del panel entran y no se pisan",
-              adentro and not solapan and z["controles"][2][2] < z["altavoz"][0],
-              f"{Wp}x{Hp}: controles hasta x={z['controles'][2][2]}, "
-              f"altavoz desde x={z['altavoz'][0]}, cerrar en {z['cerrar']}")
-
-        # (b) dibujo: cada parte pinta donde tiene que pintar
-        art = draw.get_art(png((220, 40, 40)), "rojo", int(panel_mod.TAPA), 10)
+        cfg_normal = dict(cfg, panel_size="normal")
+        cfg_chico = dict(cfg, panel_size="chico")
+        art_rojo = png((220, 40, 40))
         vol = (0.45, False, True, True)
 
-        def render_panel(hover=-1, scrub=None, estado=est, volumen=vol):
-            return panel_mod.render(estado, cfg, art=art, volume=volumen, hover=hover,
-                                    k=kp, scrub=scrub).convert("RGB")
+        # (a) geometria: los DOS tamanos entran y no se pisan
+        for nombre, c in (("normal", cfg_normal), ("chico", cfg_chico)):
+            Wp, Hp = panel_mod.size(kp, c)
+            z = panel_mod.rects(kp, c)
+            piezas = ([z["tapa"], z["barra"], z["altavoz"], z["volumen"], z["cerrar"],
+                       z["texto"]] + list(z["controles"]))
+            adentro = all(0 <= r[0] < r[2] <= Wp and 0 <= r[1] < r[3] <= Hp for r in piezas)
+            solapan = any(z["controles"][i][2] > z["controles"][i + 1][0] for i in range(2))
+            pisa = (z["controles"][2][2] > z["altavoz"][0]
+                    or z["texto"][2] > z["cerrar"][0] and z["texto"][1] < z["cerrar"][3])
+            check(f"el panel {nombre} ({Wp}x{Hp}): zonas adentro y sin pisarse",
+                  adentro and not solapan and not pisa,
+                  f"controles hasta x={z['controles'][2][2]}, altavoz desde "
+                  f"x={z['altavoz'][0]}, cerrar {z['cerrar']}, texto {z['texto']}")
+        an = panel_mod.size(kp, cfg_normal)
+        ac = panel_mod.size(kp, cfg_chico)
+        check("el panel chico es mas chico (menos alto y menos ancho)",
+              ac[1] < an[1] * 0.6 and ac[0] <= an[0],
+              f"normal {an[0]}x{an[1]} -> chico {ac[0]}x{ac[1]} "
+              f"({ac[0] * ac[1] * 100.0 / (an[0] * an[1]):.0f}% del area)")
 
-        def en(img, r, filtro):
-            n = 0
-            for y in range(r[1], r[3]):
-                for x in range(r[0], r[2]):
-                    p = img.getpixel((x, y))
-                    if filtro(p):
-                        n += 1
-            return n
+        # (b) dibujo en los dos tamanos
+        for nombre, c in (("normal", cfg_normal), ("chico", cfg_chico)):
+            z = panel_mod.rects(kp, c)
+            L = panel_mod.layout(c)
+            art = draw.get_art(art_rojo, "rojo", int(L["tapa"][2]), int(L["tapa_radio"]))
+            im = panel_mod.render(est, c, art=art, volume=vol, hover=-1, k=kp).convert("RGB")
+            rojo_tapa = sum(1 for y in range(z["tapa"][1], z["tapa"][3])
+                            for x in range(z["tapa"][0], z["tapa"][2])
+                            if im.getpixel((x, y))[0] > 150
+                            and im.getpixel((x, y))[0] > im.getpixel((x, y))[1] + 60)
+            barra = sum(1 for y in range(z["barra"][1] - 2, z["barra"][3] + 3)
+                        for x in range(z["barra"][0], z["barra"][2])
+                        if im.getpixel((x, y))[0] > 150
+                        and im.getpixel((x, y))[0] - im.getpixel((x, y))[1] > 60)
+            texto = sum(1 for y in range(z["texto"][1], z["texto"][3])
+                        for x in range(z["texto"][0], z["texto"][2])
+                        if sum(im.getpixel((x, y))) > 420)
+            check(f"el panel {nombre} dibuja caratula, textos y barra",
+                  rojo_tapa > 120 and barra > 30 and texto > 80,
+                  f"tapa {rojo_tapa}, barra {barra}, texto {texto} pixeles")
 
-        im_normal = render_panel()
-        rojo_tapa = en(im_normal, z["tapa"], lambda p: p[0] > 150 and p[0] > p[1] + 60)
-        check("el panel dibuja la caratula en grande", rojo_tapa > 300,
-              f"{rojo_tapa} pixeles de la tapa")
-        claros_texto = en(im_normal, (panel_mod.TEXTO_X, panel_mod.TITULO_Y,
-                                      Wp - 14, panel_mod.TERCERA_Y + 14),
-                          lambda p: p[0] + p[1] + p[2] > 420)
-        check("el panel dibuja titulo, artista y la tercera linea",
-              claros_texto > 150, f"{claros_texto} pixeles de texto")
-        fila_barra = en(im_normal, (z["barra"][0], z["barra"][1] - 2,
-                                    z["barra"][2], z["barra"][3] + 2),
-                        lambda p: p[0] > 150 and p[1] < 160 and p[0] - p[1] > 60)
-        check("el panel dibuja la barra de progreso llena", fila_barra > 40,
-              f"{fila_barra} pixeles del color de la barra")
+        # (c) reacciona al hover, al arrastre y al silencio (en los dos tamanos)
+        for nombre, c in (("normal", cfg_normal), ("chico", cfg_chico)):
+            z = panel_mod.rects(kp, c)
+            L = panel_mod.layout(c)
+            art = draw.get_art(art_rojo, "rojo", int(L["tapa"][2]), int(L["tapa_radio"]))
+            base = panel_mod.render(est, c, art=art, volume=vol, k=kp).convert("RGB")
+            otros = {
+                "hover": panel_mod.render(est, c, art=art, volume=vol, hover=1,
+                                          k=kp).convert("RGB"),
+                "arrastre": panel_mod.render(est, c, art=art, volume=vol, hover=3,
+                                             scrub=150.0, k=kp).convert("RGB"),
+                "silencio": panel_mod.render(est, c, art=art,
+                                             volume=(0.45, True, True, True),
+                                             k=kp).convert("RGB"),
+            }
+            difs = {n: sum(1 for a, b in zip(base.get_flattened_data(),
+                                            im.get_flattened_data()) if a != b)
+                    for n, im in otros.items()}
+            check(f"el panel {nombre} marca hover, arrastre y silencio",
+                  all(v > 20 for v in difs.values()),
+                  ", ".join(f"{n} {v}" for n, v in difs.items()))
 
-        # (c) reacciona al hover, al arrastre y al silencio
-        im_hover = render_panel(hover=1)
-        im_scrub = render_panel(hover=3, scrub=150.0)
-        im_mudo = panel_mod.render(est, cfg, art=art, volume=(0.45, True, True, True),
-                                   hover=-1, k=kp).convert("RGB")
-        dif_hover = sum(1 for a, b in zip(im_normal.get_flattened_data(),
-                                          im_hover.get_flattened_data()) if a != b)
-        dif_scrub = sum(1 for a, b in zip(im_normal.get_flattened_data(),
-                                          im_scrub.get_flattened_data()) if a != b)
-        dif_mudo = sum(1 for a, b in zip(im_normal.get_flattened_data(),
-                                         im_mudo.get_flattened_data()) if a != b)
-        check("el panel marca el hover, el arrastre y el silencio",
-              dif_hover > 40 and dif_scrub > 60 and dif_mudo > 30,
-              f"pixeles distintos: hover {dif_hover}, arrastre {dif_scrub}, "
-              f"silencio {dif_mudo}")
-        check("las fracciones de la barra y del volumen se calculan bien",
-              abs(panel_mod.frac_en_barra(z["barra"][0], kp) - 0.0) < 0.01
-              and abs(panel_mod.frac_en_barra(z["barra"][2], kp) - 1.0) < 0.01
-              and abs(panel_mod.frac_en_volumen(z["volumen"][0], kp)) < 0.01,
-              f"borde izquierdo -> {panel_mod.frac_en_barra(z['barra'][0], kp):.2f}, "
-              f"borde derecho -> {panel_mod.frac_en_barra(z['barra'][2], kp):.2f}")
-        check("el panel sabe que hay bajo el cursor",
-              panel_mod.hit(*[(c[0] + c[2]) // 2 for c in [z["controles"][1]]][:1]
-                            + [(z["controles"][1][1] + z["controles"][1][3]) // 2], kp) == 1
-              and panel_mod.hit(z["cerrar"][0] + 2, z["cerrar"][1] + 2, kp) == 6
-              and panel_mod.hit(z["tapa"][0] + 2, z["tapa"][1] + 2, kp) == 7
-              and panel_mod.hit(-3, -3, kp) == -1,
-              "play/pausa -> 1, cerrar -> 6, caratula -> 7, afuera -> -1")
+        # (d) fracciones y prueba de impacto
+        for nombre, c in (("normal", cfg_normal), ("chico", cfg_chico)):
+            z = panel_mod.rects(kp, c)
+            ok_frac = (abs(panel_mod.frac_en_barra(z["barra"][0], kp, c)) < 0.01
+                       and abs(panel_mod.frac_en_barra(z["barra"][2], kp, c) - 1.0) < 0.01
+                       and abs(panel_mod.frac_en_volumen(z["volumen"][0], kp, c)) < 0.01)
+            ctr = z["controles"][1]
+            ok_hit = (panel_mod.hit((ctr[0] + ctr[2]) // 2, (ctr[1] + ctr[3]) // 2, kp, c) == 1
+                      and panel_mod.hit(z["cerrar"][0] + 2, z["cerrar"][1] + 2, kp, c) == 6
+                      and panel_mod.hit(z["tapa"][0] + 2, z["tapa"][1] + 2, kp, c) == 7
+                      and panel_mod.hit(-3, -3, kp, c) == -1)
+            check(f"el panel {nombre}: fracciones y que hay bajo el cursor",
+                  ok_frac and ok_hit, "fracciones y prueba de impacto correctas")
 
-        # (d) en vivo: abrir, comprobar y cerrar
-        w_panel = None
-        win32gui.PostMessage(w_now, WM_APP_PANEL, 1, 0xFFFF)
+        # (e) en vivo: abrir, ver y cerrar
+        win32gui.PostMessage(w_now, WM_APP_PANEL, 1, 1)
         time.sleep(0.9)
         w_panel = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
         if not w_panel:
@@ -1096,30 +1105,93 @@ def main() -> int:
             pr = rect(w_panel)
             ex = win32gui.GetWindowLong(w_panel, win32con.GWL_EXSTYLE)
             wr_w = rect(w_now)
-            mon = None
             try:
                 mi = win32api.GetMonitorInfo(win32api.MonitorFromWindow(w_now, 2))
                 mon = mi["Monitor"]
             except Exception:
-                pass
+                mon = None
             dentro = (mon is None or (mon[0] <= pr[0] and pr[2] <= mon[2]))
             check("el panel se abre y se ve", win32gui.IsWindowVisible(w_panel),
                   f"ventana {hex(w_panel)} en {pr}")
-            check("el panel es un globo: no entra en la barra de tareas",
+            check("el panel no entra en la barra de tareas",
                   bool(ex & 0x00000080) and bool(ex & 0x00080000),
                   f"TOOLWINDOW={'si' if ex & 0x80 else 'no'}, "
                   f"LAYERED={'si' if ex & 0x80000 else 'no'}")
             check("el panel queda encima del widget y dentro del monitor",
                   dentro and pr[3] <= wr_w[1] + 2,
-                  f"panel {pr} (abajo y={pr[3]}), widget arriba y={wr_w[1]}, "
-                  f"monitor {mon}")
+                  f"panel {pr} (abajo y={pr[3]}), widget arriba y={wr_w[1]}, monitor {mon}")
             im_vivo = ImageGrab.grab(all_screens=True, bbox=pr).convert("L")
             vals = list(im_vivo.get_flattened_data())
             check("el panel esta pintado (no es un rectangulo negro)",
                   max(vals) - min(vals) > 100 and sum(1 for v in vals if v > 150) > 300,
                   f"min {min(vals)} max {max(vals)}, "
                   f"{sum(1 for v in vals if v > 150)} pixeles claros")
-            win32gui.PostMessage(w_now, WM_APP_PANEL, 0, 0xFFFF)
+
+            # (f) modo gaming: chico, sin robar el foco y sin cerrarse al tocar afuera
+            auto_antes = float(cfg.get("panel_auto_hide_s", 0) or 0)
+            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 7, 0)      # sin auto-ocultar
+            # El tamano de partida no se asume: la configuracion puede estar ya en
+            # chico (si el modo gaming quedo prendido de una corrida anterior).
+            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 6, 0)      # modo normal
+            time.sleep(1.0)
+            win32gui.PostMessage(w_now, WM_APP_PANEL, 1, 1)
+            time.sleep(1.0)
+            w_antes = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+            pr_antes = rect(w_antes) if w_antes else (0, 0, 0, 0)
+            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 6, 1)      # modo gaming
+            time.sleep(1.2)
+            w_panel = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+            pr_g = rect(w_panel)
+            ex_g = win32gui.GetWindowLong(w_panel, win32con.GWL_EXSTYLE)
+            L = panel_mod.layout(cfgmod.load())
+            esperado = panel_mod.size((pr_g[3] - pr_g[1]) / float(L["H"]), cfgmod.load())
+            check("modo gaming: el panel queda chico",
+                  (pr_g[2] - pr_g[0], pr_g[3] - pr_g[1]) == esperado
+                  and pr_g[3] - pr_g[1] < pr_antes[3] - pr_antes[1],
+                  f"{(pr_g[2] - pr_g[0])}x{pr_g[3] - pr_g[1]} "
+                  f"(antes {pr_antes[2] - pr_antes[0]}x{pr_antes[3] - pr_antes[1]})")
+            check("modo gaming: no le roba el foco al juego (NOACTIVATE) y va arriba",
+                  bool(ex_g & 0x08000000) and bool(ex_g & 0x00000008),
+                  f"NOACTIVATE={'si' if ex_g & 0x08000000 else 'no'}, "
+                  f"TOPMOST={'si' if ex_g & 0x8 else 'no'}")
+            # tocar afuera: se manda otra ventana al frente y el panel debe seguir
+            try:
+                otra = win32gui.FindWindow("Shell_TrayWnd", None)
+                win32gui.SetForegroundWindow(otra or win32gui.GetDesktopWindow())
+            except Exception:
+                pass
+            time.sleep(0.9)
+            check("modo gaming: tocar afuera NO lo cierra",
+                  win32gui.IsWindowVisible(w_panel),
+                  f"visible={win32gui.IsWindowVisible(w_panel)}")
+
+            # (g) dejar pasar los clics al juego (WS_EX_TRANSPARENT)
+            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 3, 1)
+            time.sleep(0.8)
+            centro = ((pr_g[0] + pr_g[2]) // 2, (pr_g[1] + pr_g[3]) // 2)
+            quien = win32gui.WindowFromPoint(centro)
+            check("con 'clics al juego' el panel deja pasar los clics",
+                  quien != w_panel, f"bajo el cursor hay {hex(quien)} (panel {hex(w_panel)})")
+            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 3, 0)
+            time.sleep(0.6)
+            check("apagado, el panel vuelve a recibir los clics",
+                  win32gui.WindowFromPoint(centro) == w_panel,
+                  f"bajo el cursor hay {hex(win32gui.WindowFromPoint(centro))}")
+
+            # (h) auto-ocultar
+            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 7, 20)      # 2 segundos
+            time.sleep(2.8)
+            check("el auto-ocultar lo cierra solo",
+                  not win32gui.IsWindowVisible(w_panel),
+                  f"visible={win32gui.IsWindowVisible(w_panel)} tras 2,8 s (limite 2 s)")
+
+            # volver al modo normal y cerrar (el HUD se apaga primero: si no, el
+            # proximo cambio de cancion lo vuelve a abrir, que es su trabajo)
+            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 4, 0)
+            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 6, 0)
+            time.sleep(0.8)
+            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 7, int(auto_antes * 10))
+            win32gui.PostMessage(w_now, WM_APP_PANEL, 0, 1)
             time.sleep(0.7)
             check("el panel se cierra",
                   not win32gui.IsWindowVisible(

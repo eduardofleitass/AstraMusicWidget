@@ -30,6 +30,7 @@ Probado en Windows 10 22H2 (19045), escala 100% y 1920x1080.
 | Ondas de sonido (animacion) | clic derecho > *Ondas de sonido* |
 | Color de la barra o de las ondas | clic derecho > *Color de la barra* / *Color de las ondas* |
 | Ver la cancion en grande | clic en la caratula (o clic derecho > *Abrir el panel*) |
+| Jugando (overlay chico, que no moleste) | clic derecho > *Panel* > *Modo gaming*; se abre y cierra con `Ctrl+Alt+O` |
 | Volumen de lo que suena | pasá el mouse por el altavoz y arrastrá la barra que aparece; rueda del mouse encima del altavoz (±5%); clic seco = silencio |
 | Ponerlo en la barra de otro monitor | arrastralo al otro monitor, o clic derecho > *Monitor* |
 | Fondo transparente | clic derecho > *Fondo* |
@@ -244,6 +245,7 @@ al reproductor. Se registran sobre la ventana controladora, asi que siguen andan
 | `Ctrl + Alt + ←` / `→` | Anterior / siguiente |
 | `Ctrl + Alt + ↑` / `↓` | Volumen +5% / -5% |
 | `Ctrl + Alt + Shift + ↑` / `↓` | Adelantar / atrasar el paso configurado (10 s) |
+| `Ctrl + Alt + O` | Abrir / cerrar el panel (para no soltar el mouse jugando) |
 
 - La **rueda del mouse** sobre el widget tambien tiene pasos: sin modificador el paso
   normal (±10 s), con `Ctrl` fino (±1 s, para enganchar un estribillo) y con `Shift`
@@ -417,9 +419,8 @@ falla posible de esta tecnica:
 - `python tools\stop.py --force` mata el proceso y repara la barra si quedo
   inconsistente.
 
-87 de 89 pruebas pasan (`python tools\selftest.py` con el widget en marcha; las que
-se saltan son las que dependen de que haya musica sonando o de que el color sea el del
-tema):
+96 de 97 pruebas pasan (`python tools\selftest.py` con el widget en marcha; la que se
+salta es la de restaurar el color del tema, que no aplica cuando ya elegiste uno):
 anclaje, reconstruccion forzada, recuperacion de espacio, pixeles realmente
 pintados, transparencia del fondo medida contra la barra, recorrido completo del
 movimiento (que nunca quede tapado), la barra de progreso (que su zona clicable
@@ -447,23 +448,27 @@ Ademas comprueba los fundidos: que el cuadro del medio del cambio de caratula es
 efectivamente mezclado (medido: 69,1 del lado de la tapa vieja y 70,5 del de la nueva,
 sobre un cambio total de 139,6) y que el mostrar/ocultar pase por un estado intermedio
 (medido: 1920 pixeles dibujados visibles -> 1590 a mitad del fundido -> 0 oculto).
-Del panel comprueba las dos mitades: el dibujo y la geometria sin ventana (que cada
-parte pinte donde tiene que pintar, que reaccione al hover, al arrastre y al silencio,
-que las zonas entren y no se pisen, que sepa que hay bajo el cursor) y en vivo que se
-abra, sea un globo (`WS_EX_TOOLWINDOW`), quede encima del widget y dentro del monitor,
-este pintado y se cierre.
+Del panel comprueba las dos mitades y los dos tamanos: sin ventana, que cada parte
+pinte donde tiene que pintar (caratula, textos, barra, controles), que reaccione al
+hover, al arrastre y al silencio, que las zonas entren y no se pisen, que sepa que hay
+bajo el cursor y que el chico sea mucho mas chico (medido: 41% del area del normal); y
+en vivo que se abra, sea un globo, quede encima del widget y dentro del monitor, este
+pintado, y el modo gaming: que quede chico (320x178 -> 280x84), que no le robe el foco
+(`NOACTIVATE` + `TOPMOST`), que tocar afuera **no** lo cierre, que con "clics al juego"
+el clic pase de largo y que el auto-ocultar lo cierre solo.
 En `clicktest.py` se prueba con clic real: un clic seco en la caratula lo abre, el
 play/pausa cambia la reproduccion, un clic al 70% de su barra salta ahi (medido: pedido
 129 s, informado 128 s), un clic en su barra de volumen lo deja en el 30% (medido 29%) y
 la cruz lo cierra.
 
-Y 15 de 15 de atajos con **teclas reales** (`python tools\hotkeytest.py`): `Ctrl+Alt+P`
+Y 18 de 18 de atajos con **teclas reales** (`python tools\hotkeytest.py`): `Ctrl+Alt+P`
 cambia la reproduccion, `Ctrl+Alt+←/→` cambia de tema, `Ctrl+Alt+Shift+↑/↓` mueve
 exacto (+10,0 s y -10,0 s medidos con la musica en pausa, para que la interpolacion no
 contamine la medicion), `Ctrl+Alt+↑/↓` mueve el volumen (50% -> 55% -> 50%),
 `Ctrl+Alt+M` oculta y muestra, la rueda con `Ctrl`/`Shift` da pasos distintos (medido:
 +1,0 s / +60,0 s / +10,0 s) y apagar los atajos desde el menu los desactiva de verdad
-(con los atajos apagados `Ctrl+Alt+P` no hace nada, y al prenderlos vuelve a andar).
+(con los atajos apagados `Ctrl+Alt+P` no hace nada, y al prenderlos vuelve a andar),
+`Ctrl+Alt+O` abre y cierra el panel, y el HUD abre el panel solo al cambiar de cancion.
 
 En `clicktest.py`, si una lista de reproduccion cambia de tema justo mientras se
 mide, el comando se pierde y la prueba lo informa como `SALTA` (interferencia) en
@@ -514,6 +519,37 @@ Detalles tecnicos que valen la pena:
   que entren en el panel y **no se pisen**: la de "siguiente" pisaba la del altavoz por
   3 px y dos zonas que se pisan se roban clics.
 
+### Modo gaming del panel
+
+Para jugar hace falta lo contrario que para el escritorio: que el panel **tome menos
+pantalla** y que **no le saque el foco al juego**. Un interruptor en el menu (clic
+derecho > *Panel* > *Modo gaming*) prende el conjunto:
+
+| Ajuste | Escritorio | Gaming |
+|---|---|---|
+| Tamano | 320x178 (caratula grande, 3 lineas) | **280x84** (dos filas: caratula y texto arriba, controles, barra y volumen abajo) |
+| Foco | se activa (Escape y clic afuera funcionan) | **no se activa nunca** (`WS_EX_NOACTIVATE` + `WM_MOUSEACTIVATE` → `MA_NOACTIVATE`) |
+| Al tocar afuera | se cierra | **sigue abierto** |
+| Capas | normal | **siempre arriba** (`WS_EX_TOPMOST`, sirve sobre juegos en ventana) |
+| Auto-ocultar | nunca | **a los 6 s** sin usarlo |
+| Al cambiar de cancion | no aparece | **aparece solo 6 s** (un HUD: mirás el titulo sin salir del juego) |
+| Opacidad | opaco | 235/255 (deja ver un poco lo de atras) |
+
+- Se abre y cierra con **`Ctrl+Alt+O`**, sin soltar el mouse. Los controles del panel
+  siguen andando con clic, y los atajos globales (play/pausa, siguiente, volumen,
+  ±10 s) funcionan con el juego en primer plano.
+- **Recuerda donde lo dejaste**: si lo arrastras, se queda ahi (en el menu hay
+  *Volver a anclarlo al widget*).
+- **Dejar pasar los clics al juego** (`WS_EX_TRANSPARENT`): el panel queda solo para
+  mirar y los clics van al juego como si no estuviera. Se maneja con los atajos.
+- Cada ajuste se puede tocar por separado desde el mismo submenu, si no queres el
+  paquete completo.
+
+Lo que **no** se puede, y conviene saberlo: sobre un juego en **pantalla completa
+exclusiva** ninguna ventana puede dibujarse encima (Windows le da la pantalla al juego;
+solo se podria con un hook tipo inyeccion). Sobre juegos en **ventana** o **pantalla
+completa sin bordes** (que es como juega la mayoria hoy) el overlay se ve perfecto.
+
 ## Fundidos
 
 Dos transiciones, para que el widget no cambie a los saltos:
@@ -562,6 +598,16 @@ Como se hacen, y por que no cuestan CPU:
 | `fade_cover_ms` | 220 | Cuanto dura ese fundido |
 | `fade_visible` | true | Fundido al mostrar/ocultar el widget (solo con fondo transparente) |
 | `fade_step` | 48 | Cuanto cambia el alfa por cuadro en ese fundido (255 / paso = cuadros) |
+| `panel_mode` | `"normal"` | `"gaming"` recuerda el estado del interruptor del menu |
+| `panel_size` | `"normal"` | `"normal"` (320x178) o `"chico"` (280x84) |
+| `panel_no_robar` | false | No le saca el foco a lo que este adelante y no se cierra al tocar afuera |
+| `panel_topmost` | false | Queda siempre arriba (util con juegos en ventana) |
+| `panel_clics_al_juego` | false | Los clics pasan al juego como si el panel no estuviera |
+| `panel_auto_hide_s` | 0 | Se oculta solo tras N segundos sin usarlo (0 = nunca) |
+| `panel_hud` | false | Aparece un rato al cambiar de cancion |
+| `panel_alpha` | 255 | Opacidad de todo el panel (235 leve, 200 translucido, 160 muy transparente) |
+| `panel_bg_alpha` | 250 | Alfa del fondo dibujado (para que no se lea la ventana de atras) |
+| `panel_pos` | `null` | `[x, y]` en pantalla donde lo dejaste arrastrado; `null` = encima del widget |
 | `show_volume` | true | Celda del altavoz despues de los botones (menu > *Mostrar altavoz*) |
 | `volume_step` | 5 | Cuanto sube o baja cada muesca de la rueda sobre el altavoz, en porcentaje |
 | `taskbar_monitor` | `null` | Barra de tareas donde vive el widget: `null` = la del monitor principal, o el nombre del dispositivo (`"\\.\DISPLAY5"`). Lo guarda el menu *Monitor* o el arrastre |

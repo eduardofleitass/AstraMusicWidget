@@ -47,8 +47,8 @@ HOTKEY_TOGGLE = 1
 # programa), no sobre el widget: asi siguen andando con el widget oculto, que es
 # justo cuando mas hacen falta.
 # Cada uno: (id, modificadores, tecla, para que sirve)
-VK_TECLAS = {0x4D: "M", 0x50: "P", 0x25: "Izq", 0x26: "Arriba", 0x27: "Der",
-             0x28: "Abajo"}
+VK_TECLAS = {0x4D: "M", 0x50: "P", 0x4F: "O", 0x25: "Izq", 0x26: "Arriba",
+             0x27: "Der", 0x28: "Abajo"}
 HOTKEYS = (
     (HOTKEY_TOGGLE, win32con.MOD_CONTROL | win32con.MOD_ALT, 0x4D, "mostrar/ocultar"),
     (2, win32con.MOD_CONTROL | win32con.MOD_ALT, 0x50, "play/pausa"),
@@ -58,6 +58,7 @@ HOTKEYS = (
     (6, win32con.MOD_CONTROL | win32con.MOD_ALT, 0x28, "volumen -"),
     (7, win32con.MOD_CONTROL | win32con.MOD_ALT | win32con.MOD_SHIFT, 0x26, "adelantar"),
     (8, win32con.MOD_CONTROL | win32con.MOD_ALT | win32con.MOD_SHIFT, 0x28, "atrasar"),
+    (9, win32con.MOD_CONTROL | win32con.MOD_ALT, 0x4F, "panel"),
 )
 MOD_NOREPEAT = 0x4000   # sin esto, mantener la tecla repite la accion sin parar
 
@@ -92,6 +93,11 @@ WM_APP_VOLUME = win32con.WM_APP + 7  # wParam = volumen x1000; lParam 1 silencia
 WM_APP_SHOW = win32con.WM_APP + 8    # pedirle a la instancia viva que se muestre
 WM_APP_HOTKEYS = win32con.WM_APP + 9  # wParam = 1/0: prender o apagar los atajos
 WM_APP_PANEL = win32con.WM_APP + 10  # wParam = 1/0: abrir o cerrar el panel
+WM_APP_PANEL_CFG = win32con.WM_APP + 11  # pruebas: cambiar un ajuste del panel
+# Opciones del submenu Panel (ids 60..).
+PANEL_AUTO_HIDE = [(0, "Nunca"), (3, "A los 3 s"), (6, "A los 6 s"), (10, "A los 10 s")]
+PANEL_ALPHAS = [(255, "Opaco"), (235, "Leve"), (200, "Translucido"),
+                (160, "Muy transparente")]
 
 # Colores que ofrece el menu para la barra de progreso y las ondas (None = el del
 # tema). El menu guarda el hex en config.json; a mano tambien vale [r, g, b].
@@ -285,6 +291,8 @@ class WidgetApp:
         self.panel_scrub = None # segundos destino mientras se arrastra ahi
         self._panel_sig = None
         self._panel_wndproc_ref = None
+        self._panel_int = time.monotonic()   # ultima interaccion con el panel
+        self._hud_key = None                 # ultima caratula mostrada por el HUD
         self._vis_alpha = 255   # alfa global del widget (fundido de mostrar/ocultar)
         self._vis_target = 255
         self._fade_prev = None  # cuadro anterior, para el fundido de caratula
@@ -907,6 +915,15 @@ class WidgetApp:
                 # la animacion necesita mas cuadros que la barra de progreso
                 ms = min(ms, max(20, int(round(1000.0 / max(1, int(
                     self.cfg.get("wave_fps", 20)))))))
+            # HUD: mostrarlo un rato al cambiar de cancion (para ver el titulo sin
+            # salir del juego). Se apaga solo con el auto-ocultar.
+            if self.cfg.get("panel_hud", False) and self.state.has_session:
+                if self._hud_key is None:
+                    self._hud_key = self.state.art_key          # el primero no cuenta
+                elif self.state.art_key != self._hud_key:
+                    self._hud_key = self.state.art_key
+                    if not self.panel_visible:
+                        self.toggle_panel(True)
             if self.panel_visible:
                 self._panel_tick()
                 ms = min(ms, 100)     # el panel muestra la posicion: mas seguido
@@ -1051,6 +1068,10 @@ class WidgetApp:
             self._seek_by(self._seek_step())
         elif hk_id == 8:
             self._seek_by(-self._seek_step())
+        elif hk_id == 9:
+            self.toggle_panel()
+            self.log("atajo: %s", nombre)
+            return
         else:
             return
         self.log("atajo: %s", nombre)
@@ -1327,6 +1348,22 @@ class WidgetApp:
                 return 0
             if msg == WM_APP_PANEL:
                 self.toggle_panel(None if lp == 0xFFFF else bool(wp))
+                return 0
+            if msg == WM_APP_PANEL_CFG:
+                # pruebas y scripts: (clave, valor) en wParam/lParam no alcanza para
+                # texto, asi que la clave viene en wParam y el valor en lParam
+                claves = {1: "panel_no_robar", 2: "panel_topmost", 3: "panel_clics_al_juego",
+                          4: "panel_hud"}
+                if int(wp) == 5:
+                    self.set_panel_size("chico" if lp else "normal")
+                elif int(wp) == 6:
+                    self.set_panel_gaming(bool(lp))
+                elif int(wp) == 7:
+                    self.set_panel_ajuste("panel_auto_hide_s", lp / 10.0)
+                elif int(wp) == 8:
+                    self.set_panel_ajuste("panel_alpha", lp)
+                elif int(wp) in claves:
+                    self.set_panel_ajuste(claves[int(wp)], bool(lp))
                 return 0
             if msg == WM_APP_WAVES:
                 self.set_waves(bool(wp), save=bool(lp))
@@ -1741,16 +1778,62 @@ class WidgetApp:
         """Escala del panel: la misma que el widget (alto de la barra / 40)."""
         return max(0.6, self.k or 1.0)
 
+    def _panel_ex_style(self) -> int:
+        """Estilos extendidos del panel segun el modo.
+
+        - `WS_EX_TOOLWINDOW`: no aparece en la barra de tareas ni en Alt+Tab.
+        - `WS_EX_NOACTIVATE` (modo gaming): el panel NO se activa nunca, asi el juego no
+          pierde el foco, el teclado sigue yendo al juego y el panel no se cierra al
+          tocar afuera (que era justo lo que molestaba).
+        - `WS_EX_TOPMOST`: queda por encima de todo (util sobre juegos en ventana).
+        - `WS_EX_TRANSPARENT`: los clics pasan al juego como si el panel no estuviera;
+          queda de solo lectura y se maneja con los atajos.
+        """
+        ex = 0x00080000 | 0x00000080          # WS_EX_LAYERED | WS_EX_TOOLWINDOW
+        if self.cfg.get("panel_no_robar", False):
+            ex |= 0x08000000                  # WS_EX_NOACTIVATE
+        if self.cfg.get("panel_topmost", False):
+            ex |= 0x00000008                  # WS_EX_TOPMOST
+        if self.cfg.get("panel_clics_al_juego", False):
+            ex |= 0x00000020                  # WS_EX_TRANSPARENT
+        return ex
+
+    def _panel_aplicar_estilos(self) -> None:
+        """Aplica los estilos al panel ya creado (cambiar el modo en vivo)."""
+        if not (self.hwnd_panel and win32gui.IsWindow(self.hwnd_panel)):
+            return
+        try:
+            win32gui.SetWindowLong(self.hwnd_panel, win32con.GWL_EXSTYLE,
+                                   self._panel_ex_style())
+            win32gui.SetWindowPos(self.hwnd_panel, 0, 0, 0, 0, 0,
+                                  win32con.SWP_NOMOVE | win32con.SWP_NOSIZE
+                                  | win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE
+                                  | 0x0020)   # SWP_FRAMECHANGED
+        except Exception as exc:
+            self.log("panel: no se pudieron aplicar los estilos: %r", exc)
+
+    def _panel_olvidar(self) -> None:
+        """Destruye la ventana del panel (cuando cambia de tamano hay que rehacerla)."""
+        if self.hwnd_panel and win32gui.IsWindow(self.hwnd_panel):
+            try:
+                win32gui.DestroyWindow(self.hwnd_panel)
+            except Exception:
+                pass
+        self.hwnd_panel = 0
+        self.dib_panel = None
+        self.panel_visible = False
+        self._panel_sig = None
+
     def _create_panel(self) -> bool:
         if self.hwnd_panel and win32gui.IsWindow(self.hwnd_panel):
             return True
         k = self._panel_k()
-        w, h = panel_mod.size(k)
+        w, h = panel_mod.size(k, self.cfg)
         hinst = win32api.GetModuleHandle(None)
-        # Ventana propia de nivel superior, con WS_EX_TOOLWINDOW para que no aparezca
-        # en la barra de tareas ni en el alt-tab: es un globo del widget, no una app.
+        # Ventana propia de nivel superior (ver _panel_ex_style): es un globo del
+        # widget para ver y manejar la musica, no una aplicacion aparte.
         self.hwnd_panel = win32gui.CreateWindowEx(
-            0x00080000 | 0x00000080,          # WS_EX_LAYERED | WS_EX_TOOLWINDOW
+            self._panel_ex_style(),
             PANEL_CLASS, "gorus-panel",
             win32con.WS_POPUP | win32con.WS_CLIPSIBLINGS,
             0, 0, w, h, 0, None, hinst, None)
@@ -1762,9 +1845,25 @@ class WidgetApp:
         return True
 
     def _panel_pos(self) -> tuple[int, int, int, int]:
-        """Donde va el panel: encima del widget si hay lugar, si no debajo."""
+        """Donde va el panel.
+
+        Si el usuario lo arrastro alguna vez, se respeta ESA posicion (en modo gaming
+        el panel vive donde lo pusiste, no bailando detras del widget). Si no, va encima
+        del widget y, si no entra, debajo.
+        """
         k = self._panel_k()
-        w, h = panel_mod.size(k)
+        w, h = panel_mod.size(k, self.cfg)
+        guardada = self.cfg.get("panel_pos")
+        if isinstance(guardada, (list, tuple)) and len(guardada) == 2:
+            try:
+                x, y = int(guardada[0]), int(guardada[1])
+                mon = win32api.MonitorFromPoint((x + w // 2, y + h // 2), 2)
+                mi = win32api.GetMonitorInfo(mon)["Monitor"]
+                x = max(mi[0] + 4, min(x, mi[2] - w - 4))
+                y = max(mi[1] + 4, min(y, mi[3] - h - 4))
+                return (x, y, w, h)
+            except Exception:
+                pass
         wr = win32gui.GetWindowRect(self.hwnd_widget) if self.hwnd_widget else None
         if not wr:
             return (0, 0, w, h)
@@ -1802,14 +1901,27 @@ class WidgetApp:
             pass
         self.panel_visible = True
         self._panel_sig = None
+        self._panel_int = time.monotonic()
         self._panel_render(force=True)
+        sin_foco = bool(self.cfg.get("panel_no_robar", False))
         try:
-            win32gui.ShowWindow(self.hwnd_panel, win32con.SW_SHOW)
-            # Se activa: asi Escape y el clic afuera (WM_ACTIVATE) funcionan
-            win32gui.SetForegroundWindow(self.hwnd_panel)
+            # Con WS_EX_NOACTIVATE hay que mostrarlo SIN activar: si se activara, el
+            # juego perderia el foco (y en pantalla completa se minimiza).
+            win32gui.ShowWindow(self.hwnd_panel,
+                                win32con.SW_SHOWNOACTIVATE if sin_foco
+                                else win32con.SW_SHOW)
+            if not sin_foco:
+                # Se activa: asi Escape y el clic afuera (WM_ACTIVATE) funcionan
+                win32gui.SetForegroundWindow(self.hwnd_panel)
+            else:
+                # igual que arriba pero sin robar el foco
+                win32gui.SetWindowPos(self.hwnd_panel, -1, 0, 0, 0, 0,
+                                      win32con.SWP_NOMOVE | win32con.SWP_NOSIZE
+                                      | win32con.SWP_NOACTIVATE)
         except Exception:
             pass
-        self.log("panel abierto en %s", (x, y, w, h))
+        self.log("panel abierto en %s%s", (x, y, w, h),
+                 " (sin robar el foco)" if sin_foco else "")
 
     def _panel_render(self, force: bool = False) -> None:
         if not self.panel_visible or not self.hwnd_panel or not self.dib_panel:
@@ -1827,17 +1939,21 @@ class WidgetApp:
             return
         self._panel_sig = sig
         S = k * max(1, int(self.cfg.get("supersample", 3)))
+        Lp = panel_mod.layout(self.cfg)
         art = None
         if self.cfg.get("show_art", True):
             art = draw.get_art(self.state.art, self.state.art_key,
-                               int(round(panel_mod.TAPA * S)),
-                               int(round(10 * S)))
+                               int(round(Lp["tapa"][2] * S)),
+                               int(round(Lp["tapa_radio"] * S)))
         img = panel_mod.render(self.state, self.cfg, art=art, volume=vol,
                                hover=self.panel_hover, k=k, scrub=self.panel_scrub)
+        # opacidad de todo el panel (SourceConstantAlpha): en gaming se agradece un
+        # overlay que deje ver lo de atras sin tener que buscarlo en el menu
+        self.dib_panel.alpha = int(max(60, min(255, self.cfg.get("panel_alpha", 255))))
         self.dib_panel.upload(draw.to_premult_bgra(img))
 
     def _panel_frac_barra(self, x: int) -> float:
-        return panel_mod.frac_en_barra(x, self._panel_k())
+        return panel_mod.frac_en_barra(x, self._panel_k(), self.cfg)
 
     def _panel_seek_a(self, x: int) -> None:
         if not self._can_seek():
@@ -1849,7 +1965,7 @@ class WidgetApp:
             self.log("panel: salto a %.0f s", target)
 
     def _panel_vol_a(self, x: int) -> None:
-        self._vol_aplicar(panel_mod.frac_en_volumen(x, self._panel_k()))
+        self._vol_aplicar(panel_mod.frac_en_volumen(x, self._panel_k(), self.cfg))
 
     def toggle_panel_mute(self) -> None:
         self._vol_toggle_mute()
@@ -1866,9 +1982,17 @@ class WidgetApp:
                 return 0
             if msg == win32con.WM_ERASEBKGND:
                 return 1
+            if msg == 0x0021 and self.cfg.get("panel_no_robar", False):
+                # WM_MOUSEACTIVATE: ademas de WS_EX_NOACTIVATE (que ya impide que el
+                # clic lo traiga al frente), se responde MA_NOACTIVATE. Es la receta
+                # de los overlays: asi el juego no pierde el foco ni el teclado.
+                return 3      # MA_NOACTIVATE
             if msg == win32con.WM_ACTIVATE and (wp & 0xFFFF) == 0:   # WA_INACTIVE
-                # Clic afuera: el panel se cierra (como cualquier globo del sistema)
-                self.toggle_panel(False)
+                # Clic afuera: el panel se cierra (como cualquier globo del sistema).
+                # En modo gaming NO: ahi el panel nunca tiene el foco, asi que tocar el
+                # juego no lo cierra (es lo que se pide para jugar).
+                if not self.cfg.get("panel_no_robar", False):
+                    self.toggle_panel(False)
                 return 0
             if msg == win32con.WM_KEYDOWN and wp == win32con.VK_ESCAPE:
                 self.toggle_panel(False)
@@ -1876,10 +2000,12 @@ class WidgetApp:
             if msg == win32con.WM_MOUSEMOVE:
                 x = lp & 0xFFFF
                 y = (lp >> 16) & 0xFFFF
+                self._panel_int = time.monotonic()      # usarlo reinicia el auto-ocultar
                 if self.panel_drag is not None:
                     self._panel_drag_move(x, y)
                     return 0
-                hit = panel_mod.hit(x, y, self._panel_k())
+                self._panel_int = time.monotonic()
+                hit = panel_mod.hit(x, y, self._panel_k(), self.cfg)
                 if hit != self.panel_hover:
                     self.panel_hover = hit
                     self._panel_render(force=True)
@@ -1897,12 +2023,13 @@ class WidgetApp:
             if msg == win32con.WM_LBUTTONDOWN:
                 x = lp & 0xFFFF
                 y = (lp >> 16) & 0xFFFF
-                hit = panel_mod.hit(x, y, self._panel_k())
+                self._panel_int = time.monotonic()
+                hit = panel_mod.hit(x, y, self._panel_k(), self.cfg)
                 if hit in (3, 4):
                     self.panel_drag = {"hit": hit, "x0": x, "y0": y, "moved": False}
                     if hit == 3:
-                        self.panel_scrub = (panel_mod.frac_en_barra(x, self._panel_k())
-                                            * self.state.duration)
+                        self.panel_scrub = (panel_mod.frac_en_barra(
+                            x, self._panel_k(), self.cfg) * self.state.duration)
                     else:
                         self._panel_vol_a(x)
                     try:
@@ -1922,7 +2049,7 @@ class WidgetApp:
                 if self.panel_drag is not None:
                     self._panel_end_drag(x)
                     return 0
-                hit = panel_mod.hit(x, y, self._panel_k())
+                hit = panel_mod.hit(x, y, self._panel_k(), self.cfg)
                 if hit == 0:
                     self.poller.prev_track()
                 elif hit == 1:
@@ -1946,7 +2073,7 @@ class WidgetApp:
                     c = win32gui.ScreenToClient(hwnd, win32gui.GetCursorPos())
                     ctrl = win32api.GetKeyState(win32con.VK_CONTROL) < 0
                     shift = win32api.GetKeyState(win32con.VK_SHIFT) < 0
-                    if panel_mod.hit(*c, self._panel_k()) in (4, 5):
+                    if panel_mod.hit(*c, self._panel_k(), self.cfg) in (4, 5):
                         self._vol_step(steps, fino=ctrl)
                     elif ctrl and not shift:
                         self._seek_by(steps * self._seek_fino())
@@ -1970,7 +2097,7 @@ class WidgetApp:
         if abs(x - d["x0"]) >= 3 or abs(y - d["y0"]) >= 3:
             d["moved"] = True
         if d["hit"] == 3:
-            self.panel_scrub = (panel_mod.frac_en_barra(x, self._panel_k())
+            self.panel_scrub = (panel_mod.frac_en_barra(x, self._panel_k(), self.cfg)
                                 * self.state.duration)
             try:
                 win32gui.SetCursor(win32gui.LoadCursor(0, IDC_SIZEWE))
@@ -1992,6 +2119,16 @@ class WidgetApp:
 
     def _panel_end_drag(self, x: int) -> None:
         d, self.panel_drag = self.panel_drag, None
+        if d and d.get("hit") == -1 and self.hwnd_panel:
+            # el usuario lo dejo ahi: se recuerda (en modo gaming el panel vive donde
+            # lo pusiste, no saltando detras del widget)
+            try:
+                wr = win32gui.GetWindowRect(self.hwnd_panel)
+                self.cfg["panel_pos"] = [wr[0], wr[1]]
+                cfgmod.save(self.cfg)
+                self.log("panel: posicion guardada en (%d, %d)", wr[0], wr[1])
+            except Exception:
+                pass
         scrub, self.panel_scrub = self.panel_scrub, None
         try:
             win32gui.ReleaseCapture()
@@ -2001,7 +2138,8 @@ class WidgetApp:
             return
         if d["hit"] == 3:
             if scrub is None:
-                scrub = panel_mod.frac_en_barra(x, self._panel_k()) * self.state.duration
+                scrub = (panel_mod.frac_en_barra(x, self._panel_k(), self.cfg)
+                         * self.state.duration)
             self._panel_seek_a(x)
         elif d["hit"] == 4:
             self._panel_vol_a(x)
@@ -2015,7 +2153,76 @@ class WidgetApp:
             self.hwnd_panel = 0
             self.panel_visible = False
             return
+        # auto-ocultar: en modo gaming el panel se va solo si no lo estas usando
+        auto = float(self.cfg.get("panel_auto_hide_s", 0) or 0)
+        if auto > 0 and (time.monotonic() - self._panel_int) > auto:
+            self.log("panel: se oculta solo (%.0f s sin usarlo)", auto)
+            self.toggle_panel(False)
+            return
         self._panel_render()
+
+    # ------------------------------------------------- ajustes del panel
+    def set_panel_size(self, tam: str, save: bool = True) -> None:
+        """Tamano del panel: "normal" o "chico" (hay que rehacer la ventana)."""
+        tam = "chico" if str(tam).lower().startswith(("chi", "com", "min")) else "normal"
+        if self.cfg.get("panel_size") == tam:
+            return
+        self.cfg["panel_size"] = tam
+        visible = self.panel_visible
+        self._panel_olvidar()
+        if save:
+            cfgmod.save(self.cfg)
+        self.log("panel: tamano %s", tam)
+        if visible:
+            self.toggle_panel(True)
+
+    def set_panel_ajuste(self, clave: str, valor, save: bool = True) -> None:
+        """Cambia un ajuste del panel en vivo (menu y pruebas)."""
+        if clave == "panel_size":
+            self.set_panel_size(valor, save=save)
+            return
+        self.cfg[clave] = valor
+        if save:
+            cfgmod.save(self.cfg)
+        if clave in ("panel_no_robar", "panel_topmost", "panel_clics_al_juego"):
+            self._panel_aplicar_estilos()
+        self._panel_sig = None
+        self._panel_render(force=True)
+        self.log("panel: %s = %s", clave, valor)
+
+    def set_panel_gaming(self, on: bool = True, save: bool = True) -> None:
+        """Modo gaming: chico, sin robar el foco, arriba de todo, se oculta solo y
+        aparece al cambiar de cancion. Un solo interruptor en el menu."""
+        on = bool(on)
+        self.cfg["panel_mode"] = "gaming" if on else "normal"
+        if on:
+            self.cfg.update({"panel_size": "chico", "panel_no_robar": True,
+                             "panel_topmost": True, "panel_auto_hide_s": 6,
+                             "panel_hud": True, "panel_alpha": 235,
+                             "panel_clics_al_juego": False})
+        else:
+            self.cfg.update({"panel_size": "normal", "panel_no_robar": False,
+                             "panel_topmost": False, "panel_auto_hide_s": 0,
+                             "panel_hud": False, "panel_alpha": 255,
+                             "panel_clics_al_juego": False})
+        visible = self.panel_visible
+        self._panel_olvidar()
+        if save:
+            cfgmod.save(self.cfg)
+        self.log("panel: modo %s", "gaming" if on else "normal")
+        if visible:
+            self.toggle_panel(True)
+
+    def panel_anclar_al_widget(self, save: bool = True) -> None:
+        """Olvida la posicion arrastrada: el panel vuelve a aparecer sobre el widget."""
+        self.cfg["panel_pos"] = None
+        if save:
+            cfgmod.save(self.cfg)
+        if self.panel_visible:
+            self._panel_sig = None
+            self.toggle_panel(False)
+            self.toggle_panel(True)
+        self.log("panel: vuelve a anclarse al widget")
 
     # ------------------------------------------------------------------- menu
     def _show_menu(self) -> None:
@@ -2067,6 +2274,44 @@ class WidgetApp:
                         mon_sub, flags, 50 + i,
                         "%s  (%dx%d)" % (b["nombre"], mr[2] - mr[0], mr[3] - mr[1]))
 
+            # Submenu del panel: agrupa todo lo del mini reproductor, incluido el
+            # modo gaming en un solo interruptor.
+            pan_sub = win32gui.CreatePopupMenu()
+
+            def pan_check(ident, etiqueta, marcado):
+                flags = win32con.MF_STRING | (win32con.MF_CHECKED if marcado else 0)
+                win32gui.AppendMenu(pan_sub, flags, ident, etiqueta)
+
+            gaming = str(self.cfg.get("panel_mode", "normal")).lower() == "gaming"
+            pan_check(60, "Modo gaming (chico y sin robar el foco)", gaming)
+            win32gui.AppendMenu(pan_sub, win32con.MF_SEPARATOR, 0, "")
+            pan_check(61, "Tamano chico", str(self.cfg.get("panel_size", "normal")) == "chico")
+            pan_check(62, "No robar el foco del juego", bool(self.cfg.get("panel_no_robar", False)))
+            pan_check(63, "Siempre arriba de todo", bool(self.cfg.get("panel_topmost", False)))
+            pan_check(64, "Dejar pasar los clics al juego", bool(self.cfg.get("panel_clics_al_juego", False)))
+            pan_check(65, "Aparecer al cambiar de cancion", bool(self.cfg.get("panel_hud", False)))
+            auto_sub = win32gui.CreatePopupMenu()
+            auto_actual = float(self.cfg.get("panel_auto_hide_s", 0) or 0)
+            for i, (seg, etiqueta) in enumerate(PANEL_AUTO_HIDE):
+                flags = win32con.MF_STRING
+                if abs(auto_actual - seg) < 0.5:
+                    flags |= win32con.MF_CHECKED
+                win32gui.AppendMenu(auto_sub, flags, 66 + i, etiqueta)
+            win32gui.AppendMenu(pan_sub, win32con.MF_POPUP | win32con.MF_STRING,
+                                auto_sub, "Ocultarse solo")
+            alpha_sub = win32gui.CreatePopupMenu()
+            alpha_actual = int(self.cfg.get("panel_alpha", 255))
+            for i, (val, etiqueta) in enumerate(PANEL_ALPHAS):
+                flags = win32con.MF_STRING
+                if val == alpha_actual:
+                    flags |= win32con.MF_CHECKED
+                win32gui.AppendMenu(alpha_sub, flags, 70 + i, etiqueta)
+            win32gui.AppendMenu(pan_sub, win32con.MF_POPUP | win32con.MF_STRING,
+                                alpha_sub, "Opacidad")
+            win32gui.AppendMenu(pan_sub, win32con.MF_SEPARATOR, 0, "")
+            win32gui.AppendMenu(pan_sub, win32con.MF_STRING, 74,
+                                "Volver a anclarlo al widget")
+
             step = self._seek_step()
             seek_ok = self._can_seek()
             vol_ok = self._vol_disponible()
@@ -2085,6 +2330,7 @@ class WidgetApp:
                 ("check", 19, "Mostrar altavoz", bool(self.cfg.get("show_volume", True))),
                 ("check", 24, "Atajos globales (Ctrl+Alt+...)", bool(self.cfg.get("hotkeys", True))),
                 ("check", 26, "Abrir el panel (clic en la caratula)", bool(self.panel_visible)),
+                ("popup", pan_sub, "Panel", True),
                 ("sep", 0, "", None),
                 ("check", 16, "Silenciar", bool(self._vol_estado()[1]) if self._vol_disponible() else False),
                 ("item", 17, f"Volumen +{self.cfg.get('volume_step', 5)}%", vol_ok),
@@ -2157,6 +2403,29 @@ class WidgetApp:
             self.set_hotkeys(not self.cfg.get("hotkeys", True))
         elif cmd == 26:
             self.toggle_panel()
+        elif cmd == 60:
+            self.set_panel_gaming(not (str(self.cfg.get("panel_mode", "normal")).lower()
+                                       == "gaming"))
+        elif cmd == 61:
+            self.set_panel_size("chico" if str(self.cfg.get("panel_size", "normal"))
+                                != "chico" else "normal")
+        elif cmd == 62:
+            self.set_panel_ajuste("panel_no_robar",
+                                  not self.cfg.get("panel_no_robar", False))
+        elif cmd == 63:
+            self.set_panel_ajuste("panel_topmost",
+                                  not self.cfg.get("panel_topmost", False))
+        elif cmd == 64:
+            self.set_panel_ajuste("panel_clics_al_juego",
+                                  not self.cfg.get("panel_clics_al_juego", False))
+        elif cmd == 65:
+            self.set_panel_ajuste("panel_hud", not self.cfg.get("panel_hud", False))
+        elif 66 <= cmd <= 66 + len(PANEL_AUTO_HIDE) - 1:
+            self.set_panel_ajuste("panel_auto_hide_s", PANEL_AUTO_HIDE[cmd - 66][0])
+        elif 70 <= cmd <= 70 + len(PANEL_ALPHAS) - 1:
+            self.set_panel_ajuste("panel_alpha", PANEL_ALPHAS[cmd - 70][0])
+        elif cmd == 74:
+            self.panel_anclar_al_widget()
         elif 30 <= cmd <= 30 + len(COLOR_CHOICES) - 1:
             self.set_color("progress_color", COLOR_CHOICES[cmd - 30][0])
         elif 40 <= cmd <= 40 + len(COLOR_CHOICES) - 1:

@@ -63,6 +63,20 @@ DEFAULTS = {
     # Fundido al cambiar de caratula (el salto de tapa a tapa se nota) y al
     # mostrar/ocultar el widget con Ctrl+Alt+M (solo con el fondo transparente, que
     # es donde hay alpha global para animar).
+    # Panel (mini reproductor). El "modo gaming" del menu prende el conjunto:
+    # chico + sin robar el foco + siempre arriba + se oculta solo + aparece al
+    # cambiar de cancion. Cada ajuste se puede tocar por separado.
+    "panel_mode": "normal",          # "normal" | "gaming" (lo que muestra el menu)
+    "panel_size": "normal",          # "normal" | "chico" (el chico es la mitad de alto)
+    "panel_no_robar": False,         # WS_EX_NOACTIVATE: no le saca el foco al juego y
+                                     # no se cierra al tocar afuera
+    "panel_topmost": False,          # siempre arriba de todo (juegos en ventana)
+    "panel_clics_al_juego": False,   # WS_EX_TRANSPARENT: los clics pasan al juego
+    "panel_auto_hide_s": 0,          # 0 = nunca; se oculta solo tras N segundos
+    "panel_hud": False,              # aparece un rato al cambiar de cancion
+    "panel_alpha": 255,              # opacidad de todo el panel (235 = leve, 160 = muy)
+    "panel_bg_alpha": 250,           # alfa del fondo dibujado
+    "panel_pos": None,               # [x, y] en pantalla; None = encima del widget
     "fade_cover": True,
     "fade_cover_ms": 220,
     "fade_visible": True,

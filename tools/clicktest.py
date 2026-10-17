@@ -712,6 +712,18 @@ def main() -> int:
     w, wrect = rect_actual()
     k = (wrect[3] - wrect[1]) / 40.0
     sonando_antes = sample(poller).playing
+    # El panel se prueba con el modo gaming fijo (sin auto-ocultar y sin robar el
+    # foco): si se ocultara solo en el medio, las comprobaciones fallarian por algo
+    # que no es el objeto de esta prueba. Los ajustes se devuelven al final.
+    cfg_panel = cfgmod.load()
+    auto_panel = float(cfg_panel.get("panel_auto_hide_s", 0) or 0)
+    hud_panel = bool(cfg_panel.get("panel_hud", False))
+    foco_panel = bool(cfg_panel.get("panel_no_robar", False))
+    win32gui.PostMessage(w, win32con.WM_APP + 11, 4, 0)     # sin HUD
+    win32gui.PostMessage(w, win32con.WM_APP + 11, 7, 0)     # sin auto-ocultar
+    win32gui.PostMessage(w, win32con.WM_APP + 11, 1, 1)     # no robar el foco
+    win32gui.PostMessage(w, win32con.WM_APP + 10, 0, 1)     # cerrado para empezar
+    time.sleep(0.9)
     tapa = (int(wrect[0] + 20 * k), int(wrect[1] + 20 * k))   # sobre la caratula
     if not (place_cursor(*tapa) and sobre_widget(*tapa)):
         check("un clic seco en la caratula abre el panel", False,
@@ -725,7 +737,7 @@ def main() -> int:
               f"panel {hex(hp or 0)}, rect {win32gui.GetWindowRect(hp) if hp else '-'}")
         if abierto:
             pr = win32gui.GetWindowRect(hp)
-            zp = panel_mod.rects(k)
+            zp = panel_mod.rects(k, cfgmod.load())
 
             # (a) play/pausa del panel
             c_play = zp["controles"][1]
@@ -786,6 +798,15 @@ def main() -> int:
                 check("un clic en la barra de volumen del panel lo pone ahi", False,
                       "no hay sesion de audio", skipped=True)
 
+            # (c2) en modo gaming el panel no le roba el foco a la ventana de adelante
+            try:
+                frente = win32gui.GetForegroundWindow()
+                check("el panel no le roba el foco (modo gaming)",
+                      frente != hp,
+                      f"al frente hay {hex(frente)} (panel {hex(hp)})")
+            except Exception as exc:
+                check("el panel no le roba el foco (modo gaming)", False, repr(exc))
+
             # (d) cerrar con la cruz
             zc = zp["cerrar"]
             pto_x = (pr[0] + (zc[0] + zc[2]) // 2, pr[1] + (zc[1] + zc[3]) // 2)
@@ -801,10 +822,18 @@ def main() -> int:
             # por si quedo abierto (una prueba fallo antes de cerrarlo)
             try:
                 if win32gui.IsWindowVisible(hp):
-                    win32gui.PostMessage(w, win32con.WM_APP + 10, 0, 0xFFFF)
+                    win32gui.PostMessage(w, win32con.WM_APP + 10, 0, 1)
                     time.sleep(0.6)
             except Exception:
                 pass
+    # devolver los ajustes del panel como estaban
+    try:
+        win32gui.PostMessage(w, win32con.WM_APP + 11, 4, 1 if hud_panel else 0)
+        win32gui.PostMessage(w, win32con.WM_APP + 11, 7, int(auto_panel * 10))
+        win32gui.PostMessage(w, win32con.WM_APP + 11, 1, 1 if foco_panel else 0)
+        time.sleep(0.5)
+    except Exception:
+        pass
     # devolver la reproduccion como estaba
     try:
         if sample(poller).playing != sonando_antes:

@@ -28,6 +28,7 @@ import win32api  # noqa: E402
 import win32gui  # noqa: E402
 
 from widget import volume as volume_mod  # noqa: E402
+from widget import config as cfgmod  # noqa: E402
 from widget.media import MediaPoller  # noqa: E402
 from widget.taskbarwin import list_bars  # noqa: E402
 
@@ -36,9 +37,11 @@ u32.mouse_event.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
                             ctypes.c_uint32, ctypes.c_size_t]
 KEYUP = 2
 MOUSEEVENTF_WHEEL = 0x0800
-VK = {"CTRL": 0x11, "ALT": 0x12, "SHIFT": 0x10, "P": 0x50, "M": 0x4D,
+VK = {"CTRL": 0x11, "ALT": 0x12, "SHIFT": 0x10, "P": 0x50, "M": 0x4D, "O": 0x4F,
       "LEFT": 0x25, "UP": 0x26, "RIGHT": 0x27, "DOWN": 0x28}
 
+WM_APP_PANEL = 0x8000 + 10      # win32con.WM_APP + 10
+WM_APP_PANEL_CFG = 0x8000 + 11  # win32con.WM_APP + 11
 resultados = []
 
 
@@ -262,6 +265,49 @@ def main() -> int:
               f"sonando {antes2} -> {ahora3}")
         if ahora3 != antes2:
             acorde(["CTRL", "ALT", "P"], espera=1.2)       # devolver el estado
+
+    # --- Ctrl+Alt+O: el panel sin soltar el mouse ----------------------------
+    print("\n-- Ctrl+Alt+O (panel) --")
+    w = widget()
+    cfg_vivo = cfgmod.load()
+    hud_antes = bool(cfg_vivo.get("panel_hud", False))
+    auto_antes = float(cfg_vivo.get("panel_auto_hide_s", 0) or 0)
+    if w:
+        # sin HUD ni auto-ocultar: aca se prueba el atajo, no esas dos cosas
+        win32gui.PostMessage(w, WM_APP_PANEL_CFG, 4, 0)
+        win32gui.PostMessage(w, WM_APP_PANEL_CFG, 7, 0)
+        win32gui.PostMessage(w, WM_APP_PANEL, 0, 1)
+        time.sleep(0.8)
+
+        def panel_abierto() -> bool:
+            p = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+            return bool(p and win32gui.IsWindowVisible(p))
+
+        acorde(["CTRL", "ALT", "O"], espera=1.3)
+        abierto = panel_abierto()
+        check("Ctrl+Alt+O abre el panel", abierto, f"visible={abierto}")
+        acorde(["CTRL", "ALT", "O"], espera=1.3)
+        check("Ctrl+Alt+O lo vuelve a cerrar", not panel_abierto(),
+              f"visible={panel_abierto()}")
+
+        # --- HUD: aparece solo al cambiar de cancion -------------------------
+        print("\n-- HUD al cambiar de cancion --")
+        win32gui.PostMessage(w, WM_APP_PANEL_CFG, 4, 1)     # panel_hud encendido
+        time.sleep(0.8)
+        antes_t = poller.state().title
+        acorde(["CTRL", "ALT", "RIGHT"], espera=2.5)
+        ahora_t = poller.state().title
+        check("cambiar de cancion abre el panel solo (HUD)",
+              ahora_t != antes_t and panel_abierto(),
+              f"{antes_t[:20]!r} -> {ahora_t[:20]!r}, panel "
+              f"{'abierto' if panel_abierto() else 'cerrado'}")
+        win32gui.PostMessage(w, WM_APP_PANEL, 0, 1)
+        time.sleep(0.5)
+        # devolver el tema y los ajustes como estaban
+        acorde(["CTRL", "ALT", "LEFT"], espera=2.0)
+        win32gui.PostMessage(w, WM_APP_PANEL_CFG, 4, 1 if hud_antes else 0)
+        win32gui.PostMessage(w, WM_APP_PANEL_CFG, 7, int(auto_antes * 10))
+        time.sleep(0.4)
 
     # --- dejar todo como estaba --------------------------------------------
     try:
