@@ -1,0 +1,614 @@
+"""Aplicacion: ventana en la barra, entrada, timers y ciclo de vida.
+
+Dos ventanas propias:
+  * controlador  -> ventana oculta de nivel superior. Nunca muere con explorer,
+                    asi que es la que sostiene los timers y puede reconstruir el
+                    widget si la barra de tareas se reinicia.
+  * widget       -> hija de Shell_TrayWnd. Solo se pinta y recibe el mouse.
+
+Doble buffer: se dibuja el widget con Pillow, se copia a un DIB de 32bpp y se
+hace BitBlt en WM_PAINT. Nada de parpadeo, y el repintado solo ocurre cuando la
+firma de lo visible cambia (evita repintar 10 veces por segundo al pedo).
+"""
+from __future__ import annotations
+
+import ctypes
+import ctypes.wintypes as wt
+import os
+import time
+
+import win32api
+import win32con
+import win32event
+import win32gui
+
+from . import draw
+from .media import MediaPoller, MediaState
+from .taskbarwin import TaskbarHost, set_dpi_aware
+
+CTL_CLASS = "GorusTaskbarMusicCtl"
+WIDGET_CLASS = "GorusTaskbarMusicWnd"
+MUTEX_NAME = "Local\\GorusTaskbarMusicWidget"
+TIMER_TICK = 1
+TIMER_LAYOUT = 2
+HOTKEY_TOGGLE = 1
+
+WM_TASKBARCREATED = ctypes.windll.user32.RegisterWindowMessageW("TaskbarCreated")
+# win32con no define WM_DPICHANGED; el literal es 0x02E0
+WM_DPICHANGED = 0x02E0
+WM_DISPLAYCHANGE = getattr(win32con, "WM_DISPLAYCHANGE", 0x007E)
+WM_SETTINGCHANGE = getattr(win32con, "WM_SETTINGCHANGE", 0x001A)
+
+user32 = ctypes.windll.user32
+gdi32 = ctypes.windll.gdi32
+user32.SetTimer.restype = ctypes.c_void_p
+user32.SetTimer.argtypes = [wt.HWND, ctypes.c_void_p, wt.UINT, ctypes.c_void_p]
+user32.KillTimer.argtypes = [wt.HWND, ctypes.c_void_p]
+
+
+class BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [("biSize", wt.DWORD), ("biWidth", ctypes.c_long),
+                ("biHeight", ctypes.c_long), ("biPlanes", wt.WORD),
+                ("biBitCount", wt.WORD), ("biCompression", wt.DWORD),
+                ("biSizeImage", wt.DWORD), ("biXPelsPerMeter", ctypes.c_long),
+                ("biYPelsPerMeter", ctypes.c_long), ("biClrUsed", wt.DWORD),
+                ("biClrImportant", wt.DWORD)]
+
+
+class BITMAPINFO(ctypes.Structure):
+    _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wt.DWORD * 3)]
+
+
+class TRACKMOUSEEVENT(ctypes.Structure):
+    _fields_ = [("cbSize", wt.DWORD), ("dwFlags", wt.DWORD), ("hwndTrack", wt.HWND),
+                ("dwHoverTime", wt.DWORD)]
+
+
+class _Dib:
+    """Canvas de 32bpp que se blitea a la ventana."""
+
+    def __init__(self, hwnd: int, w: int, h: int):
+        self.w, self.h = w, h
+        self.bits = ctypes.c_void_p()
+        hdc = win32gui.GetDC(hwnd)
+        try:
+            bmi = BITMAPINFO()
+            bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.bmiHeader.biWidth = w
+            bmi.bmiHeader.biHeight = -h  # negativo = filas de arriba hacia abajo
+            bmi.bmiHeader.biPlanes = 1
+            bmi.bmiHeader.biBitCount = 32
+            bmi.bmiHeader.biCompression = 0  # BI_RGB
+            self.bmp = gdi32.CreateDIBSection(hdc, ctypes.byref(bmi), 0,
+                                              ctypes.byref(self.bits), None, 0)
+            self.dc = gdi32.CreateCompatibleDC(hdc)
+            gdi32.SelectObject(self.dc, self.bmp)
+        finally:
+            win32gui.ReleaseDC(hwnd, hdc)
+
+    def upload(self, raw: bytes) -> None:
+        ctypes.memmove(self.bits, raw, min(len(raw), self.w * self.h * 4))
+
+    def blit(self, hdc: int) -> None:
+        gdi32.BitBlt(hdc, 0, 0, self.w, self.h, self.dc, 0, 0, 0x00CC0020)
+
+    def free(self) -> None:
+        try:
+            gdi32.DeleteDC(self.dc)
+            gdi32.DeleteObject(self.bmp)
+        except Exception:
+            pass
+
+
+class WidgetApp:
+    def __init__(self, cfg: dict, embed: bool = True, log_path: str | None = None):
+        self.cfg = cfg
+        self.embed = embed
+        self.host = TaskbarHost(log=self.log)
+        self._log_fh = None
+        if log_path:
+            try:
+                self._log_fh = open(log_path, "a", encoding="utf-8", buffering=1)
+            except Exception:
+                self._log_fh = None
+        self.poller = MediaPoller(interval=max(0.1, cfg.get("poll_interval_ms", 500) / 1000.0),
+                                  log=self.log)
+        self.state = MediaState()
+        self.hwnd_widget = 0
+        self.hwnd_ctl = 0
+        self.dib: _Dib | None = None
+        self.hover = -1
+        self.marquee = 0.0
+        self._marquee_t = time.monotonic()
+        self._last_title = ""
+        self.k = 1.0
+        self.width_px = 0
+        self.height_px = 0
+        self.base = (26, 28, 36)
+        self.visible = True
+        self._needs_show = False
+        self._sig = None
+        self._timer_ms = 0
+        self._last_layout = 0.0
+        self._ctl_wndproc_ref = None
+        self._widget_wndproc_ref = None
+        self._menu_ids = {}
+
+    # ------------------------------------------------------------------ log
+    def log(self, msg: str, *args) -> None:
+        line = f"[{time.strftime('%H:%M:%S')}] {msg % args if args else msg}"
+        if self._log_fh:
+            try:
+                self._log_fh.write(line + "\n")
+            except Exception:
+                pass
+
+    # -------------------------------------------------------- registro de clase
+    def _register_classes(self) -> None:
+        hinst = win32api.GetModuleHandle(None)
+
+        def ctl_proc(hwnd, msg, wp, lp):
+            return self._ctl_wndproc(hwnd, msg, wp, lp)
+
+        def wnd_proc(hwnd, msg, wp, lp):
+            return self._widget_wndproc(hwnd, msg, wp, lp)
+
+        self._ctl_wndproc_ref = ctl_proc
+        self._widget_wndproc_ref = wnd_proc
+
+        for cls, proc in ((CTL_CLASS, ctl_proc), (WIDGET_CLASS, wnd_proc)):
+            wc = win32gui.WNDCLASS()
+            wc.hInstance = hinst
+            wc.lpszClassName = cls
+            wc.lpfnWndProc = proc
+            wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
+            try:
+                win32gui.RegisterClass(wc)
+            except Exception:
+                pass  # ya registrada
+
+    # ------------------------------------------------------------------ ciclo
+    def run(self) -> int:
+        set_dpi_aware()
+        # una sola instancia: dos widgets se pelearían por el mismo espacio
+        self._mutex = win32event.CreateMutex(None, False, MUTEX_NAME)
+        if win32api.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            self.log("ya hay otra instancia corriendo")
+            return 2
+
+        self._register_classes()
+        hinst = win32api.GetModuleHandle(None)
+        self.hwnd_ctl = win32gui.CreateWindowEx(
+            0, CTL_CLASS, "gorus-ctl", win32con.WS_POPUP,
+            0, 0, 0, 0, 0, None, hinst, None)
+        if not self.hwnd_ctl:
+            self.log("no se pudo crear la ventana controladora")
+            return 3
+
+        win32gui.RegisterHotKey(self.hwnd_ctl, HOTKEY_TOGGLE,
+                                win32con.MOD_CONTROL | win32con.MOD_ALT, ord("M"))
+
+        self.host.refresh()
+        self.host.restore()  # sanea cualquier reserva que haya quedado de un cierre sucio
+
+        self.poller.start()
+        self.poller.wait_ready(6.0)
+
+        self._create_widget()
+        self._apply_layout(force=True)
+        self._repaint_if_needed(force=True)
+        self._show_when_ready()
+        self._set_timer(self.cfg.get("timer_idle_ms", 500))
+        user32.SetTimer(self.hwnd_ctl, TIMER_LAYOUT, int(self.cfg.get("layout_check_ms", 1000)), None)
+        self.log("widget iniciado (embed=%s)", self.embed)
+
+        try:
+            win32gui.PumpMessages()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self._shutdown()
+        return 0
+
+    def _shutdown(self) -> None:
+        self.log("cerrando")
+        self.poller.stop()
+        try:
+            self.host.detach_widget(self.hwnd_widget)
+        except Exception:
+            pass
+        self.hwnd_widget = 0
+        if self.dib:
+            self.dib.free()
+            self.dib = None
+        if self.hwnd_ctl and win32gui.IsWindow(self.hwnd_ctl):
+            user32.KillTimer(self.hwnd_ctl, TIMER_TICK)
+            user32.KillTimer(self.hwnd_ctl, TIMER_LAYOUT)
+            try:
+                win32gui.UnregisterHotKey(self.hwnd_ctl, HOTKEY_TOGGLE)
+            except Exception:
+                pass
+        try:
+            win32gui.DestroyWindow(self.hwnd_ctl)
+        except Exception:
+            pass
+        if self._log_fh:
+            self._log_fh.close()
+
+    # ------------------------------------------------------------------ widget
+    def _create_widget(self) -> bool:
+        if not self.embed:
+            self._create_plain_window()
+            return bool(self.hwnd_widget)
+        if not self.host.refresh():
+            return False
+        m = self.host.metrics()
+        self.k = m["scale"]
+        self.height_px = m["taskbar_h"]
+        self.width_px = int(round(self.cfg.get("width", 260) * self.k))
+        # Reservar el espacio ANTES de crear la ventana y crearla ya en su sitio:
+        # si naciera en (0,0) apareceria un parpadeo encima del boton Inicio.
+        x_rel = self.host.reserve(self.width_px,
+                                  int(self.cfg.get("min_tasklist_width", 420)))
+        hinst = win32api.GetModuleHandle(None)
+        self.hwnd_widget = win32gui.CreateWindowEx(
+            0, WIDGET_CLASS, "gorus-widget",
+            win32con.WS_CHILD | win32con.WS_CLIPSIBLINGS,
+            x_rel, 0, self.width_px, self.height_px,
+            self.host.tray, None, hinst, None)
+        if not self.hwnd_widget:
+            self.log("no se pudo crear la ventana del widget")
+            return False
+        self._needs_show = True
+        self.dib = None
+        self._ensure_dib()
+        self._sig = None
+        return True
+
+    def _create_plain_window(self) -> None:
+        """Modo --no-embed: ventana normal, util para desarrollar."""
+        hinst = win32api.GetModuleHandle(None)
+        self.k = 1.0
+        self.height_px = 40
+        self.width_px = int(self.cfg.get("width", 260))
+        self.hwnd_widget = win32gui.CreateWindowEx(
+            win32con.WS_EX_TOPMOST, WIDGET_CLASS, "Gorus - widget de musica",
+            win32con.WS_POPUP,
+            1200, 960, self.width_px, self.height_px, 0, None, hinst, None)
+        self._needs_show = True
+        self.dib = None
+        self._ensure_dib()
+        self._sig = None
+
+    def _ensure_dib(self) -> None:
+        if self.hwnd_widget and self.width_px and self.height_px:
+            if self.dib is None or self.dib.w != self.width_px or self.dib.h != self.height_px:
+                if self.dib:
+                    self.dib.free()
+                self.dib = _Dib(self.hwnd_widget, self.width_px, self.height_px)
+
+    def _ensure_attached(self) -> None:
+        """Reconstruye o re-ancla el widget si algo se movio por debajo."""
+        if not self.embed or not self.visible:
+            return
+        if self.hwnd_widget and win32gui.IsWindow(self.hwnd_widget):
+            try:
+                parent = win32gui.GetParent(self.hwnd_widget)
+            except Exception:
+                parent = 0
+            if parent and parent == self.host.tray:
+                return
+            # el padre cambio (explorer nuevo): rehacer
+            try:
+                win32gui.DestroyWindow(self.hwnd_widget)
+            except Exception:
+                pass
+            self.hwnd_widget = 0
+        self.log("reconstruyendo widget")
+        self.host.refresh()
+        self._create_widget()
+        self._apply_layout(force=True)
+        self._repaint_if_needed(force=True)
+        self._show_when_ready()
+
+    def _apply_layout(self, force: bool = False) -> None:
+        if not self.embed or not self.visible:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_layout < 0.4:
+            return
+        self._last_layout = now
+        try:
+            m = self.host.metrics()
+        except Exception:
+            return
+        self.k = m["scale"]
+        want_h = m["taskbar_h"]
+        want_w = int(round(self.cfg.get("width", 260) * self.k))
+        if want_h != self.height_px or want_w != self.width_px:
+            self.height_px, self.width_px = want_h, want_w
+            self.dib = None
+            self._ensure_dib()
+            if self.hwnd_widget and win32gui.IsWindow(self.hwnd_widget):
+                win32gui.SetWindowPos(self.hwnd_widget, 0, 0, 0, want_w, want_h,
+                                      win32con.SWP_NOMOVE | win32con.SWP_NOZORDER
+                                      | win32con.SWP_NOACTIVATE)
+            self._sig = None
+        x_rel = self.host.reserve(self.width_px, int(self.cfg.get("min_tasklist_width", 420)))
+        self.host.place(self.hwnd_widget, x_rel, self.height_px)
+        self.base = self.host.base_color(x_rel, self.width_px, self.height_px)
+
+    def toggle_visible(self) -> None:
+        if self.visible:
+            self.visible = False
+            if self.hwnd_widget:
+                try:
+                    win32gui.ShowWindow(self.hwnd_widget, win32con.SW_HIDE)
+                except Exception:
+                    pass
+            self.host.restore()
+            self.log("widget oculto (Ctrl+Alt+M para volver)")
+        else:
+            self.visible = True
+            if self.hwnd_widget and win32gui.IsWindow(self.hwnd_widget):
+                win32gui.ShowWindow(self.hwnd_widget, win32con.SW_SHOW)
+                self._apply_layout(force=True)
+            else:
+                self._create_widget()
+                self._apply_layout(force=True)
+            self.log("widget visible")
+
+    # ------------------------------------------------------------------ pintar
+    def _signature(self):
+        st = self.state
+        bar_px = max(1, self.width_px - int(draw.TEXT_X * self.k) - int(draw.RIGHT_PAD * self.k))
+        frac = (st.live_position() / st.duration) if (st.duration and st.playing) else 0.0
+        return (st.has_session, st.art_key, st.title, st.artist, st.playing,
+                int(frac * bar_px), int(self.marquee) if self._overflow() else 0,
+                self.hover, self.width_px, self.height_px, self.base, st.stopped)
+
+    def _overflow(self) -> bool:
+        try:
+            return draw.title_overflows(self.state, self.cfg, self.k, self.width_px)
+        except Exception:
+            return False
+
+    def _render(self) -> None:
+        if not self.hwnd_widget or not win32gui.IsWindow(self.hwnd_widget):
+            return
+        self._ensure_dib()
+        if not self.dib:
+            return
+        SS = max(1, int(self.cfg.get("supersample", 3)))
+        S = self.k * SS
+        art = None
+        if self.cfg.get("show_art", True):
+            art = draw.get_art(self.state.art, self.state.art_key,
+                               int(round(draw.ART * S)), int(round(draw.ART_RADIUS * S)))
+        img = draw.render(self.state, self.cfg, art=art, hover=self.hover,
+                          marquee=self.marquee, k=self.k, base=self.base,
+                          height=self.height_px)
+        self.dib.upload(draw.to_bgra(img))
+
+    def _repaint_if_needed(self, force: bool = False) -> None:
+        sig = self._signature()
+        if force or sig != self._sig:
+            self._sig = sig
+            self._render()
+        # Invalidar SIEMPRE, aunque no haga falta redibujar: el blit del DIB ya
+        # renderizado cuesta casi nada, y la barra de tareas puede pintar encima
+        # de sus ventanas hijas. Sin esto el widget queda borrado (se ve el fondo
+        # de la barra) hasta que cambie algo del contenido.
+        try:
+            win32gui.InvalidateRect(self.hwnd_widget, None, False)
+        except Exception:
+            pass
+
+    def _show_when_ready(self) -> None:
+        """Mostrar la ventana recien despues del primer render.
+
+        Si se crea visible, pinta el DIB vacio y se ve un rectangulo negro por un
+        instante hasta que llega el primer dibujo.
+        """
+        if not self._needs_show or not self.hwnd_widget:
+            return
+        try:
+            win32gui.ShowWindow(self.hwnd_widget, win32con.SW_SHOWNOACTIVATE)
+            self._needs_show = False
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ timers
+    def _set_timer(self, ms: int) -> None:
+        if ms == self._timer_ms or not self.hwnd_ctl:
+            return
+        self._timer_ms = ms
+        user32.KillTimer(self.hwnd_ctl, TIMER_TICK)
+        user32.SetTimer(self.hwnd_ctl, TIMER_TICK, int(ms), None)
+
+    def tick(self) -> None:
+        try:
+            self.state = self.poller.state()
+            self._ensure_attached()
+            # marquesina: solo avanza si el titulo no cabe
+            now = time.monotonic()
+            if self.state.title != self._last_title:
+                self._last_title = self.state.title
+                self.marquee = 0.0
+            if self._overflow():
+                dt = now - self._marquee_t
+                self.marquee = (self.marquee + dt * self.cfg.get("marquee_speed", 32))
+            self._marquee_t = now
+            self._set_timer(int(self.cfg.get("timer_playing_ms", 100)) if self.state.playing
+                            else int(self.cfg.get("timer_idle_ms", 500)))
+            self._repaint_if_needed()
+        except Exception as exc:
+            self.log("tick fallo: %r", exc)
+
+    def layout_tick(self) -> None:
+        try:
+            self._apply_layout()
+        except Exception as exc:
+            self.log("layout fallo: %r", exc)
+
+    # -------------------------------------------------------------- procs
+    def _ctl_wndproc(self, hwnd, msg, wp, lp):
+        try:
+            if msg == win32con.WM_TIMER:
+                if wp == TIMER_TICK:
+                    self.tick()
+                elif wp == TIMER_LAYOUT:
+                    self.layout_tick()
+                return 0
+            if msg == win32con.WM_HOTKEY and wp == HOTKEY_TOGGLE:
+                self.toggle_visible()
+                return 0
+            if msg == win32con.WM_CLOSE:
+                # cerrar por pedido explicito (menu o script): terminar el bucle ya
+                win32gui.PostQuitMessage(0)
+                return 0
+            if msg == WM_TASKBARCREATED:
+                self.log("la barra de tareas se reinicio; reanclando")
+                self.hwnd_widget = 0
+                self.host.refresh()
+                if self.visible:
+                    self._create_widget()
+                    self._apply_layout(force=True)
+                    self._repaint_if_needed(force=True)
+                return 0
+            if msg in (WM_SETTINGCHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED):
+                self._apply_layout(force=True)
+                self._repaint_if_needed(force=True)
+                return 0
+            if msg == win32con.WM_DESTROY:
+                win32gui.PostQuitMessage(0)
+                return 0
+        except Exception as exc:
+            self.log("ctl proc fallo: %r", exc)
+        return win32gui.DefWindowProc(hwnd, msg, wp, lp)
+
+    def _hit_control(self, x: int, y: int) -> int:
+        for i, (x0, y0, x1, y1) in enumerate(draw.control_rects(self.width_px, self.k, self.cfg)):
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                return i
+        return -1
+
+    def _widget_wndproc(self, hwnd, msg, wp, lp):
+        try:
+            if msg == win32con.WM_PAINT:
+                hdc, ps = win32gui.BeginPaint(hwnd)
+                try:
+                    if self.dib:
+                        self.dib.blit(hdc)
+                finally:
+                    win32gui.EndPaint(hwnd, ps)
+                return 0
+            if msg == win32con.WM_ERASEBKGND:
+                return 1
+            if msg == win32con.WM_MOUSEMOVE:
+                x = lp & 0xFFFF
+                y = (lp >> 16) & 0xFFFF
+                if os.environ.get("GORUS_DEBUG_MOUSE"):
+                    self.log("WM_MOUSEMOVE x=%s y=%s hit=%s hover_prev=%s",
+                             x, y, self._hit_control(x, y), self.hover)
+                hit = self._hit_control(x, y)
+                if hit != self.hover:
+                    self.hover = hit
+                    self._repaint_if_needed(force=True)
+                try:
+                    tme = TRACKMOUSEEVENT(ctypes.sizeof(TRACKMOUSEEVENT), 0x00000002, hwnd, 0)
+                    user32.TrackMouseEvent(ctypes.byref(tme))
+                except Exception:
+                    pass
+                return 0
+            if msg == win32con.WM_MOUSELEAVE:
+                if self.hover != -1:
+                    self.hover = -1
+                    self._repaint_if_needed(force=True)
+                return 0
+            if msg == win32con.WM_LBUTTONUP:
+                x = lp & 0xFFFF
+                y = (lp >> 16) & 0xFFFF
+                hit = self._hit_control(x, y)
+                if hit == 0:
+                    self.poller.prev_track()
+                elif hit == 1:
+                    self.poller.toggle()
+                elif hit == 2:
+                    self.poller.next_track()
+                self._repaint_if_needed(force=True)
+                return 0
+            if msg == win32con.WM_RBUTTONUP:
+                if self.cfg.get("right_click_menu", True):
+                    self._show_menu()
+                return 0
+            if msg == win32con.WM_DESTROY:
+                self.hwnd_widget = 0
+                # Si la ventana controladora ya no existe, nadie va a cerrar el
+                # bucle: sin esto el proceso queda zombi y la barra pierde espacio.
+                if not self.hwnd_ctl or not win32gui.IsWindow(self.hwnd_ctl):
+                    win32gui.PostQuitMessage(0)
+                return 0
+        except Exception as exc:
+            self.log("widget proc fallo: %r", exc)
+        return win32gui.DefWindowProc(hwnd, msg, wp, lp)
+
+    # ------------------------------------------------------------------- menu
+    def _show_menu(self) -> None:
+        try:
+            menu = win32gui.CreatePopupMenu()
+            items = [
+                (1, "Ocultar widget" if self.visible else "Mostrar widget", True),
+                (2, f"Ancho: {self.cfg.get('width', 260)} px", False),
+                (3, "  Más ancho", True),
+                (4, "  Más angosto", True),
+                (5, "Refrescar ahora", True),
+                (6, "Abrir carpeta del proyecto", True),
+                (7, "Salir", True),
+            ]
+            for ident, label, enabled in items:
+                flags = win32con.MF_STRING
+                flags |= win32con.MF_ENABLED if enabled else win32con.MF_GRAYED
+                win32gui.AppendMenu(menu, flags, ident, label)
+            x, y = win32gui.GetCursorPos()
+            try:
+                win32gui.SetForegroundWindow(self.hwnd_ctl)
+            except Exception:
+                pass
+            cmd = win32gui.TrackPopupMenu(
+                menu, win32con.TPM_RETURNCMD | win32con.TPM_RIGHTBUTTON
+                | win32con.TPM_NONOTIFY, x, y, 0, self.hwnd_ctl, None)
+            win32gui.PostMessage(self.hwnd_ctl, win32con.WM_NULL, 0, 0)
+            win32gui.DestroyMenu(menu)
+            self._handle_menu(cmd)
+        except Exception as exc:
+            self.log("menu fallo: %r", exc)
+
+    def _handle_menu(self, cmd: int) -> None:
+        from . import config as cfgmod
+        if cmd == 1:
+            self.toggle_visible()
+        elif cmd == 3:
+            self.cfg["width"] = min(520, int(self.cfg.get("width", 260)) + 20)
+            cfgmod.save(self.cfg)
+            self._apply_layout(force=True)
+            self._repaint_if_needed(force=True)
+        elif cmd == 4:
+            self.cfg["width"] = max(150, int(self.cfg.get("width", 260)) - 20)
+            cfgmod.save(self.cfg)
+            self._apply_layout(force=True)
+            self._repaint_if_needed(force=True)
+        elif cmd == 5:
+            self.state = self.poller.state()
+            self._repaint_if_needed(force=True)
+        elif cmd == 6:
+            try:
+                os.startfile(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            except Exception:
+                pass
+        elif cmd == 7:
+            win32gui.PostMessage(self.hwnd_ctl, win32con.WM_CLOSE, 0, 0)
+
+
+def run(cfg: dict, embed: bool = True, log_path: str | None = None) -> int:
+    return WidgetApp(cfg, embed=embed, log_path=log_path).run()

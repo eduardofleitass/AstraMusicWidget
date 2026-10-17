@@ -1,0 +1,15 @@
+# entorno virtual y cache
+.venv/
+__pycache__/
+*.pyc
+
+# log de ejecucion
+widget.log
+
+# artefactos transitorios de las pruebas y del banco de pruebas
+tools/_hover_*.png
+tools/_selftest.json
+tools/_rig_state.json
+tools/_render_hover.png
+shot_broken.png
+shot_check.png

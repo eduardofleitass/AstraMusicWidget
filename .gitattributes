@@ -1,0 +1,14 @@
+# Normalizar finales de linea explicamente, sin depender de core.autocrlf.
+* text=auto
+
+# Los .bat y .vbs son de Windows: CRLF siempre.
+*.bat text eol=crlf
+*.vbs text eol=crlf
+
+# Python e informes: LF.
+*.py   text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+
+# Imagenes: no tocar.
+*.png binary

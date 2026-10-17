@@ -1,0 +1,67 @@
+"""Configuracion del widget de musica para la barra de tareas."""
+from __future__ import annotations
+
+import copy
+import json
+import os
+
+DEFAULTS = {
+    "width": 260,
+    "min_tasklist_width": 420,
+    "poll_interval_ms": 500,
+    "timer_playing_ms": 100,
+    "timer_idle_ms": 500,
+    "layout_check_ms": 1000,
+    "marquee_speed": 32,
+    "marquee_gap": 40,
+    "supersample": 3,
+    "show_progress": True,
+    "show_controls": True,
+    "show_art": True,
+    "corner_radius": 7,
+    "chip_alpha": 232,
+    "theme": {
+        "chip": [21, 23, 30],
+        "border": [60, 64, 80],
+        "title": [238, 240, 248],
+        "artist": [144, 151, 173],
+        "accent": [96, 205, 145],
+        "track": [74, 80, 98],
+        "icon": [222, 226, 238],
+        "icon_dim": [104, 110, 128],
+    },
+    "right_click_menu": True,
+    "log_file": "widget.log",
+}
+
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+
+
+def _merge(base: dict, over: dict) -> dict:
+    out = copy.deepcopy(base)
+    for k, v in (over or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def load(path: str | None = None) -> dict:
+    path = path or CONFIG_PATH
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return _merge(DEFAULTS, json.load(fh))
+    except FileNotFoundError:
+        return copy.deepcopy(DEFAULTS)
+    except Exception:
+        return copy.deepcopy(DEFAULTS)
+
+
+def save(cfg: dict, path: str | None = None) -> None:
+    path = path or CONFIG_PATH
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
