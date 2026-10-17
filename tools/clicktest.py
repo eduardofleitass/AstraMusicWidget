@@ -462,6 +462,13 @@ def main() -> int:
         # mouse_event: con el mouse en uso, una muesca real del usuario se sumaba a la
         # de la prueba y el salto medido daba -20 s donde se esperaba -10 s.
         place_cursor(*centro)          # se deja el cursor encima igual, por realismo
+        # Pausar: con la musica andando la posicion informada no es confiable (al
+        # retroceder el reproductor sigue informando la de antes y el salto medido sale
+        # el doble: medido -20 s para un paso de -10 s).
+        sonaba = bool(poller.state().playing)
+        if sonaba:
+            poller.toggle()
+            time.sleep(0.7)
         antes = sample(poller).live_position()
         r0, t0, ok0 = pos_reportada(poller)
         win32gui.SendMessage(w, win32con.WM_MOUSEWHEEL, WHEEL_UP << 16, lp(*centro))
@@ -498,6 +505,9 @@ def main() -> int:
               f"{r1:.0f}s -> {r2:.0f}s  ({d2:+.1f}s, se esperaba {esperado2:+.1f}s)"
               f"  tolerancia {tolerancia:.0f}s",
               skipped=not ok2)
+        if sonaba:
+            poller.toggle()            # devolver la reproduccion como estaba
+            time.sleep(0.6)
 
     # --- 6. arrastrar el widget a la barra del otro monitor -----------------
     print("\n-- arrastrar el widget a la barra de otro monitor (se devuelve) --")

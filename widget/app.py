@@ -26,6 +26,7 @@ from PIL import Image, ImageChops
 
 from . import config as cfgmod
 from . import draw
+from .flotante import FloatingHost
 from . import panel as panel_mod
 from . import ventanas
 from . import volume as volume_mod
@@ -260,10 +261,18 @@ class _Layered:
 
 
 class WidgetApp:
-    def __init__(self, cfg: dict, embed: bool = True, log_path: str | None = None):
+    def __init__(self, cfg: dict, embed: bool = True, log_path: str | None = None,
+                 flotante: bool = False):
         self.cfg = cfg
         self.embed = embed
-        self.host = TaskbarHost(log=self.log, monitor=cfg.get("taskbar_monitor"))
+        if flotante:
+            # Sin barra que lo aloje (Windows 11): el widget vive como ventana propia
+            # pegada al borde de abajo. Mismo contrato, otro respaldo.
+            self.host = FloatingHost(log=self.log, monitor=cfg.get("taskbar_monitor"),
+                                     reserva_derecha=int(cfg.get("flotante_reserva_derecha",
+                                                                 300)))
+        else:
+            self.host = TaskbarHost(log=self.log, monitor=cfg.get("taskbar_monitor"))
         self._log_fh = None
         if log_path:
             try:
@@ -285,6 +294,10 @@ class WidgetApp:
         self.height_px = 0
         self.base = (26, 28, 36)
         self.layered = str(cfg.get("bg_mode", "layered")).lower() == "layered"
+        if getattr(self.host, "flotante", False):
+            # Sin barra no hay color que muestrear para mezclar: alpha real (ULW), que es
+            # lo que deja ver el escritorio de atras (y es lo que ya usa el panel).
+            self.layered = True
         self.pos_frac = cfg.get("position_frac", None)
         self._drag = None      # estado del arrastre en curso
         self._drag_x = None    # x (pantalla) mientras se arrastra
@@ -480,6 +493,27 @@ class WidgetApp:
         # si naciera en (0,0) apareceria un parpadeo encima del boton Inicio.
         x_rel = self._reserve_x()
         hinst = win32api.GetModuleHandle(None)
+        if getattr(self.host, "flotante", False):
+            # Ventana propia: sin padre, popup, siempre arriba y fuera de Alt+Tab (es un
+            # adorno del sistema, no una aplicacion). Nace ya en su franja para que no
+            # parpadee en (0,0).
+            self.hwnd_widget = win32gui.CreateWindowEx(
+                win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW
+                | (WS_EX_LAYERED if self.layered else 0),
+                WIDGET_CLASS, "gorus-widget", win32con.WS_POPUP,
+                x_rel, self.host.strip_y(), self.width_px, self.height_px,
+                0, None, hinst, None)
+            if not self.hwnd_widget:
+                self.log("no se pudo crear la ventana del widget (flotante)")
+                return False
+            self.log("modo flotante: ventana propia en (%d, %d) %dx%d, franja de %d px",
+                     x_rel, self.host.strip_y(), self.width_px, self.height_px,
+                     self.height_px)
+            self._needs_show = True
+            self.dib = None
+            self._ensure_surface()
+            self._sig = None
+            return True
         self.hwnd_widget = win32gui.CreateWindowEx(
             WS_EX_LAYERED if self.layered else 0,
             WIDGET_CLASS, "gorus-widget",
@@ -527,6 +561,8 @@ class WidgetApp:
     # ---------------------------------------------------- limite real de la barra
     def _covered(self) -> bool:
         """True si la lista de tareas quedo por encima del widget (la tapa)."""
+        if getattr(self.host, "flotante", False):
+            return False           # en flotante esta por encima de todo
         try:
             rb = win32gui.GetWindowRect(self.host.container)
             wl = win32gui.GetWindowRect(self.hwnd_widget)[0]
@@ -599,7 +635,13 @@ class WidgetApp:
                 parent = win32gui.GetParent(self.hwnd_widget)
             except Exception:
                 parent = 0
-            if parent and parent == self.host.tray:
+            if getattr(self.host, "flotante", False):
+                # Sin barra no hay padre que comparar: el widget es una ventana propia
+                # (padre 0). Comparar contra `host.tray` daba falso siempre y el
+                # vigilante lo reconstruia en bucle.
+                if win32gui.IsWindow(self.hwnd_widget):
+                    return
+            elif parent and parent == self.host.tray:
                 return
             # el padre cambio (explorer nuevo): rehacer
             try:
@@ -2637,5 +2679,6 @@ class WidgetApp:
             win32gui.PostMessage(self.hwnd_ctl, win32con.WM_CLOSE, 0, 0)
 
 
-def run(cfg: dict, embed: bool = True, log_path: str | None = None) -> int:
-    return WidgetApp(cfg, embed=embed, log_path=log_path).run()
+def run(cfg: dict, embed: bool = True, log_path: str | None = None,
+        flotante: bool = False) -> int:
+    return WidgetApp(cfg, embed=embed, log_path=log_path, flotante=flotante).run()

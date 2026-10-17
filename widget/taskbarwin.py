@@ -93,6 +93,20 @@ def list_bars() -> list[dict]:
     return barras
 
 
+def barras_usables() -> bool:
+    """True si hay una barra donde incrustar el widget.
+
+    Windows 11 conserva `Shell_TrayWnd` pero **sin `ReBarWindow32`** ni ventanas hijas,
+    asi que el host se queda sin contenedor ni ancla: ahi hay que pasar al modo flotante
+    (una ventana propia pegada al borde). Se comprueba de verdad, no por version.
+    """
+    try:
+        h = TaskbarHost()
+        return bool(h.refresh() and h.container and h.anchor)
+    except Exception:
+        return False
+
+
 class TaskbarHost:
     """Gestiona el anclaje, el espacio reservado y la restauracion.
 

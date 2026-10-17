@@ -164,6 +164,9 @@ def main() -> int:
     ap.add_argument("--waves", action="store_true",
                     help="con --shot: dibujar las ondas de sonido (alturas de ejemplo)")
     ap.add_argument("--config", metavar="JSON", help="ruta alternativa de configuracion")
+    ap.add_argument("--flotante", action="store_true",
+                    help="forzar el modo flotante (ventana propia sobre el borde, sin "
+                         "barra). Es lo que se usa solo en Windows 11")
     args = ap.parse_args()
 
     cfg = cfgmod.load(args.config)
@@ -177,7 +180,15 @@ def main() -> int:
 
     log_path = os.path.join(HERE, cfg.get("log_file", "widget.log"))
     from widget.app import run
-    return run(cfg, embed=not args.no_embed, log_path=log_path)
+    # Modo flotante: si la barra no sirve para incrustar (Windows 11), se pasa solo.
+    # Con --flotante se fuerza en cualquier Windows, que es como se prueba en 10.
+    from widget import taskbarwin
+    flotante = args.flotante or not taskbarwin.barras_usables()
+    if flotante and not args.no_embed:
+        print("modo flotante: %s" % ("pedido con --flotante" if args.flotante else
+                                     "la barra de tareas no admite incrustar (Windows 11)"),
+              file=sys.stderr)
+    return run(cfg, embed=not args.no_embed, log_path=log_path, flotante=flotante)
 
 
 if __name__ == "__main__":

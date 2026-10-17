@@ -623,6 +623,36 @@ Como se hacen, y por que no cuestan CPU:
 - Con el fondo opaco (`bg_mode: "opaque"`) no hay alfa global que animar, asi que el
   mostrar/ocultar sigue siendo instantaneo; el de la caratula funciona igual.
 
+## Windows 11: modo flotante
+
+Windows 10 deja incrustar una ventana en la barra (hijo de `Shell_TrayWnd`), y de eso
+vive todo el anclaje. **Windows 11 no**: esa barra se rehizo, ya no tiene `ReBarWindow32`
+que encoja para hacer sitio ni ventanas hijas. El programa lo **comprueba** al arrancar
+(no por version: busca un contenedor y un ancla de verdad) y si la barra no sirve pasa
+solo al **modo flotante**:
+
+- El widget se dibuja como **ventana propia**, pegada a la franja de abajo del monitor
+  (encima de la barra, en el hueco libre entre los iconos y el reloj), con el mismo
+  dibujo, el mismo clic, los mismos atajos y la misma transparencia real (el escritorio
+  se ve a traves).
+- No le pide nada a la barra: la lista de tareas conserva su ancho. Se lo comprueba en la
+  prueba dedicada (1178 px antes y despues).
+- Es un adorno: sin entrada en Alt+Tab (`WS_EX_TOOLWINDOW`) y siempre arriba
+  (`WS_EX_TOPMOST`).
+- El alto de la franja no se adivina: sale del **area de trabajo** del monitor (que ya
+  viene sin la barra). Medido: 40 px en Windows 10; en Windows 11 la barra mide 48.
+- `flotante_reserva_derecha` (300 px) es el hueco que se le deja al reloj y los iconos de
+  la bandeja a la derecha.
+
+**Como se prueba sin tener Windows 11**: `python main.py --flotante` fuerza el modo en
+cualquier Windows, asi que la misma ventana, el mismo dibujo y el mismo clic se verifican
+en Windows 10 con `python tools/flotante_test.py` (12 comprobaciones: geometria, que no
+reserve espacio, que dibuje, que el play/pausa responda, que el panel abra con
+`Ctrl+Alt+O`, y que al terminar vuelva el widget de la barra). Lo que **no** se puede
+verificar asi es la barra real de Windows 11 (donde el modo se elige solo): eso pide una
+maquina con 11.
+
+
 ## El menu (corto a proposito)
 
 Clic derecho sobre el widget. Queda **solo lo que no se puede hacer de otra forma**:
@@ -671,6 +701,7 @@ donde 12 son atajos de cosas que ya se hacen con el mouse es un menu que no se l
 | `fade_visible` | true | Fundido al mostrar/ocultar el widget (solo con fondo transparente) |
 | `fade_step` | 48 | Cuanto cambia el alfa por cuadro en ese fundido (255 / paso = cuadros) |
 | `panel_mode` | `"normal"` | `"gaming"` recuerda el estado del interruptor del menu |
+| `flotante_reserva_derecha` | 300 | Hueco que se le deja al reloj en modo flotante (Windows 11) |
 | `panel_size` | `"normal"` | `"normal"` (320x178), `"chico"` (280x84) o `"tira"` (320x34, una fila) |
 | `panel_no_robar` | false | No le saca el foco a lo que este adelante y no se cierra al tocar afuera |
 | `panel_topmost` | false | Queda siempre arriba (util con juegos en ventana) |
@@ -744,8 +775,9 @@ afuera que un clic realmente cambio de tema o movio la reproduccion.
 
 ## Limitaciones conocidas
 
-- Solo Windows 10. En Windows 11 la barra es otra (`Shell_TrayWnd` cambio de
-  estructura) y habria que rehacer el anclaje.
+- En Windows 11 **no se incrusta**: esa barra ya no tiene donde alojar una ventana, asi
+  que el widget pasa solo al **modo flotante** (una tira propia pegada al borde de abajo,
+  ver la seccion de abajo). En Windows 10 se incrusta como siempre.
 - Vive en **una** barra por vez (la del monitor que elijas): no se puede duplicar en
   todos los monitores a la vez.
 - El anclaje asume barras **horizontales** (abajo). Si moviste la barra a un borde
