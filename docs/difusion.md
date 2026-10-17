@@ -1,102 +1,172 @@
-# Como darle visibilidad
+# Kit de difusion
 
-Notas para el autor (no para quien entra al repo). Lo que ya esta y lo que falta.
+Notas para el autor. Lo que ya esta hecho, el orden en que conviene moverse, y los textos
+listos para pegar.
+
+---
 
 ## Lo que ya esta hecho
 
-- Repo **publico**, con descripcion, 7 topics, licencia MIT y el release **v1.0.0** con los
-  dos adjuntos (portatil + instalador).
-- README con **GIF animado**, distintivos (version, descargas, licencia, plataforma) y un
-  **resumen en ingles** para el que no lee castellano.
-- Paquete de **winget** listo en `winget/manifests/...` (con el SHA256 del archivo publicado).
+- Repo publico con **descripcion, 7 topics, pagina web apuntando al release y licencia MIT**.
+- Release **v1.0.0** con los dos adjuntos (portatil de 27 MB e instalador de 29 MB).
+- README con **GIF animado**, distintivos (version, descargas, licencia), link de descarga
+  arriba de todo y un **resumen en ingles**.
+- Tarjeta social **a medida** en `assets/social.png` (1280x640), lista para subir.
+- Paquete de **winget** listo en `winget/manifests/...`.
 
-## 1. Dos clics que solo podes hacer vos
+---
 
-**Imagen social**: GitHub → Settings → **Social preview** → subir `assets/social.png`.
-Es la que aparece cuando alguien pega el link en Discord, WhatsApp, X o Reddit: sin eso,
-queda un cuadro gris y el link se ve flojo.
+## El orden importa
 
-Esta hecha a medida (1280x640, que es la medida que pide GitHub), con el estilo de la app:
-el icono, el violeta de acento, la tipografia del widget y un **render real** del widget
-sobre una franja que simula la barra de tareas. Se regenera con
-`python tools/make_social_card.py` (por si cambia el nombre, el color o la frase).
+### Paso 1 — La imagen social (2 clics, 30 segundos)
 
-**Pagina web del repo**: ya la puse apuntando al release, pero conviene revisarla en
-Settings → General → Website.
+GitHub → **Settings** → **Social preview** → subir `assets/social.png`.
 
-## 2. Publicarlo en winget (el canal que trae usuarios solo)
+No es cosmetico: **cada vez que alguien pegue el link** en Discord, WhatsApp, X, Reddit o
+un grupo, se ve esa imagen o un cuadro gris. Es el multiplicador de todo lo demas.
 
-Es lo que hace que alguien escriba `winget search musica` o `winget install
-EduardoFleitas.AstraMusicWidget` y lo tenga instalado sin buscar nada raro. Y aparece solo
-en sitios que espejan winget (winstall.app, etc.).
+### Paso 2 — Publicarlo en winget (el canal que trae descargas sin que te busquen)
 
-Los archivos ya estan en este repo, en `winget/manifests/e/EduardoFleitas/AstraMusicWidget/1.0.0/`.
-Para publicarlos:
+Los archivos ya estan en `winget/manifests/e/EduardoFleitas/AstraMusicWidget/1.0.0/`.
 
-1. Hacer un **fork** de `microsoft/winget-pkgs`.
-2. Copiar la carpeta `winget/manifests/...` dentro del fork, respetando la misma ruta
-   (la estructura es `manifests/<letra>/<Publisher>/<Package>/<Version>/`).
+1. **Fork** de `microsoft/winget-pkgs`.
+2. Copiar la carpeta `winget/manifests/...` al fork **con la misma ruta**.
 3. Abrir un **Pull Request** titulado:
    `New package: EduardoFleitas.AstraMusicWidget version 1.0.0`
-4. El robot de winget valida el paquete (que la URL baje, que el hash coincida, que se
-   instale en silencio). Tarda unos dias y suele pedir algun ajuste menor.
 
-En cada version nueva: subir el release **y** mandar otro PR con el manifest nuevo (dos
-minutos: cambiar la version, la URL y el SHA256).
+El robot valida solo: que la URL baje, que el SHA256 coincida, que se instale en silencio y
+que desinstale bien. Tarda unos dias y a veces pide un ajuste menor.
 
-## 3. Donde publicarlo (con el texto listo)
+**Por que primero esto y no los posts**: cuando publiques en Reddit, la instruccion mas
+fuerte que podes dar es `winget install EduardoFleitas.AstraMusicWidget` (una linea, sin
+avisos de SmartScreen, con desinstalador). Un post que dice "bajalo de aca y dale a Mas
+informacion" convierte mucho peor.
 
-Regla de oro: **decilo que sos el autor** en el primer renglon y **no pegues el mismo texto
-en cinco lugares el mismo dia**. Un solo lugar bien elegido rinde mas que cinco a medias.
+Y despues aparece solo en los sitios que espejan winget (winstall.app y compania).
 
-**r/Windows11** (y r/Windows10) — el publico exacto. Con el GIF y una captura:
+### Paso 3 — Un post, bien elegido
 
-> Hice un widget de musica que vive dentro de la barra de tareas: caratula, titulo,
-> controles y el volumen de la app que suena. Anda con Spotify, VLC o lo que suene en el
-> navegador (lee la sesion de multimedia de Windows, sin plugins). Es gratis y MIT.
-> Lo dejo aca: [link]
+Un lugar, un dia. **No pegues el mismo texto en cinco subreddits el mismo dia**: te leen
+como spam y te banean. Eleji uno, respondele a todos los comentarios, y si sale bien, tres
+o cuatro dias despues publica el siguiente con otro enfoque.
 
-**r/Python** — el angulo tecnico, que es el que le interesa a esa comunidad:
+Antes de publicar, revisa que el README abra con el GIF (es lo primero que se ve).
 
-> Escribi un widget de Windows en Python sin frameworks de UI: Win32 con pywin32,
-> UpdateLayeredWindow para la transparencia real, la via de audio de Windows por ctypes
-> para el volumen de la app y la sesion de multimedia (SMTC) para saber que suena.
-> Lo que mas me costo: el alpha por pixel decide que ventana recibe el mouse.
-> Codigo y explicacion: [link]
+---
 
-**r/software**, **r/coolgithubprojects**, **r/SideProject** — "acabo de publicar".
+## Textos listos para pegar
 
-**Hacker News** (Show HN) — si escribis un post tecnico (ver el punto 5). Es loteria, pero
-es donde un proyecto chico de Windows puede aparecer de golpe.
+### r/Windows10 y r/Windows11 — el publico exacto
 
-**alternativeto.net** — agregarlo como alternativa a Wallpaper Engine / Rainmeter.
+**Titulo**: `Hice un widget de musica que vive dentro de la barra de tareas (gratis, MIT)`
 
-**itch.io** — si queres una vidriera aparte con "pagá lo que quieras".
+> Hola. Soy el autor. Hice un widget que muestra lo que esta sonando **dentro** de la barra
+> de tareas: caratula, titulo, artista, barra de progreso clicable, controles y el volumen
+> de la app.
+>
+> Anda con cualquier reproductor (Spotify, VLC, y lo que suene en Chrome/Edge/Brave) porque
+> lee la sesion de multimedia de Windows, no un reproductor en particular. No necesita
+> Python ni instalar nada raro: hay instalador y una version portatil de un solo archivo.
+>
+> Extras que me gustaron hacer: panel con tres tamaños (incluida una tira fina de una sola
+> fila) con un modo para jugar que no le roba el foco al juego, atajos globales, y elegir el
+> color de la barra y de las ondas.
+>
+> Es gratis, licencia MIT, y el codigo esta a la vista: [link al repo]
+>
+> En Windows 11 la barra ya no permite incrustar ventanas, asi que ahi se dibuja como una
+> tira pegada al borde de abajo (mismo dibujo, mismos clics).
 
-## 4. El video de 20 segundos (lo que mas rinde para esta app)
+### r/Python — el angulo tecnico
 
-Una grabacion de pantalla: musica sonando, el widget con las ondas moviendose y el panel
-abriendose encima de un juego en ventana. **Sin hablar**, sin editar, sin musica de fondo.
-Eso es lo que se comparte en X, TikTok, Shorts y en los mismos subreddits.
+**Titulo**: `Escribi un widget de Windows en Python puro (Win32 + ctypes), sin frameworks de UI`
 
-## 5. El post tecnico (el que trae enlaces de verdad)
+> Soy el autor. Es un widget de musica que se incrusta en la barra de tareas de Windows 10.
+> Todo el dibujo es Pillow sobre un lienzo x3 y reduccion LANCZOS; la presentacion es
+> `UpdateLayeredWindow` sobre una ventana **hija** de `Shell_TrayWnd` (desde Windows 8 las
+> ventanas hijas admiten `WS_EX_LAYERED`, y ahi esta el truco del fondo transparente).
+>
+> Tres cosas que me costaron y quedaron documentadas en el repo:
+>
+> 1. **El alpha por pixel decide que ventana recibe el mouse.** Con el fondo totalmente
+>    transparente, los huecos son "agujeros" y el clic se lo queda la barra de tareas. Se
+>    arregla con un piso de alfa de 2/255 (0,8%, invisible).
+> 2. **El volumen por aplicacion** no lo expone SMTC ni pywin32: hay que hablar con la via
+>    de audio de Windows (Core Audio) por ctypes, recorriendo las sesiones y emparejando por
+>    nombre de ejecutable.
+> 3. **Las ondas son una animacion**, no un analisis: SMTC no expone niveles de audio. Esta
+>    dicho en la documentacion en vez de venderlo como visualizador real.
+>
+> Verificacion: hay tres suites (una de ellas mueve el mouse y las teclas de verdad) y el
+> ejecutable pasa las mismas que el codigo.
+>
+> [link al repo]
 
-La historia que hay detras de este proyecto da para un texto lindo, porque casi todo lo
-aprendido esta medido y documentado en el skill del repo:
+### r/software, r/coolgithubprojects, r/SideProject
 
-- Incrustar una ventana en la barra de tareas de Windows 10 (y por que en 11 no se puede,
-  y como lo resuelve el modo flotante).
-- El alpha por pixel decide **que ventana recibe el mouse**: sin piso de alfa, los huecos
-  del fondo transparente se los queda la ventana de atras.
-- Volumen por aplicacion hablando con la via de audio de Windows directamente por ctypes.
-- Que se puede y que no con la sesion de multimedia (SMTC): por que las ondas son una
-  animacion y no un analisis de audio.
+**Titulo**: `Astra-Music-widget: musica en la barra de tareas de Windows (gratis, open source)`
 
-Publicarlo en un blog o en un gist y mandarlo a HN / r/programming con el link al repo.
+> Acabo de publicar la 1.0. Un adorno para la barra de tareas que muestra lo que suena:
+> caratula, titulo, controles y el volumen de la app, mas un panel con modo gaming.
+> Gratis y MIT, con instalador o portatil de un solo archivo. [link]
 
-## 6. Expectativas honestas
+### Hacker News (Show HN)
 
-Es una utilidad de escritorio, no un juego: no se hace viral. Lo realista es que, si un post
-pega en una comunidad, entren unos cientos de descargas y unas decenas de estrellas. Lo que
-si cambia el numero es estar en **winget** (te encuentran sin que los busques) y tener el
-**GIF** (es lo que hace que alguien se quede los primeros cinco segundos).
+**Titulo**: `Show HN: A music widget embedded in the Windows taskbar (Python + Win32)`
+
+> Un widget de musica que se incrusta en la barra de tareas de Windows 10. Es Python +
+> pywin32 + Pillow, sin framework de UI.
+>
+> Lo mas interesante del proyecto fueron los detalles: las ventanas hijas en capas y el
+> alpha por pixel que decide quien recibe el mouse; el volumen por aplicacion hablando con
+> Core Audio por ctypes (SMTC no lo expone); y por que en Windows 11 esto ya no se puede
+> incrustar y el widget pasa a ser una tira flotante.
+>
+> En el repo esta la documentacion con las mediciones de cada trampa. Feliz de contestar.
+>
+> [link al repo]
+
+### X / Twitter
+
+> Hice un widget de musica que vive en la barra de tareas de Windows: caratula, titulo,
+> controles y volumen de la app que suena. Gratis y MIT.
+> [GIF] [link]
+
+### alternativeto.net
+
+Agregarlo como alternativa a **Wallpaper Engine** y **Rainmeter** (misma gente: gente que
+personaliza su escritorio). Se sube desde su formulario, con la captura y el link.
+
+---
+
+## El video de 20 segundos (lo que mas rinde)
+
+Una grabacion de pantalla, **sin hablar**: musica sonando, el widget con las ondas
+moviendose, abris el panel, y que se vea encima de un juego en ventana. Eso se comparte en X,
+TikTok, Shorts y en los mismos subreddits (Reddit acepta videos y andan mejor que las
+imagenes).
+
+Guion corto:
+1. 0-5 s: la barra con el widget y las ondas moviendose (nada mas).
+2. 5-12 s: clic en la caratula, se abre el panel, tocas play/pausa y la barra de progreso.
+3. 12-20 s: lo mismo con el juego abierto, para mostrar que no le roba el foco.
+
+---
+
+## Un riesgo que conviene tapar antes de publicar
+
+La app asume la barra de tareas **abajo**. Si alguien la tiene a un costado o arriba, el
+widget le va a quedar mal ubicado, y ese es el tipo de comentario que arruina un post
+("lo probe y me rompio la barra"). Lo tengo documentado como limitacion, pero la salida
+elegante es chica: **si la barra no esta abajo, pasar solo al modo flotante** (que ya existe
+para Windows 11 y no toca la barra). Son unas diez lineas y una prueba.
+
+---
+
+## Expectativas honestas
+
+Es una utilidad de escritorio, no un juego: no se hace viral. Lo realista si un post pega es
+un pico de unos cientos de descargas y unas decenas de estrellas, y despues el goteo lento
+que trae winget. Lo que **si** cambia el numero de verdad es estar en winget (te encuentran
+buscando) y tener el GIF y la imagen social (hacen que alguien se quede y que el link se vea
+bien cuando lo comparten).
