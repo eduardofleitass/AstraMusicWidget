@@ -89,9 +89,28 @@ def main() -> int:
 
     # Saneamiento: devolver el ancho natural a cada barra, por si una corrida
     # anterior murio sin limpiar (o si el widget vivia en una secundaria).
-    for b in list_bars():
-        host_de(b).restore()
-    time.sleep(0.3)
+    #
+    # Se espera a que el proceso termine DE VERDAD antes de reparar y se reintenta:
+    # si se repara mientras el widget todavia existe, el propio widget vuelve a
+    # reservar su espacio despues y el resultado queda a medias (visto: "REVISAR:
+    # quedo espacio leakado" en la primera corrida y bien en la segunda).
+    def cerrar_y_reparar(espera: float) -> bool:
+        t0 = time.time()
+        while time.time() - t0 < espera:
+            if not win32gui.FindWindow("GorusTaskbarMusicCtl", None) and not any(
+                    f[3] for f in estado()):
+                break
+            time.sleep(0.25)
+        for b in list_bars():
+            host_de(b).restore()
+        time.sleep(0.3)
+        return all((not hay) and abs(ancho - natural) <= 3
+                   for _, ancho, natural, hay in estado())
+
+    for intento in range(3):
+        if cerrar_y_reparar(3.0 if intento == 0 else 1.5):
+            break
+    time.sleep(0.2)
 
     ok = True
     for nombre, ancho, natural, hay in estado():

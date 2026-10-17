@@ -453,7 +453,9 @@ pinte donde tiene que pintar (caratula, textos, barra, controles), que reaccione
 hover, al arrastre y al silencio, que las zonas entren y no se pisen, que sepa que hay
 bajo el cursor y que el chico sea mucho mas chico (medido: 41% del area del normal); y
 en vivo que se abra, sea un globo, quede encima del widget y dentro del monitor, este
-pintado, y el modo gaming: que quede chico (320x178 -> 280x84), que no le robe el foco
+pintado, que con el fondo en 0 no quede **nada** dibujado atras y que el texto se de vuelta
+para contrastar (medido: 213 de contraste con fondo claro, 210 con oscuro), y el modo
+gaming: que quede chico (320x178 -> 280x84), que no le robe el foco
 (`NOACTIVATE` + `TOPMOST`), que tocar afuera **no** lo cierre, que con "clics al juego"
 el clic pase de largo y que el auto-ocultar lo cierre solo.
 En `clicktest.py` se prueba con clic real: un clic seco en la caratula lo abre, el
@@ -545,9 +547,16 @@ derecho > *Panel* > *Modo gaming*) prende el conjunto:
 - **Fijo**: en modo gaming no se oculta solo ni se cierra al tocar el juego; queda
   donde lo dejaste hasta que lo cierres con `Ctrl+Alt+O`, la cruz o el menu.
 - **El fondo y la opacidad son dos cosas distintas** y se ajustan por separado:
-  *Fondo* cambia el recuadro de atras (de *Solido* a *Sin fondo*, para que se vea el
-  juego a traves) y *Opacidad de todo el panel* cambia todo junto, textos incluidos.
-  Si el fondo se te transparenta y no te gusta, en *Fondo* > *Solido* queda opaco.
+  *Fondo* cambia el recuadro de atras (de *Solido* a *Sin fondo*) y *Opacidad de todo
+  el panel* cambia todo junto, textos incluidos.
+- **Sin fondo es sin fondo**: con *Fondo* > *Sin fondo (solo los datos)* no queda
+  **nada** dibujado atras (ni el borde) y el panel queda flotando: solo la caratula, los
+  textos, los controles y las barras.
+- **Sin fondo el texto se adapta solo**: el panel mira el color que hay detras (promedia
+  cuatro franjas finas alrededor suyo) y elige texto claro u oscuro para contrastar
+  —medido: con fondo claro el texto queda 213 mas oscuro y con fondo oscuro 210 mas
+  claro— y le pone un contorno del color opuesto para que se lea sobre cualquier cosa.
+  Si igual preferis un fondo, *Solido* queda opaco.
 - Cada ajuste se puede tocar por separado desde el mismo submenu, si no queres el
   paquete completo.
 
@@ -612,7 +621,7 @@ Como se hacen, y por que no cuestan CPU:
 | `panel_auto_hide_s` | 0 | Se oculta solo tras N segundos sin usarlo (0 = nunca) |
 | `panel_hud` | false | Aparece un rato al cambiar de cancion |
 | `panel_alpha` | 255 | Opacidad de todo el panel (235 leve, 200 translucido, 160 muy transparente) |
-| `panel_bg_alpha` | 250 | Alfa del **recuadro de atras** (250 solido, 200, 140, 90, 0 sin fondo). Con el fondo en 0 el panel queda flotando y los textos siguen nitidos |
+| `panel_bg_alpha` | 250 | Alfa del **recuadro de atras** (250 solido, 200, 140, 90, 0 = sin fondo: no se dibuja nada, ni el borde). Con 0 el texto elige claro u oscuro segun lo que haya atras |
 | `panel_pos` | `null` | `[x, y]` en pantalla donde lo dejaste arrastrado; `null` = encima del widget |
 | `show_volume` | true | Celda del altavoz despues de los botones (menu > *Mostrar altavoz*) |
 | `volume_step` | 5 | Cuanto sube o baja cada muesca de la rueda sobre el altavoz, en porcentaje |

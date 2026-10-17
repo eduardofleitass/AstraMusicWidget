@@ -101,7 +101,7 @@ PANEL_ALPHAS = [(255, "Todo nitido"), (235, "Leve"), (200, "Translucido"),
 # Alfa del FONDO dibujado (el chip detras del texto). Es independiente del anterior:
 # con el fondo en 0 el panel queda flotando sobre el juego y los textos siguen nitidos.
 PANEL_BG_ALPHAS = [(250, "Solido"), (200, "Translucido"), (140, "Muy transparente"),
-                   (90, "Casi sin fondo"), (0, "Sin fondo")]
+                   (90, "Casi sin fondo"), (0, "Sin fondo (solo los datos)")]
 
 # Colores que ofrece el menu para la barra de progreso y las ondas (None = el del
 # tema). El menu guarda el hex en config.json; a mano tambien vale [r, g, b].
@@ -1930,6 +1930,9 @@ class WidgetApp:
             pass
         self.log("panel abierto en %s%s", (x, y, w, h),
                  " (sin robar el foco)" if sin_foco else "")
+        if int(self.cfg.get("panel_bg_alpha", 250)) < 120:
+            self.log("panel: fondo medido detras %s (para elegir texto claro u oscuro)",
+                     self._panel_fondo_detras())
 
     def _panel_render(self, force: bool = False) -> None:
         if not self.panel_visible or not self.hwnd_panel or not self.dib_panel:
@@ -1948,17 +1951,66 @@ class WidgetApp:
         self._panel_sig = sig
         S = k * max(1, int(self.cfg.get("supersample", 3)))
         Lp = panel_mod.layout(self.cfg)
+        # Con el fondo transparente, el texto tiene que contrastar con lo que hay
+        # DETRAS del panel (un juego claro, un video). Se muestrea una franja justo
+        # afuera del panel (adentro esta el panel: la captura devuelve el compuesto).
+        base = None
+        if int(self.cfg.get("panel_bg_alpha", 250)) < 120:
+            base = self._panel_fondo_detras()
         art = None
         if self.cfg.get("show_art", True):
             art = draw.get_art(self.state.art, self.state.art_key,
                                int(round(Lp["tapa"][2] * S)),
                                int(round(Lp["tapa_radio"] * S)))
         img = panel_mod.render(self.state, self.cfg, art=art, volume=vol,
-                               hover=self.panel_hover, k=k, scrub=self.panel_scrub)
+                               hover=self.panel_hover, k=k, scrub=self.panel_scrub,
+                               base=base)
         # opacidad de todo el panel (SourceConstantAlpha): en gaming se agradece un
         # overlay que deje ver lo de atras sin tener que buscarlo en el menu
         self.dib_panel.alpha = int(max(60, min(255, self.cfg.get("panel_alpha", 255))))
         self.dib_panel.upload(draw.to_premult_bgra(img))
+
+    def _panel_fondo_detras(self):
+        """Color aproximado de lo que hay DETRAS del panel (para el auto-contraste).
+
+        Se miran cuatro franjas finas alrededor del panel (no se puede capturar la de
+        adentro: ahi ya esta el panel y la captura devuelve el compuesto). Con una sola
+        franja el muestreo le erra -visto: eligio texto oscuro porque arriba habia una
+        ventana clara, y quedaba con un halo blanco sobre fondo oscuro-, asi que se
+        promedian las cuatro descartando la mas clara y la mas oscura.
+        """
+        try:
+            from PIL import ImageGrab as _IG
+            pr = win32gui.GetWindowRect(self.hwnd_panel)
+            if pr[2] <= pr[0] or pr[3] <= pr[1]:
+                return None
+            t = max(3, int(4 * self._panel_k()))
+            franjas = [
+                (pr[0], max(0, pr[1] - t), pr[2], max(1, pr[1] - 1)),      # arriba
+                (pr[0], pr[3] + 1, pr[2], pr[3] + t),                      # abajo
+                (max(0, pr[0] - t), pr[1], max(1, pr[0] - 1), pr[3]),      # izquierda
+                (pr[2] + 1, pr[1], pr[2] + t, pr[3]),                      # derecha
+            ]
+            medias = []
+            for f in franjas:
+                if f[2] <= f[0] or f[3] <= f[1]:
+                    continue
+                im = _IG.grab(bbox=f, all_screens=True).convert("RGB")
+                px = list(im.get_flattened_data())
+                if px:
+                    n = float(len(px))
+                    medias.append((sum(0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2]
+                                       for p in px) / n,
+                                   tuple(int(sum(q[i] for q in px) / n) for i in range(3))))
+            if not medias:
+                return None
+            medias.sort()
+            utiles = medias[1:-1] if len(medias) > 2 else medias   # sin la mas clara ni la mas oscura
+            return (int(sum(m[1][0] for m in utiles) / len(utiles)),
+                    int(sum(m[1][1] for m in utiles) / len(utiles)),
+                    int(sum(m[1][2] for m in utiles) / len(utiles)))
+        except Exception:
+            return None
 
     def _panel_frac_barra(self, x: int) -> float:
         return panel_mod.frac_en_barra(x, self._panel_k(), self.cfg)

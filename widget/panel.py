@@ -136,8 +136,14 @@ def frac_en_volumen(x: int, k: float, cfg: dict) -> float:
 
 
 def render(state, cfg: dict, *, art: Image.Image | None = None, volume=None,
-           hover: int = -1, k: float = 1.0, scrub: float | None = None) -> Image.Image:
-    """Dibuja el panel completo y devuelve la imagen (RGBA)."""
+           hover: int = -1, k: float = 1.0, scrub: float | None = None,
+           base: tuple | None = None) -> Image.Image:
+    """Dibuja el panel completo y devuelve la imagen (RGBA).
+
+    `base` es el color que hay DETRAS del panel: con el fondo transparente el texto
+    tiene que contrastar con eso, no con un chip oscuro que ya no existe (sobre un juego
+    claro, texto claro = fantasma). Con None se usa el fondo oscuro de siempre.
+    """
     L = layout(cfg)
     SS = max(1, int(cfg.get("supersample", 3)))
     S = k * SS
@@ -145,15 +151,21 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, volume=None,
     img = Image.new("RGBA", (Wp * SS, Hp * SS), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    theme = draw.theme_for_base(cfg, (26, 28, 36))
-    # 250 y no 247: con 247 se transparentaba el texto de la ventana de atras y
-    # ensuciaba la lectura (visto en la captura del panel en vivo)
-    alpha_fondo = int(max(60, min(255, cfg.get("panel_bg_alpha", 250))))
-    d.rounded_rectangle([0, 0, img.size[0] - 1, img.size[1] - 1],
-                        radius=int(round(12 * S)),
-                        fill=draw._col(theme, "chip", alpha_fondo),
-                        outline=draw._col(theme, "border", 200),
-                        width=max(1, int(round(1 * S))))
+    theme = draw.theme_for_base(cfg, tuple(base)[:3] if base else (26, 28, 36))
+    # El alfa del fondo se respeta TAL CUAL: con 0 no se dibuja nada (ni el borde) y el
+    # panel queda solo con los datos, flotando sobre lo que haya detras. Antes habia un
+    # piso de 60 "para que no quedara invisible", y eso hacia que "Sin fondo" pintara
+    # igual un velo al 24% (lo que el usuario veia como fondo que seguia estando).
+    alpha_fondo = int(max(0, min(255, cfg.get("panel_bg_alpha", 250))))
+    if alpha_fondo > 0:
+        # el borde acompania al fondo: con poco fondo, un contorno fuerte quedaria
+        # como una caja vacia
+        d.rounded_rectangle([0, 0, img.size[0] - 1, img.size[1] - 1],
+                            radius=int(round(12 * S)),
+                            fill=draw._col(theme, "chip", alpha_fondo),
+                            outline=draw._col(theme, "border", min(200, alpha_fondo)),
+                            width=max(1, int(round(1 * S))))
+
 
     idle = not state.has_session
     dim = 0.6 if idle else 1.0
@@ -168,6 +180,12 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, volume=None,
     icon_dim = draw._col(theme, "icon_dim", int(255 * dim))
     acc = draw._col(theme, "accent_progress", 255)
     z = rects(k, cfg)
+    # Sin fondo, el texto necesita su propio contorno y ademas contrastar con lo de
+    # atras (lo resuelve el tema con `base`). El contorno va del color OPUESTO al
+    # texto: oscuro si el texto quedo claro, claro si quedo oscuro.
+    contorno = 0 if alpha_fondo >= 120 else max(1, int(round(1.5 * S)))
+    lum_texto = draw._lum(tcol[:3])
+    borde_txt = (0, 0, 0, 200) if lum_texto > 128 else (255, 255, 255, 190)
 
     # --- caratula -----------------------------------------------------------
     if art is not None:
@@ -207,12 +225,15 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, volume=None,
         ancho_artista -= d.textlength(texto_tiempos, font=f_chico) + 8 * S
     tx = z["texto"][0] * SS
     d.text((tx, L["titulo_y"] * S), recortar(titulo, f_titulo, ancho_texto),
-           font=f_titulo, fill=tcol)
+           font=f_titulo, fill=tcol, stroke_width=contorno,
+           stroke_fill=borde_txt if contorno else None)
     d.text((tx, L["artista_y"] * S), recortar(artista, f_artista, ancho_artista),
-           font=f_artista, fill=acol)
+           font=f_artista, fill=acol, stroke_width=contorno,
+           stroke_fill=borde_txt if contorno else None)
     if L["tercera_y"] is not None:
         d.text((tx, L["tercera_y"] * S), recortar(tercera, f_chico, ancho_texto),
-               font=f_chico, fill=scol)
+               font=f_chico, fill=scol, stroke_width=contorno,
+               stroke_fill=borde_txt if contorno else None)
 
     # --- barra de progreso ---------------------------------------------------
     zb = z["barra"]
@@ -237,11 +258,15 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, volume=None,
         if L["tiempos_en_texto"]:
             ancho_t = d.textlength(texto_tiempos, font=f_chico)
             d.text((z["texto"][2] * SS - ancho_t, L["tiempos_y"] * S), texto_tiempos,
-                   font=f_chico, fill=scol)
+                   font=f_chico, fill=scol, stroke_width=contorno,
+                   stroke_fill=borde_txt if contorno else None)
         else:
-            d.text((zb[0] * SS, L["tiempos_y"] * S), izq, font=f_chico, fill=scol)
+            d.text((zb[0] * SS, L["tiempos_y"] * S), izq, font=f_chico, fill=scol,
+                   stroke_width=contorno, stroke_fill=borde_txt if contorno else None)
             ancho_d = d.textlength(der, font=f_chico)
-            d.text((zb[2] * SS - ancho_d, L["tiempos_y"] * S), der, font=f_chico, fill=scol)
+            d.text((zb[2] * SS - ancho_d, L["tiempos_y"] * S), der, font=f_chico,
+                   fill=scol, stroke_width=contorno,
+                   stroke_fill=borde_txt if contorno else None)
 
     # --- controles -----------------------------------------------------------
     kinds = [("prev", state.can_prev), ("pause" if state.playing else "play",
@@ -282,7 +307,16 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, volume=None,
     grosor = max(1, int(round(1.6 * S)))
     ccx, ccy = (zc[0] + zc[2]) / 2.0 * SS, (zc[1] + zc[3]) / 2.0 * SS
     brazo = (zc[2] - zc[0]) * 0.34 * SS
-    col_x = icon_col if hover == 6 else acol
+    # Sin fondo la cruz tambien necesita contraste: color de icono (mas claro) y un
+    # halo oscuro detras, como el contorno de los textos.
+    col_x = icon_col if (hover == 6 or contorno) else acol
+    if contorno:
+        halo = grosor + max(1, int(round(1.4 * S)))
+        col_halo = (0, 0, 0, 170) if lum_texto > 128 else (255, 255, 255, 150)
+        d.line([(ccx - brazo, ccy - brazo), (ccx + brazo, ccy + brazo)],
+               fill=col_halo, width=halo)
+        d.line([(ccx - brazo, ccy + brazo), (ccx + brazo, ccy - brazo)],
+               fill=col_halo, width=halo)
     d.line([(ccx - brazo, ccy - brazo), (ccx + brazo, ccy + brazo)], fill=col_x, width=grosor)
     d.line([(ccx - brazo, ccy + brazo), (ccx + brazo, ccy - brazo)], fill=col_x, width=grosor)
 

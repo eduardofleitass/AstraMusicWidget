@@ -1048,10 +1048,18 @@ def main() -> int:
                             for x in range(z["tapa"][0], z["tapa"][2])
                             if im.getpixel((x, y))[0] > 150
                             and im.getpixel((x, y))[0] > im.getpixel((x, y))[1] + 60)
+            # El relleno de la barra se mide por DIFERENCIA contra el mismo panel con
+            # la posicion en 0 (sin relleno): clasificar por color no sirve, el usuario
+            # elige el color y con el violeta "r>g+60" daba cero pixeles.
+            im0 = panel_mod.render(
+                MediaState(has_session=True, app_id="brave.exe", title=est.title,
+                           artist=est.artist, playing=True, position=0.0,
+                           duration=180.0, position_at=_t.monotonic(), art=None,
+                           art_key="k", can_seek=True, can_toggle=True),
+                c, art=art, volume=vol, hover=-1, k=kp).convert("RGB")
             barra = sum(1 for y in range(z["barra"][1] - 2, z["barra"][3] + 3)
                         for x in range(z["barra"][0], z["barra"][2])
-                        if im.getpixel((x, y))[0] > 150
-                        and im.getpixel((x, y))[0] - im.getpixel((x, y))[1] > 60)
+                        if im.getpixel((x, y)) != im0.getpixel((x, y)))
             texto = sum(1 for y in range(z["texto"][1], z["texto"][3])
                         for x in range(z["texto"][0], z["texto"][2])
                         if sum(im.getpixel((x, y))) > 420)
@@ -1106,6 +1114,32 @@ def main() -> int:
                 canal = imx.getchannel("A")
                 d = list(canal.get_flattened_data())
                 return sum(d) / float(len(d))
+
+            # Sin fondo NO se dibuja NADA atras: antes quedaba un piso de alfa (60)
+            # que pintaba un velo al 24% y parecia que el fondo seguia estando.
+            zc2 = panel_mod.rects(kp, cfg_chico)
+            hueco = (zc2["texto"][0] + 4, L["titulo_y"] - 8)
+            im_sf = panel_mod.render(est, dict(cfg_chico, panel_bg_alpha=0), art=art,
+                                     volume=vol, k=kp)
+            im_sol = panel_mod.render(est, dict(cfg_chico, panel_bg_alpha=250), art=art,
+                                      volume=vol, k=kp)
+            check("con el fondo en 0 no queda nada dibujado atras (ni borde)",
+                  im_sf.getpixel(hueco)[3] == 0 and im_sol.getpixel(hueco)[3] > 200,
+                  f"alfa en un hueco del panel: sin fondo {im_sf.getpixel(hueco)[3]}, "
+                  f"con fondo {im_sol.getpixel(hueco)[3]}")
+
+            # ...y el texto tiene que contrastar con lo que hay DETRAS (se da vuelta)
+            contrastes = []
+            for base in ((235, 235, 235), (30, 30, 36)):
+                th = draw.theme_for_base(cfg_chico, base)
+                lt = draw._lum(th.get("title") or (238, 240, 248))
+                lb = draw._lum(base)
+                contrastes.append((lt - lb, abs(lt - lb)))
+            check("sin fondo el texto cambia de color para contrastar con lo de atras",
+                  contrastes[0][0] < 0 < contrastes[1][0]
+                  and min(c[1] for c in contrastes) > 100,
+                  f"con fondo claro el texto queda mas oscuro ({contrastes[0][0]:.0f}) y "
+                  f"con fondo oscuro mas claro ({contrastes[1][0]:.0f})")
 
             a_solido = alfa_medio(dict(cfg_chico, panel_bg_alpha=250))
             a_sin = alfa_medio(dict(cfg_chico, panel_bg_alpha=0))
