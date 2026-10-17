@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import sys
 
 DEFAULTS = {
     "width": 260,
@@ -101,7 +102,20 @@ DEFAULTS = {
     "log_file": "widget.log",
 }
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+def raiz() -> str:
+    """Carpeta del programa: al lado del .exe si esta empaquetado, si no la del modulo.
+
+    Empaquetado con PyInstaller, `__file__` apunta a una carpeta temporal que se borra al
+    salir: si la config y el log se armaran con eso, el usuario los perderia en cada
+    arranque. Con `sys.frozen` quedan al lado del ejecutable, que es lo que se espera.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    # sin empaquetar: la raiz del proyecto (dos niveles arriba de widget/config.py)
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+CONFIG_PATH = os.path.join(raiz(), "config.json")
 
 
 def _merge(base: dict, over: dict) -> dict:

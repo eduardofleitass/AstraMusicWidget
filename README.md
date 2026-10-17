@@ -732,6 +732,27 @@ Si te gusta mas ancho o mas angosto: clic derecho sobre el widget > *Más ancho*
 *Más angosto*. Y el fondo, en el submenu *Fondo*.
 
 
+## Empaquetado (.exe)
+
+    python tools/build_exe.py          # dist/WidgetMusica.exe (un solo archivo)
+    python tools/build_exe.py --dir    # una carpeta en vez de un archivo
+
+- Un solo archivo, sin consola y con el icono de las ondas (`tools/make_icon.py` lo
+  dibuja con el mismo criterio que el widget; queda en `assets/`).
+- **`--collect-all winsdk`**: los datos de WinRT (los `.winmd`) no los encuentra solo; sin
+  eso el ejecutable arranca pero no lee ninguna sesion de multimedia (se ve "sin
+  reproduccion" para siempre).
+- **La config y el log van al lado del .exe**, no dentro: empaquetado, `__file__` apunta a
+  una carpeta temporal que Windows borra al salir (ahi se perderia todo en cada arranque).
+  Lo resuelve `config.raiz()` con `sys.frozen`.
+- El arranque automatico (`tools/startup.py --install`) prefiere el **.exe** si existe y
+  si no el `run.vbs` con el `pythonw` del entorno.
+- Verificado: con el .exe en marcha, las tres suites dan lo mismo que con el codigo
+  (selftest 102/104, clicktest 37/37, hotkeytest 17/17). Ojo al probarlo: el .exe lee el
+  `config.json` que tiene al lado, asi que si queres los mismos ajustes que el proyecto,
+  copialo a `dist/` antes de correr el banco.
+
+
 ## Herramientas de desarrollo
 
 ```bash
@@ -745,6 +766,8 @@ python main.py --shot w.png --waves       # como se ven las ondas de sonido
 python tools\watch.py            # estado en vivo, muestreado cada 0,5 s
 python tools\preview.py hoja.png # hoja con todas las variantes visuales
 python tools\selftest.py         # suite de verificacion (widget en marcha)
+python toolslotante_test.py    # el modo de Windows 11 (ventana propia, sin barra)
+python toolsuild_exe.py        # empaqueta el .exe
 python tools\clicktest.py        # prueba de clic real con el mouse (restaura el estado)
 python tools\hotkeytest.py       # atajos globales con teclas REALES y rueda con modificadores
 python tools\startup.py --status # ver si el arranque automatico esta activo
@@ -768,9 +791,14 @@ afuera que un clic realmente cambio de tema o movio la reproduccion.
 
 ## Requisitos
 
-- Windows 10 1809 o posterior (SMTC necesita esa version).
-- Python 3.11. Las dependencias las instala `setup.bat`; son tres:
-  `winsdk` (SMTC), `pywin32` (Win32) y `pillow` (dibujo).
+- Windows 10 1809 o posterior (SMTC necesita esa version). En Windows 11 anda en modo
+  flotante (ver esa seccion).
+- **O el .exe**: `python tools/build_exe.py` deja `dist/WidgetMusica.exe` (27 MB, sin
+  consola, con su icono). No necesita Python ni el entorno virtual: es un archivo para
+  pasar a otra maquina. Guarda su `config.json` y su `widget.log` **al lado del
+  ejecutable**.
+- O para correr desde el codigo: Python 3.11. Las dependencias las instala `setup.bat`;
+  son tres: `winsdk` (SMTC), `pywin32` (Win32) y `pillow` (dibujo).
 
 
 ## Limitaciones conocidas

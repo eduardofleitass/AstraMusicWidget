@@ -722,11 +722,18 @@ def main() -> int:
             juego = False
             if w2 and tapado != "GorusTaskbarMusicWnd":
                 try:
-                    tr = win32gui.GetWindowRect(win32gui.WindowFromPoint(
-                        wt.POINT(int(centro[0]), int(centro[1]))))
-                    mr = win32gui.GetMonitorInfo(win32api.MonitorFromRect(tr))["Monitor"]
-                    juego = (tr[0] <= mr[0] and tr[1] <= mr[1]
-                             and tr[2] >= mr[2] and tr[3] >= mr[3])
+                    tapadora_h = win32gui.WindowFromPoint(
+                        wt.POINT(int(centro[0]), int(centro[1])))
+                    tr = win32gui.GetWindowRect(tapadora_h)
+                    clase = win32gui.GetClassName(tapadora_h)
+                    # Barra de arriba en pantalla completa, o cualquier ventana AJENA
+                    # (un juego en primer plano) que tape toda la barra: en los dos
+                    # casos el widget no puede verse y no hay nada que comprobar.
+                    ajena = clase not in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd",
+                                          "WorkerW", "Progman", "GorusTaskbarMusicWnd")
+                    br = destino["rect"]
+                    juego = ajena and tr[0] <= br[0] and tr[1] <= br[1] \
+                        and tr[2] >= br[2] and tr[3] >= br[3]
                 except Exception:
                     juego = False
             check("nadie lo tapa en la barra nueva", bool(w2) and tapado == "GorusTaskbarMusicWnd",

@@ -18,6 +18,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(HERE)
 VBS = os.path.join(PROJECT, "run.vbs")
+EXE = os.path.join(PROJECT, "dist", "WidgetMusica.exe")
 NAME = "Widget Musica.lnk"
 
 
@@ -32,16 +33,26 @@ def lnk_path() -> str:
 
 def install() -> int:
     import win32com.client
-    if not os.path.exists(VBS):
-        print(f"ERROR: falta {VBS}")
+    # Si esta empaquetado, se arranca el .exe (no necesita Python ni el venv). Si no, el
+    # .vbs con el pythonw del entorno virtual, para que no abra consola.
+    if os.path.exists(EXE):
+        objetivo, args, icono = EXE, "", EXE
+    elif os.path.exists(VBS):
+        objetivo, args = os.path.join(os.environ["WINDIR"], "System32", "wscript.exe"), f'"{VBS}"'
+        icono = os.path.join(os.environ["WINDIR"], "System32", "wmploc.dll,0")
+        ico = os.path.join(PROJECT, "assets", "icono.ico")
+        if os.path.exists(ico):
+            icono = ico
+    else:
+        print(f"ERROR: ni {EXE} ni {VBS}")
         return 1
     wsh = win32com.client.Dispatch("WScript.Shell")
     lnk = wsh.CreateShortcut(lnk_path())
-    lnk.TargetPath = os.path.join(os.environ["WINDIR"], "System32", "wscript.exe")
-    lnk.Arguments = f'"{VBS}"'
-    lnk.WorkingDirectory = PROJECT
+    lnk.TargetPath = objetivo
+    lnk.Arguments = args
+    lnk.WorkingDirectory = PROJECT if os.path.exists(VBS) else os.path.dirname(EXE)
     lnk.Description = "Widget de musica en la barra de tareas"
-    lnk.IconLocation = os.path.join(os.environ["WINDIR"], "System32", "wmploc.dll,0")
+    lnk.IconLocation = icono
     lnk.Save()
     print("Arranque automatico ACTIVADO")
     print(f"  {lnk_path()}")

@@ -12,3 +12,7 @@ tools/_selftest.json
 tools/_rig_state.json
 shot_broken.png
 shot_check.png
+
+# empaquetado (el .exe se arma con tools/build_exe.py)
+build/
+dist/

@@ -17,7 +17,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from widget import config as cfgmod  # noqa: E402
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False):
+    # Empaquetado: la carpeta del .exe (no la carpeta temporal de PyInstaller, que se
+    # borra al salir: ahi se perderian la config y el log)
+    HERE = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Alturas de ejemplo para --shot --waves (una por barra, 0..1)
 WAVES_DEMO = [0.55, 0.95, 0.35, 0.8]
