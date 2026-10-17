@@ -1,4 +1,4 @@
-# Astra-Music-widget 1.0.4
+# Astra-Music-widget 1.0.5
 
 Widget de musica que vive **dentro** de la barra de tareas de Windows: muestra lo que esta
 sonando (caratula, titulo, artista, barra de progreso clicable, controles y el volumen de
@@ -8,22 +8,25 @@ de multimedia de Windows, no un reproductor en particular.
 
 ## Novedades de esta version
 
-- **Las ondas de sonido ya no congelan el widget en Windows 11.** Con las ondas encendidas,
-  el widget se quedaba clavado: seguia corriendo, pero no volvia a dibujarse, asi que el
-  menu (fondo, opacidad, colores) parecia no hacer nada y la cancion no avanzaba. La causa:
-  la tira de las ondas se pegaba sobre una franja calculada con dos cuentas distintas —una
-  con el ancho real del cuadro y otra con el ancho de la configuracion—, y cuando la barra
-  de tareas mide mas de 40 px (Windows 11: 48 px) las dos cuentas no caen en el mismo pixel.
-  El resultado era un error de dibujo en cada cuadro o, cuando no fallaba, las ondas
-  dibujadas encima del boton de play. Ahora las dos usan la misma franja, y si alguna vez
-  volvieran a no coincidir queda anotado en el log en vez de dejar el widget sin repintar.
-- **Los clics en la barra de progreso caen donde uno hace clic.** La zona clicable tambien
-  se calculaba corrida: con la barra de tareas de 48 px, hacer clic en el final de la barra
-  saltaba al 72% del tema en vez del final, y la parte de la barra mas alla del 72% no se
-  podia elegir. Lo mismo afectaba a la rueda del mouse y al arrastre del volumen.
+- **El fondo del widget se puede poner del color de Windows**: menu → *Color del widget* →
+  *Del tema de Windows*. Toma el color con el que el sistema tiñe la barra de tareas y los
+  bordes (el de Ajustes → Personalizacion → Colores; se lee de Windows, no hay que copiarlo a
+  mano), asi el widget se ve como parte de la barra. Al lado quedan *Claro* y *Oscuro* para
+  forzarlo sin mirar el fondo, y *Automatico*, que es lo que hacia hasta ahora (tema claro si
+  lo que hay detras es claro).
+- **Opacidad de todo el widget**: menu → *Opacidad de todo el widget* (todo nitido / leve /
+  translucido / muy transparente). Es distinto de *Fondo del widget*: aquel decide cuanto se
+  ve la barra a traves del chip, y este apaga tambien el texto y la caratula, como ya hacia el
+  panel. Combinado con *Sin fondo* deja el widget flotando sobre la barra sin caja.
 
 Lo de las versiones anteriores, que sigue valiendo:
 
+- **Las ondas de sonido ya no congelan el widget en Windows 11.** Con las ondas encendidas,
+  el widget se quedaba clavado: seguia corriendo, pero no volvia a dibujarse, asi que el menu
+  parecia no hacer nada. La tira de las ondas se pegaba sobre una franja calculada con dos
+  cuentas distintas y, con la barra de tareas de 48 px, no caian en el mismo pixel.
+- **Los clics en la barra de progreso caen donde uno hace clic** (antes, con la barra de 48 px,
+  el final de la barra saltaba al 72% del tema).
 - **En Windows 11 ahora se ve.** En esta version de Windows el programa arrancaba, el log
   decia que habia arrancado y en pantalla no habia nada: la barra de Windows 11 (24H2/25H2)
   **sigue teniendo** el `ReBarWindow32` y el reloj de siempre, asi que la comprobacion "aca

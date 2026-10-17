@@ -22,6 +22,7 @@ import win32api  # noqa: E402
 import win32gui  # noqa: E402
 
 from widget import config as cfgmod  # noqa: E402
+from widget import sistema  # noqa: E402
 from widget.taskbarwin import TaskbarHost, list_bars  # noqa: E402
 from widget import draw  # noqa: E402
 
@@ -663,6 +664,37 @@ def main() -> int:
                   sobre_botones == 0, f"{sobre_botones} pixeles cambiados sobre los botones")
         except Exception as exc:
             check("k=%.1f: pegado de las ondas" % kk, False, repr(exc))
+
+    # --- color del widget y opacidad de todo el widget ------------------------
+    # Se prueba sobre el tema que arma draw (no hace falta pantalla) para que corra en
+    # cualquier maquina: es lo que decide el fondo del chip.
+    print("\n-- color del widget (auto / del tema de Windows / claro / oscuro) --")
+    try:
+        oscuro = (26, 28, 36)
+        claro = (243, 244, 248)
+        chip_cfg = tuple(cfg.get("theme", {}).get("chip") or ())
+        t_claro = draw.theme_for_base(dict(cfg, chip_color="light"), oscuro)
+        t_osc = draw.theme_for_base(dict(cfg, chip_color="dark"), claro)
+        t_auto = draw.theme_for_base(dict(cfg, chip_color="auto"), oscuro)
+        t_acc = draw.theme_for_base(dict(cfg, chip_color="accent"), oscuro)
+        acento = sistema.color_acento()
+        check("chip_color 'light' pone el tema claro aunque detrás haya oscuro",
+              draw._lum(t_claro["chip"]) > 180, f"chip {t_claro['chip']}")
+        check("chip_color 'dark' pone el tema oscuro aunque detrás haya claro",
+              draw._lum(t_osc["chip"]) < 90, f"chip {t_osc['chip']}")
+        check("chip_color 'auto' sigue mirando el fondo",
+              tuple(t_auto["chip"]) == chip_cfg, f"chip {t_auto['chip']} (tema {chip_cfg})")
+        check("chip_color 'accent' toma el color de Windows",
+              tuple(t_acc["chip"]) == tuple(acento),
+              f"chip {t_acc['chip']} contra acento {acento}")
+        check("chip_color 'accent' pone un borde distinto del chip",
+              tuple(t_acc["border"]) != tuple(t_acc["chip"]), f"borde {t_acc['border']}")
+        d = cfgmod.DEFAULTS
+        check("la config por defecto trae las dos opciones nuevas",
+              d.get("widget_alpha") == 255 and d.get("chip_color") == "auto",
+              f"widget_alpha={d.get('widget_alpha')} chip_color={d.get('chip_color')!r}")
+    except Exception as exc:
+        check("color del widget", False, repr(exc))
 
     # --- colores personalizados --------------------------------------------
     print("\n-- colores de la barra de progreso y de las ondas --")

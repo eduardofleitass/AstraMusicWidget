@@ -25,6 +25,7 @@ import win32gui  # noqa: E402
 import win32process  # noqa: E402
 
 from widget import config as cfgmod, draw, panel as panel_mod  # noqa: E402
+from widget import sistema  # noqa: E402
 from widget.media import MediaPoller  # noqa: E402
 from widget.taskbarwin import list_bars  # noqa: E402
 
@@ -183,6 +184,59 @@ def main() -> int:
     claros = sum(1 for p in img.get_flattened_data() if sum(p) > 420)
     check("esta dibujado (texto y contenido, no un rectangulo vacio)", claros > 60,
           f"{claros} pixeles claros")
+
+    # --- fondo del widget: auto / del tema de Windows / claro / oscuro -------------
+    # Se cambia por los mismos mensajes que usa el menu (sin guardar nada) y se mide el
+    # color de una franja del chip: arriba a la derecha del texto, donde no hay letras.
+    WM_APP_CHIP_COLOR = win32con.WM_APP + 13
+    WM_APP_WIDGET_ALPHA = win32con.WM_APP + 12
+    print("\n-- fondo del widget y opacidad de todo el widget --")
+
+    def franja_chip():
+        time.sleep(1.0)
+        im = ImageGrab.grab(bbox=pr, all_screens=True).convert("RGB")
+        caja = (int((pr[2] - pr[0]) * 0.45), 2, int((pr[2] - pr[0]) * 0.72), 7)
+        datos = list(im.crop(caja).get_flattened_data())
+        return tuple(sum(p[i] for p in datos) // len(datos) for i in range(3))
+
+    def barra_al_lado():
+        im = ImageGrab.grab(bbox=(pr[2] + 20, pr[1], pr[2] + 60, pr[3]), all_screens=True)
+        datos = list(im.convert("RGB").get_flattened_data())
+        return tuple(sum(p[i] for p in datos) // len(datos) for i in range(3))
+
+    acento = sistema.color_acento()
+    barra = barra_al_lado()
+    fondo = {}
+    for i, modo in enumerate(("auto", "accent", "light", "dark")):
+        win32gui.SendMessage(hp, WM_APP_CHIP_COLOR, i, 0)
+        fondo[modo] = franja_chip()
+    print("   auto=%s  accent=%s  light=%s  dark=%s  (acento de Windows %s, barra %s)"
+          % (fondo["auto"], fondo["accent"], fondo["light"], fondo["dark"], acento, barra))
+    check("el fondo 'claro' aclara el chip",
+          sum(fondo["light"]) > 480 and sum(fondo["light"]) > sum(fondo["auto"]) + 200,
+          f"claro {fondo['light']} contra auto {fondo['auto']}")
+    check("el fondo 'oscuro' deja el chip oscuro", sum(fondo["dark"]) < 260,
+          f"oscuro {fondo['dark']}")
+    dist_acento = max(abs(fondo["accent"][i] - acento[i]) for i in range(3))
+    dist_oscuro = max(abs(fondo["accent"][i] - fondo["dark"][i]) for i in range(3))
+    check("el fondo 'Del tema de Windows' toma el acento del sistema",
+          dist_acento <= 30 and dist_acento <= dist_oscuro,
+          f"accent {fondo['accent']} vs acento {acento} (diferencia {dist_acento}, "
+          f"contra el oscuro {dist_oscuro})")
+
+    # opacidad de TODO el widget: con menos alfa, el chip se acerca al color de la barra
+    win32gui.SendMessage(hp, WM_APP_CHIP_COLOR, 0, 0)
+    win32gui.SendMessage(hp, WM_APP_WIDGET_ALPHA, 255, 0)
+    op255 = franja_chip()
+    win32gui.SendMessage(hp, WM_APP_WIDGET_ALPHA, 160, 0)
+    op160 = franja_chip()
+    win32gui.SendMessage(hp, WM_APP_WIDGET_ALPHA, 255, 0)
+    def dist(a, b):
+        return max(abs(a[i] - b[i]) for i in range(3))
+    print("   opacidad 255=%s  160=%s  barra=%s" % (op255, op160, barra))
+    check("la opacidad de todo el widget lo acerca al fondo de la barra",
+          dist(op160, barra) < dist(op255, barra) and dist(op255, op160) >= 8,
+          f"a 160 queda a {dist(op160, barra)} de la barra y a 255 a {dist(op255, barra)}")
 
     # clic real sobre play/pausa, con el mismo camino que usa el usuario
     poller = MediaPoller(interval=0.4)

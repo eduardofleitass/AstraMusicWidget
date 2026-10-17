@@ -15,6 +15,8 @@ from functools import lru_cache
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
+from .sistema import color_acento
+
 FONT_DIR = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
 FONT_CANDIDATES = {
     "title": ["seguisb.ttf", "segoeuib.ttf", "segoeui.ttf", "arialbd.ttf", "arial.ttf"],
@@ -77,6 +79,17 @@ def _lum(c: tuple) -> float:
     return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
 
 
+def _corre_luz(c: tuple, factor: float) -> tuple:
+    """Aclara (factor > 0) u oscurece (factor < 0) un color, sin salirse de 0..255.
+
+    Se usa para el borde del chip cuando el fondo es el acento del sistema: el acento
+    solo no alcanza para que el contorno se despegue del fondo de la barra.
+    """
+    if factor >= 0:
+        return tuple(int(round(v + (255 - v) * min(1.0, factor))) for v in c[:3])
+    return tuple(int(round(v * (1.0 + max(-1.0, factor)))) for v in c[:3])
+
+
 def parse_color(v) -> tuple | None:
     """Interpreta un color elegido a mano: "#RRGGBB", "#RGB", [r, g, b] o None.
 
@@ -122,13 +135,36 @@ LIGHT_THEME = {
 def theme_for_base(cfg: dict, base: tuple) -> dict:
     """Tema efectivo: el configurado, o su version oscura/clara segun el fondo.
 
+    `chip_color` (menu: Color del widget) decide el FONDO del chip:
+
+      "auto"    -> el tema claro si lo que hay detras es claro (lo de siempre);
+      "light"   -> el tema claro, siempre;
+      "dark"    -> el tema oscuro, siempre;
+      "accent"  -> el color con el que Windows tiñe la barra de tareas (el acento del
+                   sistema), y el juego de textos claro u oscuro segun ese color.
+
     Ademas resuelve los colores elegidos a mano para la barra de progreso y las
     ondas. Son independientes del tema (y del auto-contraste: si el usuario eligio
     un color, se usa ese, aunque en su barra se note poco).
     """
     theme = dict(cfg.get("theme") or {})
-    if cfg.get("auto_contrast", True) and _lum(tuple(base)[:3]) > 130:
+    modo = str(cfg.get("chip_color", "auto")).lower()
+    acento = color_acento() if modo == "accent" else None
+    if acento is not None:
+        claro = _lum(acento) > 130
+    else:
+        claro = bool(cfg.get("auto_contrast", True) and _lum(tuple(base)[:3]) > 130)
+        if modo == "light":
+            claro = True
+        elif modo == "dark":
+            claro = False
+    if claro:
         theme.update(LIGHT_THEME)
+    if acento is not None:
+        # el chip toma el color del sistema, con un borde un poco corrido para que se
+        # despegue del fondo (igual que hace el borde del tema con el chip)
+        theme["chip"] = list(acento)
+        theme["border"] = list(_corre_luz(acento, 0.35 if claro else -0.45))
     accent = theme.get("accent") or (96, 205, 145)
     theme["accent_progress"] = parse_color(cfg.get("progress_color")) or tuple(accent)
     theme["accent_waves"] = parse_color(cfg.get("waves_color")) or tuple(accent)

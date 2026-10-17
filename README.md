@@ -723,6 +723,8 @@ Clic derecho sobre el widget. Queda **solo lo que no se puede hacer de otra form
     Panel                     Modo gaming, Tamano, Dejar pasar los clics,
                               Fondo, Opacidad, Volver a anclarlo al widget
     Fondo del widget          solido / translucido / ... / sin fondo
+    Opacidad de todo el widget   todo nitido / leve / translucido / muy transparente
+    Color del widget          automatico / del tema de Windows / claro / oscuro
     Color de la barra         (y Color de las ondas)
     Monitor                   (solo si hay mas de una barra)
     Ondas de sonido           (interruptor)
@@ -730,6 +732,18 @@ Clic derecho sobre el widget. Queda **solo lo que no se puede hacer de otra form
     Volver al extremo derecho
     Refrescar ahora           vuelve a medir el fondo del panel
     Salir
+
+**Fondo y opacidad son dos cosas distintas** (como en el panel): *Fondo del widget* decide
+cuanto se ve la barra de tareas a traves del chip; *Opacidad de todo el widget* es el alfa de
+todo el cuadro, asi que tambien apaga el texto y la caratula. *Sin fondo* + *Translucido* deja
+el widget flotando sobre la barra con los datos todavia nitidos.
+
+**Color del widget** decide de que color es el fondo: *Automatico* mira lo que hay detras (si
+la barra es clara, usa el tema claro), *Del tema de Windows* toma el color con el que el
+sistema tiñe la barra de tareas y los bordes (el que se ve en Ajustes → Personalizacion →
+Colores, leido con `DwmGetColorizationColor`), y *Claro* / *Oscuro* lo fuerzan sin mirar el
+fondo. La opacidad de todo el widget necesita transparencia real: con `bg_mode: "opaque"`
+(Windows 10) el menu lo avisa y la opcion no se aplica.
 
 Todo lo que se saco sigue estando, pero por su camino natural: atrasar y adelantar
 (barra, rueda, atajos), silenciar y volumen (celda del altavoz, rueda, atajos), mover
@@ -778,6 +792,8 @@ donde 12 son atajos de cosas que ya se hacen con el mouse es un menu que no se l
 | `position_frac` | `null` | `null` = pegado al extremo derecho. `0..1` = posicion libre dentro del tramo util |
 | `drag_to_move` | true | Permite moverlo arrastrando con el boton izquierdo |
 | `chip_alpha` | 232 | Transparencia del fondo: 232 solido, 170 translucido, 100 muy transparente, 0 sin fondo |
+| `widget_alpha` | 255 | Opacidad de **todo** el widget (texto y caratula incluidos). 255 todo nitido, 235 leve, 200 translucido, 160 muy transparente. Necesita `bg_mode: "layered"` |
+| `chip_color` | `"auto"` | Color del fondo: `"auto"` (claro u oscuro segun lo que haya detras), `"accent"` (el color con el que Windows tiñe la barra de tareas), `"light"` o `"dark"` |
 | `bg_mode` | `"layered"` | `"layered"` = alpha real con `UpdateLayeredWindow`; `"opaque"` = mezcla contra el color muestreado de la barra |
 | `auto_contrast` | true | Elige texto e iconos claros u oscuros segun el color de la barra |
 | `poll_interval_ms` | 500 | Cada cuanto se consulta el SMTC |

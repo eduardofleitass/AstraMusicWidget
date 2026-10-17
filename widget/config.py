@@ -21,6 +21,15 @@ DEFAULTS = {
     "show_art": True,
     "corner_radius": 7,
     "chip_alpha": 232,
+    # Color del FONDO del widget (menu: Color del widget):
+    #   "auto"   = el tema claro u oscuro segun lo que haya detras de la barra;
+    #   "light"  = el tema claro; "dark" = el tema oscuro;
+    #   "accent" = el color con el que Windows tiñe la barra de tareas (su acento).
+    "chip_color": "auto",
+    # Opacidad de TODO el widget, texto y caratula incluidos (255 = todo nitido).
+    # Es independiente de chip_alpha: con el fondo en 0 y esto en 160, el widget queda
+    # flotando translucido sobre la barra. Necesita bg_mode "layered".
+    "widget_alpha": 255,
     # "layered" = transparencia real (alpha por pixel sobre lo que haya detras);
     # "opaque"  = el metodo clasico, mezclando contra el color muestreado de la barra.
     "bg_mode": "layered",

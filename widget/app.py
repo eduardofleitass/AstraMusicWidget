@@ -26,6 +26,7 @@ from PIL import Image, ImageChops
 
 from . import config as cfgmod
 from . import draw
+from . import sistema
 from .flotante import FloatingHost
 from . import panel as panel_mod
 from . import ventanas
@@ -103,12 +104,24 @@ WM_APP_SHOW = win32con.WM_APP + 8    # pedirle a la instancia viva que se muestr
 WM_APP_HOTKEYS = win32con.WM_APP + 9  # wParam = 1/0: prender o apagar los atajos
 WM_APP_PANEL = win32con.WM_APP + 10  # wParam = 1/0: abrir o cerrar el panel
 WM_APP_PANEL_CFG = win32con.WM_APP + 11  # pruebas: cambiar un ajuste del panel
+WM_APP_WIDGET_ALPHA = win32con.WM_APP + 12  # pruebas: opacidad de todo el widget
+WM_APP_CHIP_COLOR = win32con.WM_APP + 13    # pruebas: 0 auto / 1 accent / 2 light / 3 dark
 PANEL_ALPHAS = [(255, "Todo nitido"), (235, "Leve"), (200, "Translucido"),
                 (160, "Muy transparente")]
 # Alfa del FONDO dibujado (el chip detras del texto). Es independiente del anterior:
 # con el fondo en 0 el panel queda flotando sobre el juego y los textos siguen nitidos.
 PANEL_BG_ALPHAS = [(250, "Solido"), (200, "Translucido"), (140, "Muy transparente"),
                    (90, "Casi sin fondo"), (0, "Sin fondo (solo los datos)")]
+
+# Opacidad de TODO el widget (menu: Opacidad de todo el widget). Es el alfa global del
+# cuadro: a diferencia del fondo (ALPHA_LEVELS), tambien apaga el texto y la caratula.
+WIDGET_ALPHAS = PANEL_ALPHAS
+# Color del FONDO del widget (menu: Color del widget). "accent" es el color con el que
+# Windows tiñe la barra de tareas; "light"/"dark" fuerzan el tema sin mirar el fondo.
+CHIP_COLORS = (("auto", "Automatico (segun el fondo)"),
+               ("accent", "Del tema de Windows (acento)"),
+               ("light", "Claro"),
+               ("dark", "Oscuro"))
 
 # Colores que ofrece el menu para la barra de progreso y las ondas (None = el del
 # tema). El menu guarda el hex en config.json; a mano tambien vale [r, g, b].
@@ -667,6 +680,9 @@ class WidgetApp:
                     self.dib.free()
                 cls = _Layered if self.layered else _Dib
                 self.dib = cls(self.hwnd_widget, self.width_px, self.height_px)
+                # la opacidad elegida en el menu (widget_alpha) se aplica ya: el alfa del
+                # cuadro arranca en 255 y, sin esto, el primer ciclo se veria mas solido
+                self.dib.alpha = self._alpha_efectivo()
 
     def _ensure_attached(self) -> None:
         """Reconstruye o re-ancla el widget si algo se movio por debajo."""
@@ -1021,7 +1037,7 @@ class WidgetApp:
                 else:
                     self._vis_alpha = max(self._vis_target, self._vis_alpha - paso)
                 if self.dib:
-                    self.dib.alpha = self._vis_alpha
+                    self.dib.alpha = self._alpha_efectivo()
                     self.dib.apply()
                 if self._vis_alpha == 0:
                     self._ocultar_ya()      # recien ahora suelta el espacio
@@ -1508,6 +1524,13 @@ class WidgetApp:
             if msg == WM_APP_WAVES:
                 self.set_waves(bool(wp), save=bool(lp))
                 return 0
+            if msg == WM_APP_WIDGET_ALPHA:
+                self.set_widget_alpha(int(wp), save=bool(lp))
+                return 0
+            if msg == WM_APP_CHIP_COLOR:
+                if 0 <= int(wp) < len(CHIP_COLORS):
+                    self.set_chip_color(CHIP_COLORS[int(wp)][0], save=bool(lp))
+                return 0
             if msg == WM_APP_COLOR:
                 rgb = int(lp) & 0xFFFFFF
                 self.set_color("progress_color" if wp == 1 else "waves_color",
@@ -1555,6 +1578,53 @@ class WidgetApp:
 
     def _min_free(self) -> int:
         return int(self.cfg.get("min_tasklist_free", 140))
+
+    def _alpha_efectivo(self) -> int:
+        """Alfa que se le pasa a la superficie: el fundido por la opacidad del usuario.
+
+        La opacidad de TODO el widget (`widget_alpha`, menu: Opacidad de todo el widget)
+        no se dibuja dentro de la imagen: multiplica el alfa global de la ventana en
+        capas. Asi el texto y la caratula se apagan junto con el fondo, sin repintar
+        nada, y el clic sigue funcionando: la zona sensible la decide el alfa por pixel
+        del cuadro, no este factor.
+        """
+        try:
+            base = max(0, min(255, int(self.cfg.get("widget_alpha", 255))))
+        except (TypeError, ValueError):
+            base = 255
+        return int(round(self._vis_alpha * base / 255.0))
+
+    def _aplicar_alpha(self) -> None:
+        """Vuelca la opacidad actual a la superficie (sin redibujar el cuadro)."""
+        if self.dib:
+            self.dib.alpha = self._alpha_efectivo()
+            self.dib.apply()
+
+    def set_widget_alpha(self, alpha: int, save: bool = True) -> None:
+        """Opacidad de TODO el widget, texto y caratula incluidos (255 = todo nitido)."""
+        alpha = max(0, min(255, int(alpha)))
+        self.cfg["widget_alpha"] = alpha
+        if save:
+            cfgmod.save(self.cfg)
+        self._aplicar_alpha()
+        self.log("opacidad del widget: %d%s", alpha,
+                 "" if self.layered else " (el fondo opaco no admite opacidad global)")
+
+    def set_chip_color(self, modo: str, save: bool = True) -> None:
+        """Color del fondo del widget: auto / accent (el de Windows) / light / dark."""
+        modos = [m for m, _ in CHIP_COLORS]
+        modo = str(modo).lower()
+        if modo not in modos:
+            return
+        self.cfg["chip_color"] = modo
+        if save:
+            cfgmod.save(self.cfg)
+        self._sig = None
+        self._base_sig = None
+        self._repaint_if_needed(force=True)
+        self.log("color del widget: %s%s", modo,
+                 "" if modo != "accent" else
+                 " (acento de Windows %s)" % (draw.hex_color(sistema.color_acento()),))
 
     def _widget_x(self) -> int:
         """x actual del widget en pantalla (lo que se ve, no lo que dice el config)."""
@@ -2561,6 +2631,36 @@ class WidgetApp:
                     flags |= win32con.MF_CHECKED
                 win32gui.AppendMenu(alpha_sub, flags, 20 + i, label)
 
+            # Opacidad de TODO el widget (texto y caratula incluidos) y color del fondo.
+            # Son dos controles distintos a proposito, igual que en el panel: el fondo
+            # decide cuanto se ve la barra de tareas a traves del chip, y la opacidad
+            # apaga el widget entero.
+            opac_sub = win32gui.CreatePopupMenu()
+            try:
+                opac_actual = int(self.cfg.get("widget_alpha", 255))
+            except (TypeError, ValueError):
+                opac_actual = 255
+            for i, (val, etiqueta) in enumerate(WIDGET_ALPHAS):
+                flags = win32con.MF_STRING
+                if val == opac_actual:
+                    flags |= win32con.MF_CHECKED
+                win32gui.AppendMenu(opac_sub, flags, 110 + i, etiqueta)
+            if not self.layered:
+                # con el fondo opaco no hay alfa global que aplicar (Windows 10, bg_mode
+                # "opaque"): se avisa en el mismo menu en vez de dejar una opcion muerta
+                win32gui.AppendMenu(opac_sub, win32con.MF_STRING | win32con.MF_GRAYED,
+                                    111 + len(WIDGET_ALPHAS),
+                                    "(necesita fondo translucido o sin fondo)")
+            color_sub = win32gui.CreatePopupMenu()
+            color_actual = str(self.cfg.get("chip_color", "auto")).lower()
+            for i, (modo, etiqueta) in enumerate(CHIP_COLORS):
+                flags = win32con.MF_STRING
+                if modo == color_actual:
+                    flags |= win32con.MF_CHECKED
+                if modo == "accent":
+                    etiqueta = "%s  %s" % (etiqueta, draw.hex_color(sistema.color_acento()))
+                win32gui.AppendMenu(color_sub, flags, 120 + i, etiqueta)
+
             # Submenus de color: la barra de progreso y las ondas por separado
             subs = []
             for base_id, key, titulo in ((30, "progress_color", "Color de la barra"),
@@ -2654,6 +2754,8 @@ class WidgetApp:
                 ("popup", pan_sub, "Panel", True),
                 ("sep", 0, "", None),
                 ("popup", alpha_sub, "Fondo del widget", True),
+                ("popup", opac_sub, "Opacidad de todo el widget", True),
+                ("popup", color_sub, "Color del widget", True),
                 ("popup", subs[0][0], subs[0][1], True),
                 ("popup", subs[1][0], subs[1][1], True),
                 *([("popup", mon_sub, "Monitor", True)] if mon_sub else []),
@@ -2705,6 +2807,10 @@ class WidgetApp:
             self.toggle_visible()
         elif 20 <= cmd <= 20 + len(ALPHA_LEVELS) - 1:
             self.set_chip_alpha(ALPHA_LEVELS[cmd - 20][0])
+        elif 110 <= cmd <= 110 + len(WIDGET_ALPHAS) - 1:
+            self.set_widget_alpha(WIDGET_ALPHAS[cmd - 110][0])
+        elif 120 <= cmd <= 120 + len(CHIP_COLORS) - 1:
+            self.set_chip_color(CHIP_COLORS[cmd - 120][0])
         elif cmd == 15:
             self.set_waves(not self.cfg.get("show_waves", False))
         elif cmd == 26:
