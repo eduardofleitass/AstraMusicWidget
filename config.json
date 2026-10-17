@@ -17,6 +17,11 @@
   "position_frac": null,
   "min_tasklist_free": 140,
   "drag_to_move": true,
+  "seek_step_s": 10,
+  "hit_alpha_floor": 2,
+  "show_waves": true,
+  "wave_bars": 4,
+  "wave_fps": 20,
   "auto_contrast": true,
   "theme": {
     "chip": [

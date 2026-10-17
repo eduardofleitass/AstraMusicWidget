@@ -5,8 +5,8 @@ caratula, titulo, artista, barra de progreso y botones de anterior / play-pausa 
 siguiente. Se ve como una parte nativa de la barra y reserva su propio espacio.
 
 ```
-[ Inicio ][ buscar ][ tareas... ][ ▣ Bohemian Rhapsody        ][ 19°C ][ reloj ]
-                                  [   Queen  ⏮ ⏸ ⏭  ▂▂▂▂▂▂▂▂ ]
+[ Inicio ][ buscar ][ tareas... ][ ▣ Bohemian Rhapsody  ▁█▃▅ ][ ⏮ ⏸ ⏭ ][ 19°C ][ reloj ]
+                                  [   Queen         ▂▂▂▂▂▂▂▂ ]
 ```
 
 No hay que configurar nada por reproductor: se engancha al **SMTC**, el bus de
@@ -26,9 +26,10 @@ Probado en Windows 10 22H2 (19045), escala 100% y 1920x1080.
 | Sacarlo del arranque y detenerlo | `uninstall_startup.bat` |
 | Mostrar / ocultar sin cerrarlo | `Ctrl + Alt + M` (la misma tecla lo vuelve a mostrar) |
 | Atrasarlo o adelantarlo | clic en la barra de progreso, o la rueda del mouse (±10 s) |
+| Ondas de sonido (animacion) | clic derecho > *Ondas de sonido* |
 | Fondo transparente | clic derecho > *Fondo* |
 | Moverlo a otra parte de la barra | arrastralo con el boton izquierdo, o clic derecho > *Mover / Centrar* |
-| Menu (fondo, adelantar/atrasar, mover, ancho, salir) | clic derecho sobre el widget |
+| Menu (ondas, fondo, adelantar/atrasar, mover, ancho, salir) | clic derecho sobre el widget |
 | Detenerlo | clic derecho > Salir, o `python tools\stop.py` |
 | Reinstalar dependencias | `setup.bat` |
 
@@ -47,6 +48,8 @@ Si nunca corriste nada todavia, empeza por `setup.bat`.
   **se puede mover**: clic o arrastre para saltar a cualquier parte del tema.
 - **Botones** que se iluminan al pasar el mouse. Cuando un reproductor no ofrece
   algun control, el boton se dibuja atenuado.
+- **Ondas de sonido** (opcional): barras que bailan entre el texto y los botones.
+  Se prenden y apagan desde el menu contextual.
 - **Sin reproduccion**: estado apagado con una nota musical y los controles
   inactivos, en vez de desaparecer.
 - **Fondo regulable**: de chip solido a *sin fondo*, donde el widget queda
@@ -155,6 +158,44 @@ Detalles que costaron encontrar:
   y salta al 60%. Ahora las dos terminan donde empiezan los botones.
 
 
+## Ondas de sonido
+
+Opcional, apagado por defecto. Clic derecho sobre el widget > *Ondas de sonido*, o
+`"show_waves": true` en `config.json`. Son unas barras redondeadas que bailan entre
+el texto y los botones:
+
+- **Bailan solo cuando hay musica**: en pausa quedan planas y apagadas (no siguen
+  saltando de adorno), y sin reproduccion ni se dibujan.
+- **El texto se recorta antes de llegar**: el titulo y el artista dejan la franja
+  libre, asi que nunca pasan por debajo de la animacion. Con el widget muy angosto
+  las ondas no se dibujan (mejor el texto que el adorno).
+- **Cantidad de barras**: `wave_bars` (4 por defecto, hasta 12).
+
+Que son y que no son, para no vender humo: **es una animacion, no un analisis del
+audio**. SMTC expone titulo, artista, estado y posicion, pero **no niveles de
+sonido**, asi que las alturas se generan con el reloj (cada barra con su frecuencia
+y una envolvente lenta encima, para que no se vean como un metronomo). Que la
+musica suene o este en pausa si lo sabe, y por eso se comporta distinto. Para que
+reaccionen al sonido real habria que capturar el audio del sistema (WASAPI
+loopback), que agrega dependencia, permisos y CPU: no entra en este diseno.
+
+### Por que la animacion no cuesta nada
+
+Animar es repintar, y repintar el chip entero cuesta: **4,4 ms por cuadro** medidos
+(Pillow en lienzo x3, reduccion LANCZOS, premultiplicado). A 20 cuadros por segundo
+eso daria ~9% de un nucleo solo para mover cuatro barras.
+
+La animacion no repinta el chip: el chip completo se dibuja una vez y **se cachea**
+(firma sin las ondas), y en cada cuadro solo se dibuja la **tira de las ondas** (24x20
+px, a 4x) y se pega encima. Medido: **0,08 ms** copiar la base y pegar la tira, contra
+4,4 ms del render completo. Resultado medido en el proceso real: **0,78% de un nucleo**
+con las ondas a 20 fps, contra 8,59% repintando todo. Con las ondas apagadas el widget
+sigue en ~0% (solo se repinta cuando cambia algo visible).
+
+La frecuencia se puede bajar con `wave_fps` (20 por defecto) si te importa la CPU:
+es lo unico que hace que el widget repinte mas seguido que el texto.
+
+
 ## Como funciona
 
 Tres piezas bien separadas:
@@ -162,7 +203,7 @@ Tres piezas bien separadas:
 | Archivo | Responsabilidad |
 |---|---|
 | `widget/media.py` | Lee el SMTC en un hilo propio con su propio event loop asyncio. Publica una foto inmutable (`MediaState`) y despacha los comandos. |
-| `widget/draw.py` | Dibuja el widget con Pillow en un lienzo ampliado x3 y lo reduce con LANCZOS: asi los bordes redondeados, los iconos vectoriales y el texto salen suaves sin depender de GDI+ ni de un framework de UI. Con el fondo transparente la reduccion se hace en espacio premultiplicado, para que no quede un halo oscuro en los bordes. |
+| `widget/draw.py` | Dibuja el widget con Pillow en un lienzo ampliado x3 y lo reduce con LANCZOS: asi los bordes redondeados, los iconos vectoriales y el texto salen suaves sin depender de GDI+ ni de un framework de UI. Con el fondo transparente la reduccion se hace en espacio premultiplicado, para que no quede un halo oscuro en los bordes. Las ondas de sonido se dibujan aparte, en su propia tira, para poder animarlas sin repintar el chip. |
 | `widget/app.py` + `taskbarwin.py` | Ventana Win32, superficie de doble buffer (DIB + `BitBlt`, o en capas con `UpdateLayeredWindow` cuando el fondo es transparente), entrada de mouse, arrastre, anclaje y posicion en la barra. |
 
 ### La incrustacion en la barra
@@ -220,7 +261,10 @@ Cada ciclo se calcula una *firma* de lo visible (caratula, titulo, estado,
 progreso redondeado al pixel de la barra, hover, posicion de la marquesina). Solo
 se redibuja si la firma cambia. En reposo el consumo medido es **0,00% de CPU** y
 unos **5 MB de RAM**; la barra de progreso cambia de pixel cada ~1,3 s en un tema
-de 3 minutos, asi que no tiene sentido repintar 10 veces por segundo.
+de 3 minutos, asi que no tiene sentido repintar 10 veces por segundo. Con las ondas
+de sonido encendidas hay **dos firmas**: la del chip (sin las alturas) cachea el
+dibujo completo, y la animacion solo vuelve a dibujar y pegar su tira. Medido:
+0,78% de un nucleo a 20 cuadros por segundo, contra 8,59% si se repintara todo.
 
 
 ## Resiliencia
@@ -241,20 +285,22 @@ falla posible de esta tecnica:
 - `python tools\stop.py --force` mata el proceso y repara la barra si quedo
   inconsistente.
 
-38 de 38 pruebas pasan (`python tools\selftest.py` con el widget en marcha):
+43 de 43 pruebas pasan (`python tools\selftest.py` con el widget en marcha):
 anclaje, reconstruccion forzada, recuperacion de espacio, pixeles realmente
 pintados, transparencia del fondo medida contra la barra, recorrido completo del
 movimiento (que nunca quede tapado), la barra de progreso (que su zona clicable
 no pise los botones, que el arrastre llegue al destino y muestre la hora, que al
 abortar no se mande ningun salto), que el widget reciba el mouse en toda su
-superficie con el fondo transparente, y 30 muestras de vigilancia del pintado
-(30/30 cuadros correctos). Y 12 de 12 de interaccion real
-(`python tools\clicktest.py`): el hover ilumina los tres botones, un clic de
-verdad cambia el estado de reproduccion, el segundo clic lo restaura, un clic en
-la caratula no dispara nada, un clic en la barra de progreso salta a esa posicion
-(medido: pedido 157 s, informado 157 s) sin mover el widget, el salto se puede
-devolver a donde estaba, y la rueda adelanta y atrasa el paso configurado
-(medido: -9,9 s para un paso de -10 s).
+superficie con el fondo transparente, las ondas de sonido (que su franja entre
+entre el texto y los botones, que apagadas no pinten nada, que encendidas cambien
+de cuadro —8 de 8 distintos— que el texto quede recortado antes y que las barras
+no se salgan de su franja), y 30 muestras de vigilancia del pintado (30/30 cuadros
+correctos). Y 12 de 12 de interaccion real (`python tools\clicktest.py`): el hover
+ilumina los tres botones, un clic de verdad cambia el estado de reproduccion, el
+segundo clic lo restaura, un clic en la caratula no dispara nada, un clic en la
+barra de progreso salta a esa posicion (medido: pedido 157 s, informado 157 s) sin
+mover el widget, el salto se puede devolver a donde estaba, y la rueda adelanta y
+atrasa el paso configurado (medido: -9,9 s para un paso de -10 s).
 
 En `clicktest.py`, si una lista de reproduccion cambia de tema justo mientras se
 mide, el comando se pierde y la prueba lo informa como `SALTA` (interferencia) en
@@ -281,6 +327,9 @@ encogimiento.
 | `min_tasklist_free` | 140 | Piso de la lista de tareas cuando el widget se mueve libre (el limite real lo descubre el propio widget) |
 | `seek_step_s` | 10 | Cuantos segundos adelanta/atrasa la rueda del mouse y el menu. La barra de progreso se puede clickear en cualquier caso |
 | `hit_alpha_floor` | 2 | Alfa minimo por pixel en modo transparente, para que toda la superficie reciba el mouse (invisible; 0 lo desactiva, pero con el fondo sin nada los huecos se vuelven "agujeros" y los clics van a la barra de tareas) |
+| `show_waves` | false | Ondas de sonido animadas entre el texto y los botones (menu > *Ondas de sonido*) |
+| `wave_bars` | 4 | Cuantas barras tienen las ondas (1 a 12) |
+| `wave_fps` | 20 | Cuadros por segundo de la animacion. El unico motivo por el que el widget repinta mas seguido que el texto |
 | `position_frac` | `null` | `null` = pegado al extremo derecho. `0..1` = posicion libre dentro del tramo util |
 | `drag_to_move` | true | Permite moverlo arrastrando con el boton izquierdo |
 | `chip_alpha` | 232 | Transparencia del fondo: 232 solido, 170 translucido, 100 muy transparente, 0 sin fondo |
@@ -308,6 +357,7 @@ python main.py --diagnose --cmd next   # probar un comando contra el reproductor
 python main.py --diagnose --seek 120   # probar un salto y ver cuanto se movio
 python main.py --shot prev.png   # volcar el widget a un PNG
 python main.py --shot s.png --scrub 210   # como se ve el arrastre de la barra
+python main.py --shot w.png --waves       # como se ven las ondas de sonido
 python tools\watch.py            # estado en vivo, muestreado cada 0,5 s
 python tools\preview.py hoja.png # hoja con todas las variantes visuales
 python tools\selftest.py         # suite de verificacion (widget en marcha)

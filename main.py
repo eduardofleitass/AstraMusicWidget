@@ -19,6 +19,9 @@ from widget import config as cfgmod  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# Alturas de ejemplo para --shot --waves (una por barra, 0..1)
+WAVES_DEMO = [0.55, 0.95, 0.35, 0.8]
+
 
 def _demo_state():
     from widget.media import MediaState
@@ -31,7 +34,8 @@ def _demo_state():
         can_seek=True, min_seek=0.0, max_seek=355.0)
 
 
-def do_shot(cfg, path, demo=False, state_kind="play", no_session=False, scrub=None):
+def do_shot(cfg, path, demo=False, state_kind="play", no_session=False, scrub=None,
+            waves=None):
     from widget import draw
     from widget.media import MediaPoller
     if demo:
@@ -54,7 +58,7 @@ def do_shot(cfg, path, demo=False, state_kind="play", no_session=False, scrub=No
     art = draw.get_art(st.art, st.art_key, int(round(draw.ART * k * SS)),
                        int(round(draw.ART_RADIUS * k * SS)))
     img = draw.render(st, cfg, art=art, hover=-1, marquee=0.0, k=k,
-                      base=(28, 30, 38), height=40, scrub=scrub)
+                      base=(28, 30, 38), height=40, scrub=scrub, waves=waves)
     img.convert("RGB").save(path)
     print(f"ok -> {path}  ({img.size[0]}x{img.size[1]})")
     print(f"   titulo: {st.title!r}  artista: {st.artist!r}  suena: {st.playing}"
@@ -63,6 +67,8 @@ def do_shot(cfg, path, demo=False, state_kind="play", no_session=False, scrub=No
           f"{st.min_seek:.0f}-{st.max_seek:.0f}s / {st.duration:.0f}s")
     if scrub is not None:
         print(f"   previsualizacion de arrastre en {scrub:.0f}s")
+    if waves is not None:
+        print(f"   ondas de sonido: {[round(v, 2) for v in waves]}")
     return 0
 
 
@@ -143,6 +149,8 @@ def main() -> int:
     ap.add_argument("--idle", action="store_true", help="con --shot: forzar estado sin reproduccion")
     ap.add_argument("--scrub", metavar="SEG", type=float,
                     help="con --shot: dibujar la previsualizacion de arrastre en esa posicion")
+    ap.add_argument("--waves", action="store_true",
+                    help="con --shot: dibujar las ondas de sonido (alturas de ejemplo)")
     ap.add_argument("--config", metavar="JSON", help="ruta alternativa de configuracion")
     args = ap.parse_args()
 
@@ -153,7 +161,7 @@ def main() -> int:
     if args.shot:
         return do_shot(cfg, args.shot, demo=args.demo,
                        state_kind="idle" if args.idle else "play", no_session=args.idle,
-                       scrub=args.scrub)
+                       scrub=args.scrub, waves=WAVES_DEMO if args.waves else None)
 
     log_path = os.path.join(HERE, cfg.get("log_file", "widget.log"))
     from widget.app import run

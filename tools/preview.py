@@ -44,6 +44,10 @@ def _art():
 VARIANTS = [
     ("reproduciendo / titulo corto", state("Radio Ga Ga", "Queen"),
      dict(hover=-1, marquee=0)),
+    ("reproduciendo / ondas de sonido", state("Radio Ga Ga", "Queen"),
+     dict(hover=-1, marquee=0, waves=[0.35, 0.9, 0.15, 0.7])),
+    ("pausado / ondas planas", state("Love of My Life", "Queen", playing=False, pos=42),
+     dict(hover=-1, marquee=0, waves=[0.12, 0.12, 0.12, 0.12])),
     ("reproduciendo / titulo largo (marquesina)", state(
         "Bohemian Rhapsody (Remastered 2011 - Edicion Deluxe)", "Queen"),
      dict(hover=-1, marquee=26)),

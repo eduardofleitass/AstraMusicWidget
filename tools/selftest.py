@@ -26,6 +26,7 @@ from widget import draw  # noqa: E402
 WM_APP_MOVE = win32con.WM_APP + 1
 WM_APP_ALPHA = win32con.WM_APP + 2
 WM_APP_CANCEL_SCRUB = win32con.WM_APP + 3
+WM_APP_WAVES = win32con.WM_APP + 4
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
 WM_CAPTURECHANGED = 0x0215
@@ -427,6 +428,86 @@ def main() -> int:
         posicion(w_now, 0xFFFF, int(cfg.get("chip_alpha", 232)))
     except Exception as exc:
         check("superficie sensible al mouse", False, repr(exc))
+
+    # --- ondas de sonido ----------------------------------------------------
+    print("\n-- ondas de sonido (franja, animacion y recorte del texto) --")
+    try:
+        from widget.media import MediaPoller
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        wr = rect(w_now)
+        ww2 = wr[2] - wr[0]
+        wb = draw.wave_band(ww2, cfg)
+        ctl = draw.control_rects(ww2, k, cfg)
+        check("la franja de las ondas entra entre el texto y los botones",
+              bool(wb) and (not ctl or wb[1] < ctl[0][0])
+              and wb[0] >= draw.TEXT_X + draw.WAVE_MIN_TEXT,
+              f"franja {wb} / los botones empiezan en x={ctl[0][0] if ctl else '-'}")
+        wrec = draw.wave_rect(ww2, k, cfg)
+
+        def verdes(region=None):
+            from PIL import ImageGrab
+            box = region or (wr[0] + wrec[0], wr[1] + wrec[1], wr[0] + wrec[2], wr[1] + wrec[3])
+            im = ImageGrab.grab(bbox=box).convert("RGB")
+            return sum(1 for q in im.get_flattened_data()
+                       if q[1] > q[0] + 40 and q[1] > q[2] + 20)
+
+        estaba = bool(cfg.get("show_waves", False))
+        win32gui.SendMessage(w_now, WM_APP_WAVES, 0, 0)      # sin guardar en config.json
+        time.sleep(0.6)
+        apagadas = [verdes() for _ in range(2)]
+        check("con las ondas apagadas no se dibuja nada en su franja",
+              max(apagadas) == 0, f"pixeles verdes {apagadas}")
+
+        probe = MediaPoller(interval=0.3)
+        probe.start()
+        probe.wait_ready(6)
+        time.sleep(0.9)
+        sonando = probe.state().playing
+        probe.stop()
+
+        win32gui.SendMessage(w_now, WM_APP_WAVES, 1, 0)
+        time.sleep(0.6)
+        cuadros = []
+        for _ in range(8):
+            cuadros.append(verdes())
+            time.sleep(0.16)
+        if not sonando:
+            check("con las ondas encendidas la animacion cambia de cuadro", False,
+                  "la musica esta en pausa: las barras quedan planas a proposito",
+                  skipped=True)
+        else:
+            check("con las ondas encendidas la animacion cambia de cuadro",
+                  len(set(cuadros)) >= 3 and max(cuadros) > 0,
+                  f"{len(set(cuadros))} cuadros distintos de {len(cuadros)}: {cuadros}")
+        # el texto tiene que quedar recortado antes de la franja: ni un pixel claro
+        # dentro de la franja, y las barras no pueden salirse de ella
+        from PIL import ImageGrab
+        im = ImageGrab.grab(bbox=(wr[0], wr[1], wr[0] + ww2, wr[3])).convert("RGB")
+        claros = sum(1 for x in range(wrec[0] + 1, wrec[2] - 1) for y in range(0, int(29 * k))
+                     if min(im.getpixel((x, y))) > 140
+                     and max(im.getpixel((x, y))) - min(im.getpixel((x, y))) < 40)
+        check("el texto se recorta antes de la franja de las ondas", claros == 0,
+              f"{claros} pixeles de texto dentro de la franja")
+        # Las barras no pueden salirse de su franja. Se mide solo en las filas de la
+        # ondas: mas abajo pasa la barra de progreso, que tambien es verde.
+        fila0, fila1 = wr[1] + wrec[1], wr[1] + wrec[3]
+
+        def verdes_en(box):
+            im = ImageGrab.grab(bbox=box).convert("RGB")
+            return sum(1 for q in im.get_flattened_data()
+                       if q[1] > q[0] + 40 and q[1] > q[2] + 20)
+
+        izquierda = verdes_en((wr[0] + int(draw.TEXT_X * k), fila0, wr[0] + wrec[0], fila1))
+        derecha = verdes_en((wr[0] + wrec[2], fila0, wr[2], fila1))
+        arriba = verdes_en((wr[0] + wrec[0], wr[1], wr[0] + wrec[2], fila0))
+        check("las ondas no se salen de su franja",
+              izquierda + derecha + arriba == 0,
+              f"izquierda {izquierda}, derecha {derecha}, arriba {arriba} (franja {wrec})")
+
+        win32gui.SendMessage(w_now, WM_APP_WAVES, 1 if estaba else 0, 0)
+        time.sleep(0.4)
+    except Exception as exc:
+        check("medicion de las ondas de sonido", False, repr(exc))
 
     # --- vigilancia del pintado --------------------------------------------
     print("\n-- vigilancia del pintado (30 muestras, ~9 s) --")

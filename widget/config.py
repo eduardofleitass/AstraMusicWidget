@@ -37,6 +37,13 @@ DEFAULTS = {
     # widget se vuelven "agujeros" y los clics van a la barra de tareas. 2 es
     # invisible (0,8% de mezcla) y mantiene todo el widget sensible al mouse.
     "hit_alpha_floor": 2,
+    # Ondas de sonido animadas entre el texto y los botones. Es una animacion
+    # visual (SMTC no expone niveles de audio), no un analisis del sonido.
+    "show_waves": False,
+    "wave_bars": 4,
+    # Cuadros por segundo de la animacion. Baja la cifra si te importa la CPU:
+    # es el unico motivo por el que el widget repinta mas seguido que el texto.
+    "wave_fps": 20,
     "auto_contrast": True,
     "theme": {
         "chip": [21, 23, 30],

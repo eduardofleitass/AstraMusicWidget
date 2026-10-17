@@ -43,6 +43,15 @@ FADE_W = 12.0
 PROG_HIT_TOP = 29.5
 PROG_HIT_BOTTOM = 40.0
 KNOB_R = 3.2
+# Ondas de sonido: una franja angosta entre el texto y los botones.
+WAVE_GAP = 5.0        # aire entre las ondas y los botones
+WAVE_BAR_W = 4.0      # ancho de cada barra
+WAVE_BAR_GAP = 2.5    # separacion entre barras
+WAVE_CY = 18.0        # centro vertical (entre el titulo y el artista)
+WAVE_MAX_H = 19.0     # alto maximo de una barra
+WAVE_MIN_H = 2.5      # alto de una barra en silencio
+WAVE_MIN_TEXT = 40.0  # si el texto quedaria mas angosto que esto, no hay ondas
+WAVE_SS = 4           # suavizado propio de la tira de ondas (se dibuja aparte)
 
 _art_cache: dict[tuple[str, int], Image.Image] = {}
 
@@ -226,10 +235,85 @@ def fmt_time(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
+def wave_band(width: int, cfg: dict) -> tuple[float, float] | None:
+    """Franja de las ondas, en px logicos: pegada a la izquierda de los botones.
+
+    Devuelve None si el widget es tan angosto que las ondas dejarian el titulo sin
+    espacio util; en ese caso no se dibujan (mejor el texto que el adorno).
+    """
+    n = max(1, min(12, int(cfg.get("wave_bars", 4))))
+    ancho = n * WAVE_BAR_W + (n - 1) * WAVE_BAR_GAP
+    x1 = float(width - RIGHT_PAD)
+    if cfg.get("show_controls", True):
+        x1 -= 3 * ICON_CELL
+    x1 -= WAVE_GAP
+    x0 = x1 - ancho
+    if x0 <= TEXT_X + WAVE_MIN_TEXT:
+        return None
+    return (x0, x1)
+
+
+def wave_rect(width: int, k: float, cfg: dict) -> tuple[int, int, int, int] | None:
+    """Franja de las ondas en px reales (para verificar contra la pantalla)."""
+    wb = wave_band(width, cfg)
+    if not wb:
+        return None
+    return (int(round(wb[0] * k)), int(round((WAVE_CY - WAVE_MAX_H / 2) * k)),
+            int(round(wb[1] * k)), int(round((WAVE_CY + WAVE_MAX_H / 2) * k)))
+
+
+def dibujar_ondas(d: ImageDraw.ImageDraw, levels, cfg: dict, S: float, x0: float,
+                  cy: float, col: tuple) -> None:
+    """Dibuja las barras de las ondas. Lo usan el render completo y la tira suelta."""
+    n = max(1, min(12, int(cfg.get("wave_bars", 4))))
+    bar_w = WAVE_BAR_W * S
+    hueco = WAVE_BAR_GAP * S
+    x = x0
+    for i in range(n):
+        level = float(levels[i]) if i < len(levels) else 0.0
+        level = max(0.0, min(1.0, level))
+        h = max(WAVE_MIN_H * S, WAVE_MAX_H * S * level)
+        d.rounded_rectangle([x, cy - h / 2.0, x + bar_w, cy + h / 2.0],
+                            radius=bar_w / 2.0, fill=col)
+        x += bar_w + hueco
+
+
+def render_waves(state, cfg: dict, levels, k: float = 1.0, base: tuple = (32, 34, 42),
+                 opaque: bool = True) -> Image.Image | None:
+    """Dibuja SOLO la tira de las ondas, del tamano exacto de su franja.
+
+    Se hace aparte del resto del widget para poder animar sin repintar todo el chip:
+    el render completo cuesta ~4,4 ms y esta tira ~0,1 ms, asi que la animacion a 20
+    cuadros por segundo sale casi gratis (medido, ver README). Se dibuja a 4x y se
+    reduce con LANCZOS; en modo transparente la reduccion va en espacio
+    premultiplicado, igual que el resto del widget.
+    """
+    r = wave_rect(int(cfg.get("width", 260)), k, cfg)
+    if not r or not levels:
+        return None
+    W, H = r[2] - r[0], r[3] - r[1]
+    if W <= 0 or H <= 0:
+        return None
+    S = k * WAVE_SS
+    img = Image.new("RGBA", (W * WAVE_SS, H * WAVE_SS), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    theme = theme_for_base(cfg, base)
+    col = _col(theme, "accent", 255 if state.playing else 110)
+    dibujar_ondas(d, levels, cfg, S, 0.0, H * WAVE_SS / 2.0, col)
+    if WAVE_SS <= 1:
+        return img
+    if opaque:
+        return img.resize((W, H), Image.LANCZOS)
+    pre = ImageChops.multiply(img.convert("RGB"), img.getchannel("A").convert("RGB"))
+    pre = pre.resize((W, H), Image.LANCZOS)
+    alpha = img.getchannel("A").resize((W, H), Image.LANCZOS)
+    return Image.merge("RGBA", (*pre.split(), alpha))
+
+
 def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
            marquee: float = 0.0, k: float = 1.0, base: tuple = (32, 34, 42),
            height: int | None = None, opaque: bool = True,
-           scrub: float | None = None) -> Image.Image:
+           scrub: float | None = None, waves: list[float] | None = None) -> Image.Image:
     """Devuelve el widget dibujado como imagen RGBA del tamano exacto a mostrar.
 
     opaque=True  -> la transparencia se resuelve mezclando contra `base` (el color
@@ -242,6 +326,9 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
     scrub        -> segundos destino mientras se arrastra la barra de progreso: la
                     barra y el texto muestran a donde va a saltar, sin tocar todavia
                     la reproduccion.
+    waves        -> alturas (0..1) de las ondas de sonido, una por barra. None = no
+                    se dibujan. Es una animacion: quien dibuja no sabe de audio, solo
+                    recibe las alturas del momento.
     """
     SS = max(1, int(cfg.get("supersample", 3)))
     theme = theme_for_base(cfg, base)
@@ -275,6 +362,11 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
     controls = control_rects(W, k, cfg)
     cells_x = controls[0][0] * SS if controls else W * SS - RIGHT_PAD * S
     area_w = max(10.0, cells_x - 6 * S - text_x)
+    # Las ondas ocupan su propia franja: el titulo y el artista se recortan antes
+    # de llegar ahi, asi el texto nunca pasa por debajo de la animacion.
+    wb = wave_band(int(cfg.get("width", 260)), cfg) if waves is not None else None
+    if wb:
+        area_w = max(10.0, wb[0] * S - 6 * S - text_x)
 
     # ------------------------------------------------------------------ titulo
     title = state.title or ("Sin reproduccion" if idle else "Desconocido")
@@ -349,6 +441,13 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
             enabled = (i == 1 and state.can_toggle) or (i == 0 and state.can_prev) \
                 or (i == 2 and state.can_next)
             _draw_icon(d, cx, cy, kind, S, icon_col if (enabled and not idle) else dim_col)
+
+    # ------------------------------------------------------------- ondas
+    if wb and waves and not idle:
+        # Barras tipo "nota de voz": redondeadas, cortas cuando no hay sonido.
+        # El alto lo trae quien dibuja (app.py), que es el que tiene el reloj.
+        dibujar_ondas(d, waves, cfg, S, wb[0] * S, WAVE_CY * S,
+                      _col(theme, "accent", 255 if state.playing else 110))
 
     # ----------------------------------------------------------------- progreso
     sp = progress_span(int(cfg.get("width", 260)), cfg)

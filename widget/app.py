@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes as wt
+import math
 import os
 import time
 
@@ -21,6 +22,7 @@ import win32api
 import win32con
 import win32event
 import win32gui
+from PIL import Image, ImageChops
 
 from . import config as cfgmod
 from . import draw
@@ -50,6 +52,7 @@ WM_SETTINGCHANGE = getattr(win32con, "WM_SETTINGCHANGE", 0x001A)
 WM_APP_MOVE = win32con.WM_APP + 1   # wParam = fraccion de posicion x1000; 0xFFFF = extremo
 WM_APP_ALPHA = win32con.WM_APP + 2  # wParam = alpha del chip (0 = sin fondo)
 WM_APP_CANCEL_SCRUB = win32con.WM_APP + 3   # aborta un arrastre de la barra de progreso
+WM_APP_WAVES = win32con.WM_APP + 4  # wParam = 1/0: prende y apaga las ondas de sonido
 
 WS_EX_LAYERED = 0x00080000
 ULW_ALPHA = 0x02
@@ -213,6 +216,11 @@ class WidgetApp:
         self._drag_x = None    # x (pantalla) mientras se arrastra
         self._scrub = None     # estado del arrastre sobre la barra de progreso
         self._scrub_t = None   # segundos destino mientras se arrastra la barra
+        self._wave_phase = 0.0    # fase de la animacion de ondas (solo avanza suena)
+        self._wave_t = time.monotonic()
+        self._levels: list[float] | None = None   # alturas de las ondas ahora mismo
+        self._base_img = None     # chip cacheado sin ondas (se le pegan encima)
+        self._base_sig = None
         self._wall_x = None    # limite real: a partir de aca la lista de tareas tapa
         self._last_cover_check = 0.0
         self.visible = True
@@ -551,7 +559,7 @@ class WidgetApp:
             self.log("widget visible")
 
     # ------------------------------------------------------------------ pintar
-    def _signature(self):
+    def _signature(self, sin_ondas: bool = False):
         st = self.state
         bar_px = max(1, self.width_px - int(draw.TEXT_X * self.k) - int(draw.RIGHT_PAD * self.k))
         frac = (st.live_position() / st.duration) if (st.duration and st.playing) else 0.0
@@ -559,7 +567,12 @@ class WidgetApp:
                 int(frac * bar_px), int(self.marquee) if self._overflow() else 0,
                 self.hover, self.width_px, self.height_px, self.base, st.stopped,
                 int(self.cfg.get("chip_alpha", 232)), self.layered,
-                -1 if self._scrub_t is None else int(self._scrub_t))
+                -1 if self._scrub_t is None else int(self._scrub_t),
+                # Con sin_ondas=True, la firma ignora las alturas: es la que decide si
+                # hay que redibujar el chip completo (caratula, textos, barra). La
+                # animacion de las ondas se pega encima y no obliga a repintarlo todo.
+                None if (sin_ondas or self._levels is None)
+                else tuple(int(v * 24) for v in self._levels))
 
     def _overflow(self) -> bool:
         try:
@@ -567,22 +580,68 @@ class WidgetApp:
         except Exception:
             return False
 
-    def _render(self) -> None:
-        if not self.hwnd_widget or not win32gui.IsWindow(self.hwnd_widget):
-            return
-        self._ensure_surface()
-        if not self.dib:
-            return
+    def _render_base(self) -> Image.Image:
+        """Dibuja el widget completo SIN las ondas (que se pegan encima aparte).
+
+        Se le pasa una lista vacia de alturas: asi reserva la franja de las ondas
+        (el texto se recorta antes de llegar) pero no dibuja ninguna barra.
+        """
         SS = max(1, int(self.cfg.get("supersample", 3)))
         S = self.k * SS
         art = None
         if self.cfg.get("show_art", True):
             art = draw.get_art(self.state.art, self.state.art_key,
                                int(round(draw.ART * S)), int(round(draw.ART_RADIUS * S)))
-        img = draw.render(self.state, self.cfg, art=art, hover=self.hover,
-                          marquee=self.marquee, k=self.k, base=self.base,
-                          height=self.height_px, opaque=not self.layered,
-                          scrub=self._scrub_t)
+        return draw.render(self.state, self.cfg, art=art, hover=self.hover,
+                           marquee=self.marquee, k=self.k, base=self.base,
+                           height=self.height_px, opaque=not self.layered,
+                           scrub=self._scrub_t,
+                           waves=[] if self._levels is not None else None)
+
+    def _pegar_ondas(self, img: Image.Image) -> None:
+        """Pega la tira de las ondas sobre un cuadro ya dibujado.
+
+        La tira se dibuja aparte, a 4x, y se compone encima: asi la animacion puede
+        ir a 20 cuadros por segundo sin repintar el chip entero (medido: 4,4 ms el
+        render completo contra 0,08 ms copiar la base y pegar la tira).
+        """
+        wb = draw.wave_rect(self.width_px, self.k, self.cfg)
+        if not wb or not self._levels:
+            return
+        capa = draw.render_waves(self.state, self.cfg, self._levels, self.k,
+                                 self.base, opaque=not self.layered)
+        if capa is None:
+            return
+        if self.layered:
+            # Espacio premultiplicado: out = origen + fondo*(1 - alpha). Con
+            # Image.paste quedaria alpha*alpha en los bordes suavizados.
+            roi = img.crop(wb)
+            inv = Image.eval(capa.getchannel("A"), lambda v: 255 - v)
+            canales = [ImageChops.add(capa.getchannel(c), ImageChops.multiply(roi.getchannel(c), inv))
+                       for c in "RGBA"]
+            img.paste(Image.merge("RGBA", canales), wb)
+        else:
+            img.paste(capa.convert("RGB"), wb, capa)
+
+    def _frame(self) -> Image.Image:
+        """Cuadro listo para presentar: base cacheada + ondas del momento."""
+        base_sig = self._signature(sin_ondas=True)
+        if self._base_img is None or base_sig != self._base_sig:
+            self._base_sig = base_sig
+            self._base_img = self._render_base()
+        img = self._base_img.copy()
+        self._pegar_ondas(img)
+        return img
+
+    def _render(self) -> None:
+        if not self.hwnd_widget or not win32gui.IsWindow(self.hwnd_widget):
+            return
+        self._ensure_surface()
+        if not self.dib:
+            return
+        img = self._frame()
+        if img is None:
+            return
         if self.layered:
             # Alpha real: la transparencia del chip se compone contra los pixeles
             # que estan detras, asi que no se mezcla contra ningun color muestreado.
@@ -651,8 +710,20 @@ class WidgetApp:
                 dt = now - self._marquee_t
                 self.marquee = (self.marquee + dt * self.cfg.get("marquee_speed", 32))
             self._marquee_t = now
-            self._set_timer(int(self.cfg.get("timer_playing_ms", 100)) if self.state.playing
-                            else int(self.cfg.get("timer_idle_ms", 500)))
+            # ondas: la fase solo avanza mientras hay musica (en pausa quedan
+            # quietas), y las alturas se recalculan una vez por ciclo
+            dt_w = now - self._wave_t
+            self._wave_t = now
+            if self.state.playing:
+                self._wave_phase += max(0.0, min(0.25, dt_w))
+            self._levels = self._wave_levels()
+            ms = (int(self.cfg.get("timer_playing_ms", 100)) if self.state.playing
+                  else int(self.cfg.get("timer_idle_ms", 500)))
+            if self._levels is not None and self.state.playing:
+                # la animacion necesita mas cuadros que la barra de progreso
+                ms = min(ms, max(20, int(round(1000.0 / max(1, int(
+                    self.cfg.get("wave_fps", 20)))))))
+            self._set_timer(ms)
             self._repaint_if_needed()
         except Exception as exc:
             self.log("tick fallo: %r", exc)
@@ -746,6 +817,40 @@ class WidgetApp:
         self.poller.seek(max(st.min_seek, min(target, st.max_seek or st.duration)))
         self.log("salto: %+.1f s", delta)
         self._repaint_if_needed(force=True)
+
+    # --------------------------------------------------------------- ondas
+    def _wave_levels(self) -> list[float] | None:
+        """Alturas (0..1) de las ondas, una por barra; None si estan apagadas.
+
+        Es una ANIMACION, no un analisis del audio: SMTC no expone niveles de
+        sonido, asi que las oscilaciones se generan con el reloj. Cada barra tiene
+        su frecuencia y hay una envolvente lenta encima, para que no se vean como un
+        metronomo perfecto. La fase solo avanza mientras hay musica: en pausa las
+        barras quedan planas y apagadas.
+        """
+        if not self.cfg.get("show_waves", False) or not self.state.has_session:
+            return None
+        n = max(1, min(12, int(self.cfg.get("wave_bars", 4))))
+        if not self.state.playing:
+            return [0.12] * n
+        fase = self._wave_phase
+        env = 0.72 + 0.28 * math.sin(fase * 0.62 + 1.0)
+        niveles = []
+        for i in range(n):
+            v = 0.5 + 0.5 * math.sin(fase * 2.4 * (1.0 + 0.32 * i) + i * 1.7)
+            niveles.append(max(0.05, min(1.0, (0.18 + 0.82 * v ** 1.7) * env)))
+        return niveles
+
+    def set_waves(self, on: bool, save: bool = True) -> None:
+        """Prende y apaga las ondas de sonido (menu contextual y pruebas)."""
+        on = bool(on)
+        self.cfg["show_waves"] = on
+        if save:
+            cfgmod.save(self.cfg)
+        self._levels = self._wave_levels()
+        self._sig = None
+        self._repaint_if_needed(force=True)
+        self.log("ondas de sonido: %s", "encendidas" if on else "apagadas")
 
     def _widget_wndproc(self, hwnd, msg, wp, lp):
         try:
@@ -861,6 +966,9 @@ class WidgetApp:
                 return 0
             if msg == WM_APP_CANCEL_SCRUB:
                 self.cancel_scrub()
+                return 0
+            if msg == WM_APP_WAVES:
+                self.set_waves(bool(wp), save=bool(lp))
                 return 0
             if msg == win32con.WM_RBUTTONUP:
                 if self.cfg.get("right_click_menu", True):
@@ -1056,6 +1164,8 @@ class WidgetApp:
                 ("item", 13, f"◀◀   Atrasar {step:.0f} s", seek_ok),
                 ("item", 14, f"Adelantar {step:.0f} s   ▶▶", seek_ok),
                 ("sep", 0, "", None),
+                ("check", 15, "Ondas de sonido", bool(self.cfg.get("show_waves", False))),
+                ("sep", 0, "", None),
                 ("item", 3, "◀  Mover a la izquierda", True),
                 ("item", 4, "Mover a la derecha  ▶", True),
                 ("item", 5, "Centrar en la barra", True),
@@ -1076,6 +1186,12 @@ class WidgetApp:
                 if kind == "popup":
                     win32gui.AppendMenu(menu, win32con.MF_POPUP | win32con.MF_STRING,
                                         ident, label)
+                    continue
+                if kind == "check":
+                    flags = win32con.MF_STRING
+                    if enabled:
+                        flags |= win32con.MF_CHECKED
+                    win32gui.AppendMenu(menu, flags, ident, label)
                     continue
                 flags = win32con.MF_STRING
                 flags |= win32con.MF_ENABLED if enabled else win32con.MF_GRAYED
@@ -1103,6 +1219,8 @@ class WidgetApp:
             self._seek_by(-self._seek_step())
         elif cmd == 14:
             self._seek_by(self._seek_step())
+        elif cmd == 15:
+            self.set_waves(not self.cfg.get("show_waves", False))
         elif cmd == 3:
             self._nudge(-int(round(NUDGE_PX * self.k)))
         elif cmd == 4:
