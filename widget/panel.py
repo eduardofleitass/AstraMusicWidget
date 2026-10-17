@@ -19,6 +19,7 @@ comprueban las dos cosas por separado.
 """
 from __future__ import annotations
 
+from PIL import ImageChops
 from PIL import Image, ImageDraw
 
 from . import draw
@@ -136,6 +137,7 @@ def frac_en_volumen(x: int, k: float, cfg: dict) -> float:
 
 
 def render(state, cfg: dict, *, art: Image.Image | None = None, volume=None,
+           opaque: bool = False,
            hover: int = -1, k: float = 1.0, scrub: float | None = None,
            base: tuple | None = None) -> Image.Image:
     """Dibuja el panel completo y devuelve la imagen (RGBA).
@@ -320,4 +322,30 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, volume=None,
     d.line([(ccx - brazo, ccy - brazo), (ccx + brazo, ccy + brazo)], fill=col_x, width=grosor)
     d.line([(ccx - brazo, ccy + brazo), (ccx + brazo, ccy - brazo)], fill=col_x, width=grosor)
 
-    return img.resize((Wp, Hp), Image.LANCZOS)
+    # --- presentacion: con alpha real, igual que el widget ---------------------
+    if opaque:
+        out = Image.alpha_composite(Image.new("RGBA", (Wp * SS, Hp * SS),
+                                              tuple(base) + (255,)), img)
+        if SS > 1:
+            out = out.resize((Wp, Hp), Image.LANCZOS)
+        return out
+    # Alpha real. La reduccion va en espacio PREMULTIPLICADO: reducir el RGBA directo
+    # deja que los pixeles transparentes (negros) sangren un halo oscuro alrededor de
+    # la tapa y de los textos.
+    pre = ImageChops.multiply(img.convert("RGB"), img.getchannel("A").convert("RGB"))
+    alpha = img.getchannel("A")
+    if SS > 1:
+        pre = pre.resize((Wp, Hp), Image.LANCZOS)
+        alpha = alpha.resize((Wp, Hp), Image.LANCZOS)
+    # PISO DE ALFA. Windows decide que ventana recibe el mouse mirando el alfa POR
+    # PIXEL en ventanas en capas: sin fondo, las zonas vacias del panel son "agujeros"
+    # y el clic y el arrastre se los queda la ventana de atras. Medido: sobre el fondo
+    # del panel (zona de texto), WindowFromPoint devolvia Chrome_RenderWidgetHostHWND
+    # en 66 de 98 puntos de una grilla -> el panel no se podia agarrar y "quedaba
+    # pegado" al querer moverlo. Un piso de 2 (0,8%, invisible) deja toda la
+    # superficie sensible al mouse. OJO: el widget ya lo tenia dentro de draw.render;
+    # el panel tiene su propio render y no lo heredaba.
+    piso = int(cfg.get("hit_alpha_floor", 2))
+    if piso > 0:
+        alpha = alpha.point(lambda v: max(v, piso))
+    return Image.merge("RGBA", (*pre.split(), alpha))

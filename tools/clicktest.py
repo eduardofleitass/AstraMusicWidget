@@ -807,6 +807,52 @@ def main() -> int:
             except Exception as exc:
                 check("el panel no le roba el foco (modo gaming)", False, repr(exc))
 
+            # (c3) arrastrar el panel desde una zona VACIA. Con el fondo sin nada, las
+            # zonas vacias del panel tienen alfa 0 y Windows las trata como agujeros:
+            # el clic se lo lleva la ventana de atras, el panel no se puede agarrar y
+            # "queda pegado" al querer moverlo. Se agarra en la franja de arriba, que no
+            # es ningun control, y se lo devuelve a su lugar (la posicion es del usuario).
+            try:
+                pr0 = win32gui.GetWindowRect(hp)
+                agarre = (pr0[0] + (pr0[2] - pr0[0]) // 2, pr0[1] + 8)
+                dx, dy = 150, -90
+                if not place_cursor(*agarre):
+                    check("arrastrar el panel desde una zona vacia lo mueve", False,
+                          "el cursor no quedo donde se lo puso (interferencia)",
+                          skipped=True)
+                elif win32gui.WindowFromPoint(agarre) != hp:
+                    check("arrastrar el panel desde una zona vacia lo mueve", False,
+                          "bajo el cursor hay %s, no el panel" %
+                          win32gui.GetClassName(win32gui.WindowFromPoint(agarre)))
+                else:
+                    user32.mouse_event(0x0002, 0, 0, 0, 0)          # LEFTDOWN
+                    time.sleep(0.2)
+                    for i in (1, 2, 3, 4):
+                        place_cursor(agarre[0] + dx * i // 4, agarre[1] + dy * i // 4)
+                        time.sleep(0.12)
+                    user32.mouse_event(0x0004, 0, 0, 0, 0)          # LEFTUP
+                    time.sleep(0.5)
+                    pr1 = win32gui.GetWindowRect(hp)
+                    movido = (pr1[0] - pr0[0], pr1[1] - pr0[1])
+                    check("arrastrar el panel desde una zona vacia lo mueve",
+                          abs(movido[0] - dx) <= 4 and abs(movido[1] - dy) <= 4,
+                          f"se pidio ({dx}, {dy}) y se movio {movido}")
+                    agarre2 = (pr1[0] + (pr1[2] - pr1[0]) // 2, pr1[1] + 8)
+                    if place_cursor(*agarre2) and win32gui.WindowFromPoint(agarre2) == hp:
+                        user32.mouse_event(0x0002, 0, 0, 0, 0)
+                        time.sleep(0.2)
+                        for i in (1, 2, 3, 4):
+                            place_cursor(agarre2[0] - dx * i // 4, agarre2[1] - dy * i // 4)
+                            time.sleep(0.12)
+                        user32.mouse_event(0x0004, 0, 0, 0, 0)
+                        time.sleep(0.5)
+                    pr2 = win32gui.GetWindowRect(hp)
+                    check("el panel vuelve a su lugar despues de la prueba",
+                          abs(pr2[0] - pr0[0]) <= 4 and abs(pr2[1] - pr0[1]) <= 4,
+                          f"quedo en {pr2[:2]}, estaba en {pr0[:2]}")
+            except Exception as exc:
+                check("arrastrar el panel desde una zona vacia lo mueve", False, repr(exc))
+
             # (d) cerrar con la cruz
             zc = zp["cerrar"]
             pto_x = (pr[0] + (zc[0] + zc[2]) // 2, pr[1] + (zc[1] + zc[3]) // 2)

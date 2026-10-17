@@ -513,12 +513,25 @@ def main() -> int:
         win32gui.SendMessage(w_now, WM_APP_WAVES, 0, 0)      # sin guardar en config.json
         time.sleep(0.7)
         apagadas = captura()
-        # con las ondas apagadas la franja es fondo liso (del chip o de la barra)
-        referencia = apagadas.getpixel((wrec[0], wrec[1] + 1))
-        liso = sum(1 for x in range(wrec[0], wrec[2]) for y in range(wrec[1], wrec[3])
-                   if max(abs(apagadas.getpixel((x, y))[i] - referencia[i]) for i in range(3)) > 30)
-        check("con las ondas apagadas la franja queda lisa", liso <= 2,
-              f"{liso} pixeles fuera del fondo liso {referencia}")
+        # Con las ondas apagadas la franja tiene que quedar lisa. Se mide en el DIBUJO y
+        # no en la pantalla: con la barra de tareas translucida y el widget sin fondo
+        # (chip_alpha 0), el fondo de la franja es el escritorio y varia por si solo
+        # -medido: 47 pixeles distintos del fondo con las ondas encendidas y 58 con las
+        # apagadas, asi que el umbral en pantalla no probaba nada-.
+        from widget.media import MediaState as _MS
+        est_franja = _MS(has_session=True, app_id="test.exe", title="Titulo",
+                                artist="Artista", playing=False, position=30.0,
+                                duration=180.0, position_at=time.monotonic(), art=None,
+                                art_key="k", can_seek=True, can_toggle=True)
+        apagado = draw.render(est_franja, dict(cfg, show_waves=False), art=None,
+                              k=1.0, opaque=True, base=(40, 34, 33))
+        wr_off = draw.wave_rect(apagado.width, 1.0, cfg)
+        fuera = sum(1 for x in range(wr_off[0] + 1, wr_off[2] - 1)
+                    for y in range(wr_off[1] + 1, wr_off[3] - 1)
+                    if max(abs(apagado.getpixel((x, y))[i] - (40, 34, 33)[i])
+                           for i in range(3)) > 6)
+        check("con las ondas apagadas la franja queda lisa", fuera == 0,
+              f"{fuera} pixeles fuera del fondo liso en la franja {wr_off} (medido en el dibujo)")
 
         probe = MediaPoller(interval=0.3)
         probe.start()
@@ -1043,7 +1056,7 @@ def main() -> int:
             z = panel_mod.rects(kp, c)
             L = panel_mod.layout(c)
             art = draw.get_art(art_rojo, "rojo", int(L["tapa"][2]), int(L["tapa_radio"]))
-            im = panel_mod.render(est, c, art=art, volume=vol, hover=-1, k=kp).convert("RGB")
+            im = panel_mod.render(est, c, art=art, volume=vol, hover=-1, k=kp, opaque=True, base=(30, 30, 36)).convert("RGB")
             rojo_tapa = sum(1 for y in range(z["tapa"][1], z["tapa"][3])
                             for x in range(z["tapa"][0], z["tapa"][2])
                             if im.getpixel((x, y))[0] > 150
@@ -1056,7 +1069,7 @@ def main() -> int:
                            artist=est.artist, playing=True, position=0.0,
                            duration=180.0, position_at=_t.monotonic(), art=None,
                            art_key="k", can_seek=True, can_toggle=True),
-                c, art=art, volume=vol, hover=-1, k=kp).convert("RGB")
+                c, art=art, volume=vol, hover=-1, k=kp, opaque=True, base=(30, 30, 36)).convert("RGB")
             barra = sum(1 for y in range(z["barra"][1] - 2, z["barra"][3] + 3)
                         for x in range(z["barra"][0], z["barra"][2])
                         if im.getpixel((x, y)) != im0.getpixel((x, y)))
@@ -1083,9 +1096,9 @@ def main() -> int:
                                duration=180.0, position_at=_t.monotonic(), art=None,
                                art_key="k", can_seek=True, can_toggle=True)
             im_l = panel_mod.render(largo, cfg_chico, art=art, volume=vol,
-                                    k=kp).convert("RGB")
+                                    k=kp, opaque=True, base=(30, 30, 36)).convert("RGB")
             im_c = panel_mod.render(corto, cfg_chico, art=art, volume=vol,
-                                    k=kp).convert("RGB")
+                                    k=kp, opaque=True, base=(30, 30, 36)).convert("RGB")
             x_t = z["texto"][2]
             # Ventana bien adentro de los tiempos: el artista se corta ~56 px antes
             # (se le reserva el ancho de los tiempos + 8), asi que 45 px es seguro.
@@ -1103,9 +1116,9 @@ def main() -> int:
                                 for x in range(caja_artista[0], caja_artista[2])
                                 if sum(im_c.getpixel((x, y))) > 300)
             check("el artista no se mete en los tiempos (nombre largo o corto)",
-                  px_l == px_c and any(sum(p) > 300 for p in px_l)
+                  px_l == px_c and any(sum(p) > 200 for p in px_l)
                   and hay_artista_l > hay_artista_c,
-                  f"{sum(1 for p in px_l if sum(p) > 300)} pixeles de tiempos; "
+                  f"{sum(1 for p in px_l if sum(p) > 200)} pixeles de tiempos; "
                   f"identicos con nombre largo y corto: {px_l == px_c}; el nombre largo "
                   f"ocupa mas ({hay_artista_l} contra {hay_artista_c} pixeles)")
 
@@ -1123,10 +1136,20 @@ def main() -> int:
                                      volume=vol, k=kp)
             im_sol = panel_mod.render(est, dict(cfg_chico, panel_bg_alpha=250), art=art,
                                       volume=vol, k=kp)
-            check("con el fondo en 0 no queda nada dibujado atras (ni borde)",
-                  im_sf.getpixel(hueco)[3] == 0 and im_sol.getpixel(hueco)[3] > 200,
-                  f"alfa en un hueco del panel: sin fondo {im_sf.getpixel(hueco)[3]}, "
-                  f"con fondo {im_sol.getpixel(hueco)[3]}")
+            # El hueco "sin fondo" queda en el PISO de alfa (2), no en 0: Windows usa el
+            # alfa por pixel para decidir que ventana recibe el mouse, y con 0 las zonas
+            # vacias son agujeros que se queda la ventana de atras (medido en vivo:
+            # WindowFromPoint sobre el fondo del panel devolvia Chrome en 66 de 98 puntos
+            # -> el panel no se podia agarrar). El piso de 2 es 0,8%: invisible.
+            piso = int(cfg_chico.get("hit_alpha_floor", 2))
+            alfa = [p[3] for p in im_sf.getdata()]
+            check("con el fondo en 0 no queda nada visible atras (ni borde)",
+                  im_sf.getpixel(hueco)[3] == piso and im_sol.getpixel(hueco)[3] > 200,
+                  f"alfa en un hueco del panel: sin fondo {im_sf.getpixel(hueco)[3]} "
+                  f"(piso {piso}), con fondo {im_sol.getpixel(hueco)[3]}")
+            check("toda la superficie del panel recibe el mouse (alfa con piso)",
+                  min(alfa) == piso > 0 and max(alfa) == 255,
+                  f"alfa del panel sin fondo: min {min(alfa)}, max {max(alfa)}")
 
             # ...y el texto tiene que contrastar con lo que hay DETRAS (se da vuelta)
             contrastes = []
@@ -1154,15 +1177,15 @@ def main() -> int:
             z = panel_mod.rects(kp, c)
             L = panel_mod.layout(c)
             art = draw.get_art(art_rojo, "rojo", int(L["tapa"][2]), int(L["tapa_radio"]))
-            base = panel_mod.render(est, c, art=art, volume=vol, k=kp).convert("RGB")
+            base = panel_mod.render(est, c, art=art, volume=vol, k=kp, opaque=True, base=(30, 30, 36)).convert("RGB")
             otros = {
                 "hover": panel_mod.render(est, c, art=art, volume=vol, hover=1,
-                                          k=kp).convert("RGB"),
+                                          k=kp, opaque=True, base=(30, 30, 36)).convert("RGB"),
                 "arrastre": panel_mod.render(est, c, art=art, volume=vol, hover=3,
-                                             scrub=150.0, k=kp).convert("RGB"),
+                                             scrub=150.0, k=kp, opaque=True, base=(30, 30, 36)).convert("RGB"),
                 "silencio": panel_mod.render(est, c, art=art,
                                              volume=(0.45, True, True, True),
-                                             k=kp).convert("RGB"),
+                                             k=kp, opaque=True, base=(30, 30, 36)).convert("RGB"),
             }
             difs = {n: sum(1 for a, b in zip(base.get_flattened_data(),
                                             im.get_flattened_data()) if a != b)

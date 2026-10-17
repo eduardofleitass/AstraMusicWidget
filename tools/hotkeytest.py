@@ -45,9 +45,10 @@ WM_APP_PANEL_CFG = 0x8000 + 11  # win32con.WM_APP + 11
 resultados = []
 
 
-def check(nombre, ok, detalle=""):
-    resultados.append((nombre, bool(ok)))
-    print(f"{'PASA ' if ok else 'FALLA'}  {nombre}" + (f"  -> {detalle}" if detalle else ""))
+def check(nombre, ok, detalle="", skipped=False):
+    resultados.append((nombre, bool(ok), bool(skipped)))
+    estado = "SALTA" if skipped else ("PASA " if ok else "FALLA")
+    print(f"{estado}  {nombre}" + (f"  -> {detalle}" if detalle else ""))
 
 
 def acorde(teclas, espera=1.2):
@@ -148,16 +149,26 @@ def main() -> int:
         esperar_cambio(lambda: poller.state().playing, ahora)
 
     # --- siguiente / anterior ---------------------------------------------
-    t_antes = poller.state().title
-    acorde(["CTRL", "ALT", "RIGHT"])
-    t_ahora = esperar_cambio(lambda: poller.state().title, t_antes)
-    check("Ctrl+Alt+Der pasa a la siguiente", t_ahora != t_antes,
-          f"{t_antes[:24]!r} -> {t_ahora[:24]!r}")
-    t2 = poller.state().title
-    acorde(["CTRL", "ALT", "LEFT"])
-    t3 = esperar_cambio(lambda: poller.state().title, t2)
-    check("Ctrl+Alt+Izq vuelve a la anterior", t3 != t2,
-          f"{t2[:24]!r} -> {t3[:24]!r}")
+    # Solo si el reproductor que suena acepta saltar de pista: hay videos en el
+    # navegador que no exponen Siguiente/Anterior por SMTC, y ahi el salto no puede
+    # pasar aunque el atajo funcione. Se salta, no se reporta un fallo inventado.
+    st0 = poller.state()
+    if not (st0.can_next and st0.can_prev):
+        for nombre in ("Ctrl+Alt+Der pasa a la siguiente",
+                       "Ctrl+Alt+Izq vuelve a la anterior"):
+            check(nombre, False,
+                  "el reproductor que suena no expone Siguiente/Anterior", skipped=True)
+    else:
+        t_antes = poller.state().title
+        acorde(["CTRL", "ALT", "RIGHT"])
+        t_ahora = esperar_cambio(lambda: poller.state().title, t_antes)
+        check("Ctrl+Alt+Der pasa a la siguiente", t_ahora != t_antes,
+              f"{t_antes[:24]!r} -> {t_ahora[:24]!r}")
+        t2 = poller.state().title
+        acorde(["CTRL", "ALT", "LEFT"])
+        t3 = esperar_cambio(lambda: poller.state().title, t2)
+        check("Ctrl+Alt+Izq vuelve a la anterior", t3 != t2,
+              f"{t2[:24]!r} -> {t3[:24]!r}")
 
     # --- adelantar / atrasar (en pausa: la posicion no se mueve sola) -------
     check("la medicion de saltos arranca en pausa", pausar(poller),
@@ -290,21 +301,8 @@ def main() -> int:
         check("Ctrl+Alt+O lo vuelve a cerrar", not panel_abierto(),
               f"visible={panel_abierto()}")
 
-        # --- HUD: aparece solo al cambiar de cancion -------------------------
-        print("\n-- HUD al cambiar de cancion --")
-        win32gui.PostMessage(w, WM_APP_PANEL_CFG, 4, 1)     # panel_hud encendido
-        time.sleep(0.8)
-        antes_t = poller.state().title
-        acorde(["CTRL", "ALT", "RIGHT"], espera=2.5)
-        ahora_t = poller.state().title
-        check("cambiar de cancion abre el panel solo (HUD)",
-              ahora_t != antes_t and panel_abierto(),
-              f"{antes_t[:20]!r} -> {ahora_t[:20]!r}, panel "
-              f"{'abierto' if panel_abierto() else 'cerrado'}")
-        win32gui.PostMessage(w, WM_APP_PANEL, 0, 1)
-        time.sleep(0.5)
-        # devolver el tema y los ajustes como estaban
-        acorde(["CTRL", "ALT", "LEFT"], espera=2.0)
+        # (El HUD <aparece solo al cambiar de cancion> se saco a pedido del usuario:
+        #  el panel ahora es fijo. No hay nada de eso para probar.)
         win32gui.PostMessage(w, WM_APP_PANEL_CFG, 4, 1 if hud_antes else 0)
         win32gui.PostMessage(w, WM_APP_PANEL_CFG, 7, int(auto_antes * 10))
         time.sleep(0.4)
@@ -321,8 +319,12 @@ def main() -> int:
     except Exception as exc:
         print("no se pudo restaurar todo:", exc)
     poller.stop()
-    fallas = [n for n, o in resultados if not o]
-    print(f"\n{len(resultados) - len(fallas)}/{len(resultados)} pruebas pasaron")
+    fallas = [n for n, o, s in resultados if not o and not s]
+    saltadas = [n for n, o, s in resultados if s]
+    for n in fallas:
+        print(f"FALLA  {n}")
+    print(f"{len(resultados) - len(fallas) - len(saltadas)}/{len(resultados)} pruebas "
+          f"pasaron, {len(saltadas)} saltadas")
     return 1 if fallas else 0
 
 

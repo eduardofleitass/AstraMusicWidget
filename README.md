@@ -34,7 +34,7 @@ Probado en Windows 10 22H2 (19045), escala 100% y 1920x1080.
 | Volumen de lo que suena | pasá el mouse por el altavoz y arrastrá la barra que aparece; rueda del mouse encima del altavoz (±5%); clic seco = silencio |
 | Ponerlo en la barra de otro monitor | arrastralo al otro monitor, o clic derecho > *Monitor* |
 | Fondo transparente | clic derecho > *Fondo* |
-| Moverlo a otra parte de la barra | arrastralo con el boton izquierdo, o clic derecho > *Mover / Centrar* |
+| Moverlo a otra parte de la barra | arrastralo con el boton izquierdo (el menu tiene *Volver al extremo derecho* para dejarlo donde nace) |
 | Menu (ondas, fondo, adelantar/atrasar, mover, ancho, salir) | clic derecho sobre el widget |
 | Detenerlo | clic derecho > Salir, o `python tools\stop.py` |
 | Reinstalar dependencias | `setup.bat` |
@@ -93,9 +93,8 @@ barra, sin alpha real), `"bg_mode": "opaque"` en `config.json`.
 
 Se arrastra con el boton izquierdo desde cualquier parte que no sea un boton
 (sobre el titulo o la caratula). Mientras se arrastra el cursor cambia a ↔.
-Tambien esta el menu: *Mover a la izquierda*, *Mover a la derecha* (20 px por
-vez), *Centrar en la barra* y *Volver al extremo derecho*. La posicion se guarda
-en `config.json` (`position_frac`) y se respeta al arrancar.
+El menu tiene *Volver al extremo derecho* para devolverlo a su lugar original.
+La posicion se guarda en `config.json` (`position_frac`) y se respeta al arrancar.
 
 El widget reserva su espacio dentro del tramo libre de la barra (entre la lista
 de tareas y el bloque de la bandeja) y le pide a la lista de tareas el ancho que
@@ -253,7 +252,8 @@ al reproductor. Se registran sobre la ventana controladora, asi que siguen andan
 - **Si otro programa ya tiene una combinacion**, `RegisterHotKey` falla y el widget lo
   escribe en el log con el nombre del atajo que quedo sin registrar (`Ctrl+Alt+flechas`
   suele estar tomado por los drivers de video). No es un fallo silencioso.
-- Se pueden apagar desde el menu (*Atajos globales*) o con `"hotkeys": false`.
+- Se apagan con `"hotkeys": false` en `config.json` (no hay interruptor en el menu:
+  si los atajos andan, es una opcion que casi nunca se toca).
 
 ## Volumen
 
@@ -271,8 +271,8 @@ Esta en la **celda del altavoz**, despues de los botones del transporte:
 - **Rueda del mouse** sobre el altavoz: ±5% por muesca (el paso se configura).
 - **Un clic seco en el altavoz** silencia y lo vuelve a sacar. El icono se dibuja con
   una cruz mientras esta en silencio.
-- En el menu: *Silenciar*, *Volumen +5%*, *Volumen -5%* y *Mostrar altavoz* (para
-  esconder la celda si no la queres).
+- Todo se maneja desde la celda del altavoz: clic seco silencia, la rueda sube y
+  baja de a 5%, el arrastre lo deja donde lo sueltes. El menu ya no repite eso.
 
 SMTC dice **que** suena, pero no su volumen: para eso el widget habla con la API de
 audio de Windows (Core Audio), la del mezclador. Eso trae dos detalles que valen la
@@ -315,7 +315,7 @@ es el bloque de noticias; en las secundarias no hay rebar (la lista vive dentro 
 `WorkerW`) y el ancla es el reloj (`ClockButton`). Medido: Windows respeta que se le
 encoja el `WorkerW` igual que la rebar de la principal.
 
-El movimiento (arrastrar, *Mover a la izquierda/derecha*, *Centrar*, posicion libre)
+El movimiento (arrastrar, *Volver al extremo derecho*, posicion libre)
 funciona igual dentro de la barra donde este, entre la lista de tareas y el bloque de
 la derecha de **ese** monitor.
 
@@ -500,8 +500,10 @@ con lugar para leer y apuntar bien.
 - **Cierra** con la cruz, con `Escape`, con un clic afuera (pierde el foco) o con otro
   clic en la caratula.
 - Aparece **encima del widget** (alineado a su borde derecho) y siempre dentro del
-  monitor; si no entra arriba, va debajo. Se puede **arrastrar desde su fondo** para
-  moverlo donde quieras.
+  monitor; si no entra arriba, va debajo. Se puede **arrastrar desde cualquier parte
+  libre** para moverlo donde quieras (con *Fondo* > *Sin fondo* tambien: las zonas
+  vacias siguen agarrando el mouse, ver abajo). Y *Refrescar ahora*, en el menu, vuelve
+  a medir el fondo de atras por si cambio mucho.
 - Se dibuja solo cuando algo cambia (la firma incluye la posicion redondeada, el hover,
   el arrastre y el estado del volumen) y el widget le presta su ciclo: mientras el panel
   esta abierto el temporizador va a 100 ms, como el de la barra de progreso.
@@ -551,12 +553,26 @@ derecho > *Panel* > *Modo gaming*) prende el conjunto:
   el panel* cambia todo junto, textos incluidos.
 - **Sin fondo es sin fondo**: con *Fondo* > *Sin fondo (solo los datos)* no queda
   **nada** dibujado atras (ni el borde) y el panel queda flotando: solo la caratula, los
-  textos, los controles y las barras.
-- **Sin fondo el texto se adapta solo**: el panel mira el color que hay detras (promedia
-  cuatro franjas finas alrededor suyo) y elige texto claro u oscuro para contrastar
-  —medido: con fondo claro el texto queda 213 mas oscuro y con fondo oscuro 210 mas
-  claro— y le pone un contorno del color opuesto para que se lea sobre cualquier cosa.
-  Si igual preferis un fondo, *Solido* queda opaco.
+  textos, los controles y las barras. Medido: al abrirlo y cerrarlo cambian solo el 35%
+  de los pixeles de su area (los del contenido); antes, con un piso de alfa que tenia el
+  dibujo, cambiaban el 100%.
+- **Sin fondo el texto se adapta solo, midiendo bien**: al abrirse, el panel captura
+  **el propio rectangulo mientras todavia esta oculto** (asi ve el fondo limpio: con el
+  panel ya visible, la captura devuelve el panel mismo) y elige el color del texto con
+  ese dato. Texto oscuro **solo si el fondo es claro y parejo** (brillo > 170 y desvio
+  < 45); en cualquier otro caso usa texto claro con contorno oscuro, que se lee sobre
+  casi todo. Medido: con fondo claro el texto queda 213 mas oscuro y con fondo oscuro
+  210 mas claro, y el contorno es del color opuesto.
+  > El detalle importa: antes el panel promediaba cuatro franjas *al lado* suyo, y si
+  > una tenia contenido claro ajeno (una ventana blanca abajo) concluia "fondo claro" y
+  > ponia texto oscuro con contorno claro: sobre un fondo oscuro eso son **letras
+  > huecas** con un halo, que es lo que se veia mal.
+- **Las zonas "vacias" tambien reciben el mouse**: con *Sin fondo* los pixeles del panel
+  quedan con alfa 2 (0,8%, invisible), no con 0. No es capricho: Windows decide que
+  ventana recibe el clic mirando el alfa **por pixel**, asi que con 0 el hueco es un
+  agujero y el clic y el arrastre se los queda la ventana de atras. Medido: sobre el
+  fondo del panel, `WindowFromPoint` devolvia la ventana del navegador en 66 de 98
+  puntos de una grilla; con el piso, 98 de 98 caen en el panel.
 - Cada ajuste se puede tocar por separado desde el mismo submenu, si no queres el
   paquete completo.
 
@@ -590,6 +606,30 @@ Como se hacen, y por que no cuestan CPU:
 - Con el fondo opaco (`bg_mode: "opaque"`) no hay alfa global que animar, asi que el
   mostrar/ocultar sigue siendo instantaneo; el de la caratula funciona igual.
 
+## El menu (corto a proposito)
+
+Clic derecho sobre el widget. Queda **solo lo que no se puede hacer de otra forma**:
+
+    Ocultar / Mostrar widget
+    Abrir el panel            (lo mismo que el clic en la caratula)
+    Panel                     Modo gaming, Tamano, Dejar pasar los clics,
+                              Fondo, Opacidad, Volver a anclarlo al widget
+    Fondo del widget          solido / translucido / ... / sin fondo
+    Color de la barra         (y Color de las ondas)
+    Monitor                   (solo si hay mas de una barra)
+    Ondas de sonido           (interruptor)
+    Ancho: N px               Mas ancho / Mas angosto
+    Volver al extremo derecho
+    Refrescar ahora           vuelve a medir el fondo del panel
+    Salir
+
+Todo lo que se saco sigue estando, pero por su camino natural: atrasar y adelantar
+(barra, rueda, atajos), silenciar y volumen (celda del altavoz, rueda, atajos), mover
+paso a paso y centrar (se arrastra), mostrar el altavoz, apagar los atajos y abrir la
+carpeta del proyecto (las dos ultimas, desde `config.json`). Un menu de 24 entradas
+donde 12 son atajos de cosas que ya se hacen con el mouse es un menu que no se lee.
+
+
 ## Configuracion
 
 `config.json`, se aplica al arrancar. Los cambios por menu (ancho) se guardan solos.
@@ -602,7 +642,7 @@ Como se hacen, y por que no cuestan CPU:
 | `seek_step_s` | 10 | Cuantos segundos adelanta/atrasa la rueda del mouse y el menu. La barra de progreso se puede clickear en cualquier caso |
 | `seek_fine_s` | 1 | Paso de la rueda con `Ctrl` (fino) |
 | `seek_coarse_s` | 60 | Paso de la rueda con `Shift` (grueso) |
-| `hotkeys` | true | Atajos globales `Ctrl+Alt+...` (menu > *Atajos globales*) |
+| `hotkeys` | true | Atajos globales `Ctrl+Alt+...` |
 | `hit_alpha_floor` | 2 | Alfa minimo por pixel en modo transparente, para que toda la superficie reciba el mouse (invisible; 0 lo desactiva, pero con el fondo sin nada los huecos se vuelven "agujeros" y los clics van a la barra de tareas) |
 | `show_waves` | false | Ondas de sonido animadas entre el texto y los botones (menu > *Ondas de sonido*) |
 | `wave_bars` | 4 | Cuantas barras tienen las ondas (1 a 12) |
@@ -623,7 +663,7 @@ Como se hacen, y por que no cuestan CPU:
 | `panel_alpha` | 255 | Opacidad de todo el panel (235 leve, 200 translucido, 160 muy transparente) |
 | `panel_bg_alpha` | 250 | Alfa del **recuadro de atras** (250 solido, 200, 140, 90, 0 = sin fondo: no se dibuja nada, ni el borde). Con 0 el texto elige claro u oscuro segun lo que haya atras |
 | `panel_pos` | `null` | `[x, y]` en pantalla donde lo dejaste arrastrado; `null` = encima del widget |
-| `show_volume` | true | Celda del altavoz despues de los botones (menu > *Mostrar altavoz*) |
+| `show_volume` | true | Celda del altavoz despues de los botones |
 | `volume_step` | 5 | Cuanto sube o baja cada muesca de la rueda sobre el altavoz, en porcentaje |
 | `taskbar_monitor` | `null` | Barra de tareas donde vive el widget: `null` = la del monitor principal, o el nombre del dispositivo (`"\\.\DISPLAY5"`). Lo guarda el menu *Monitor* o el arrastre |
 | `position_frac` | `null` | `null` = pegado al extremo derecho. `0..1` = posicion libre dentro del tramo util |

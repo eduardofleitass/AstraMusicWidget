@@ -119,6 +119,7 @@ COLOR_CHOICES = (
 WS_EX_LAYERED = 0x00080000
 ULW_ALPHA = 0x02
 IDC_SIZEWE = 32644
+IDC_SIZEALL = 32646
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -296,6 +297,7 @@ class WidgetApp:
         self._panel_sig = None
         self._panel_wndproc_ref = None
         self._panel_int = time.monotonic()   # ultima interaccion con el panel
+        self._panel_fondo = None             # (r, g, b, brillo, desvio) detras del panel
         self._hud_key = None                 # ultima caratula mostrada por el HUD
         self._vis_alpha = 255   # alfa global del widget (fundido de mostrar/ocultar)
         self._vis_target = 255
@@ -1081,6 +1083,16 @@ class WidgetApp:
         self.log("atajo: %s", nombre)
         self._sig = None
         self._repaint_if_needed(force=True)
+
+    def panel_remuestrear(self) -> None:
+        """Vuelve a medir el fondo detras del panel (lo usa "Refrescar ahora")."""
+        if not (self.panel_visible and self.hwnd_panel):
+            return
+        try:
+            self.toggle_panel(False)
+            self.toggle_panel(True)
+        except Exception:
+            pass
 
     def set_hotkeys(self, on: bool, save: bool = True) -> None:
         """Prende o apaga los atajos globales (menu y pruebas)."""
@@ -1910,6 +1922,7 @@ class WidgetApp:
         self.panel_visible = True
         self._panel_sig = None
         self._panel_int = time.monotonic()
+        self._panel_muestrear_fondo()      # con el panel todavia oculto: fondo limpio
         self._panel_render(force=True)
         sin_foco = bool(self.cfg.get("panel_no_robar", False))
         try:
@@ -1930,9 +1943,7 @@ class WidgetApp:
             pass
         self.log("panel abierto en %s%s", (x, y, w, h),
                  " (sin robar el foco)" if sin_foco else "")
-        if int(self.cfg.get("panel_bg_alpha", 250)) < 120:
-            self.log("panel: fondo medido detras %s (para elegir texto claro u oscuro)",
-                     self._panel_fondo_detras())
+
 
     def _panel_render(self, force: bool = False) -> None:
         if not self.panel_visible or not self.hwnd_panel or not self.dib_panel:
@@ -1954,9 +1965,9 @@ class WidgetApp:
         # Con el fondo transparente, el texto tiene que contrastar con lo que hay
         # DETRAS del panel (un juego claro, un video). Se muestrea una franja justo
         # afuera del panel (adentro esta el panel: la captura devuelve el compuesto).
-        base = None
-        if int(self.cfg.get("panel_bg_alpha", 250)) < 120:
-            base = self._panel_fondo_detras()
+        # El fondo ya se midio al abrir el panel (capturar en cada cuadro costaba
+        # cuatro capturas de pantalla por repintado y trababa la reproduccion).
+        base = self._panel_base_para_tema()
         art = None
         if self.cfg.get("show_art", True):
             art = draw.get_art(self.state.art, self.state.art_key,
@@ -1970,47 +1981,56 @@ class WidgetApp:
         self.dib_panel.alpha = int(max(60, min(255, self.cfg.get("panel_alpha", 255))))
         self.dib_panel.upload(draw.to_premult_bgra(img))
 
-    def _panel_fondo_detras(self):
-        """Color aproximado de lo que hay DETRAS del panel (para el auto-contraste).
+    def _panel_muestrear_fondo(self) -> bool:
+        """Mide el color que hay DETRAS del panel. Devuelve True si pudo.
 
-        Se miran cuatro franjas finas alrededor del panel (no se puede capturar la de
-        adentro: ahi ya esta el panel y la captura devuelve el compuesto). Con una sola
-        franja el muestreo le erra -visto: eligio texto oscuro porque arriba habia una
-        ventana clara, y quedaba con un halo blanco sobre fondo oscuro-, asi que se
-        promedian las cuatro descartando la mas clara y la mas oscura.
+        Se captura el PROPIO rectangulo del panel **mientras esta oculto**: asi se ve el
+        fondo limpio. Con el panel visible la captura devuelve el compuesto (el panel
+        mismo), y mirar franjas al lado -lo que hacia antes- le erraba cuando la franja
+        tenia contenido claro ajeno: elegia texto oscuro y sobre un fondo oscuro quedaban
+        letras huecas con contorno claro (reportado por el usuario, visto en su captura).
+
+        Se guarda tambien el **desvio**: un fondo mezclado no permite decidir bien, asi
+        que solo se usa para texto oscuro si es claro Y parejo.
         """
+        self._panel_fondo = None
         try:
             from PIL import ImageGrab as _IG
+            if not (self.hwnd_panel and win32gui.IsWindow(self.hwnd_panel)):
+                return False
+            if win32gui.IsWindowVisible(self.hwnd_panel):
+                return False
             pr = win32gui.GetWindowRect(self.hwnd_panel)
             if pr[2] <= pr[0] or pr[3] <= pr[1]:
-                return None
-            t = max(3, int(4 * self._panel_k()))
-            franjas = [
-                (pr[0], max(0, pr[1] - t), pr[2], max(1, pr[1] - 1)),      # arriba
-                (pr[0], pr[3] + 1, pr[2], pr[3] + t),                      # abajo
-                (max(0, pr[0] - t), pr[1], max(1, pr[0] - 1), pr[3]),      # izquierda
-                (pr[2] + 1, pr[1], pr[2] + t, pr[3]),                      # derecha
-            ]
-            medias = []
-            for f in franjas:
-                if f[2] <= f[0] or f[3] <= f[1]:
-                    continue
-                im = _IG.grab(bbox=f, all_screens=True).convert("RGB")
-                px = list(im.get_flattened_data())
-                if px:
-                    n = float(len(px))
-                    medias.append((sum(0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2]
-                                       for p in px) / n,
-                                   tuple(int(sum(q[i] for q in px) / n) for i in range(3))))
-            if not medias:
-                return None
-            medias.sort()
-            utiles = medias[1:-1] if len(medias) > 2 else medias   # sin la mas clara ni la mas oscura
-            return (int(sum(m[1][0] for m in utiles) / len(utiles)),
-                    int(sum(m[1][1] for m in utiles) / len(utiles)),
-                    int(sum(m[1][2] for m in utiles) / len(utiles)))
-        except Exception:
+                return False
+            im = _IG.grab(bbox=pr, all_screens=True).convert("RGB")
+            px = list(im.get_flattened_data())
+            if not px:
+                return False
+            n = float(len(px))
+            med = tuple(int(sum(p[i] for p in px) / n) for i in range(3))
+            lum = sum(0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2] for p in px) / n
+            desvio = (sum((0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2] - lum) ** 2
+                          for p in px) / n) ** 0.5
+            self._panel_fondo = (med[0], med[1], med[2], lum, desvio)
+            self.log("panel: fondo detras %s (brillo %.0f, desvio %.0f)%s", med, lum, desvio,
+                     "" if (lum > 170 and desvio < 45) else " -> texto claro con contorno")
+            return True
+        except Exception as exc:
+            self.log("panel: no se pudo medir el fondo: %r", exc)
+            return False
+
+    def _panel_base_para_tema(self):
+        """Color de fondo que se le pasa al dibujo, o None.
+
+        Texto oscuro solo si el fondo es CLARO y PAREJO; si el muestreo es dudoso se usa
+        un fondo oscuro sintetico (texto claro con contorno oscuro), que se lee sobre
+        casi cualquier cosa. Asi una medicion equivocada no deja letras huecas.
+        """
+        if int(self.cfg.get("panel_bg_alpha", 250)) >= 120 or not self._panel_fondo:
             return None
+        r, g, b, lum, desvio = self._panel_fondo
+        return (r, g, b) if (lum > 170 and desvio < 45) else (16, 18, 24)
 
     def _panel_frac_barra(self, x: int) -> float:
         return panel_mod.frac_en_barra(x, self._panel_k(), self.cfg)
@@ -2058,10 +2078,12 @@ class WidgetApp:
                 self.toggle_panel(False)
                 return 0
             if msg == win32con.WM_MOUSEMOVE:
-                x = lp & 0xFFFF
-                y = (lp >> 16) & 0xFFFF
+                x, y = self._xy(lp)
                 self._panel_int = time.monotonic()      # usarlo reinicia el auto-ocultar
                 if self.panel_drag is not None:
+                    if os.environ.get("GORUS_DEBUG_MOUSE"):
+                        self.log("panel: MOUSEMOVE x=%s y=%s arrastre=%s", x, y,
+                                 self.panel_drag.get("hit"))
                     self._panel_drag_move(x, y)
                     return 0
                 self._panel_int = time.monotonic()
@@ -2081,10 +2103,12 @@ class WidgetApp:
                     self._panel_render(force=True)
                 return 0
             if msg == win32con.WM_LBUTTONDOWN:
-                x = lp & 0xFFFF
-                y = (lp >> 16) & 0xFFFF
+                x, y = self._xy(lp)
                 self._panel_int = time.monotonic()
                 hit = panel_mod.hit(x, y, self._panel_k(), self.cfg)
+                if os.environ.get("GORUS_DEBUG_MOUSE"):
+                    self.log("panel: LBUTTONDOWN x=%s y=%s hit=%s captura=%s",
+                             x, y, hit, hex(win32gui.GetCapture()))
                 if hit in (3, 4):
                     self.panel_drag = {"hit": hit, "x0": x, "y0": y, "moved": False}
                     if hit == 3:
@@ -2099,13 +2123,23 @@ class WidgetApp:
                         pass
                     self._panel_render(force=True)
                 elif hit == -1:
-                    # Arrastrar el panel desde el fondo: se mueve con el mouse
+                    # Arrastrar el panel desde el fondo: se mueve con el mouse. Necesita
+                    # CAPTURA igual que la barra: al mover el panel, el cursor se sale de
+                    # la ventana enseguida y sin captura no llegan mas WM_MOUSEMOVE (el
+                    # panel se quedaba pegado, quejado por el usuario).
                     self.panel_drag = {"hit": -1, "x0": x, "y0": y, "moved": False,
                                        "pantalla": win32gui.GetCursorPos()}
+                    try:
+                        win32gui.SetCapture(hwnd)
+                        win32gui.SetCursor(win32gui.LoadCursor(0, IDC_SIZEALL))
+                    except Exception:
+                        pass
                 return 0
             if msg == win32con.WM_LBUTTONUP:
-                x = lp & 0xFFFF
-                y = (lp >> 16) & 0xFFFF
+                x, y = self._xy(lp)
+                if os.environ.get("GORUS_DEBUG_MOUSE"):
+                    self.log("panel: LBUTTONUP x=%s y=%s arrastre=%s", x, y,
+                             self.panel_drag is not None)
                 if self.panel_drag is not None:
                     self._panel_end_drag(x)
                     return 0
@@ -2150,6 +2184,17 @@ class WidgetApp:
             self.log("panel proc fallo: %r", exc)
         return win32gui.DefWindowProc(hwnd, msg, wp, lp)
 
+    @staticmethod
+    def _xy(lp: int) -> tuple:
+        """x, y de un lParam de mouse, con signo.
+
+        Con la captura puesta el cursor se sale de la ventana y Windows manda
+        coordenadas de cliente NEGATIVAS: leidas sin signo, y=-142 llega como 65394.
+        """
+        x = lp & 0xFFFF
+        y = (lp >> 16) & 0xFFFF
+        return (x - 0x10000 if x >= 0x8000 else x, y - 0x10000 if y >= 0x8000 else y)
+
     def _panel_drag_move(self, x: int, y: int) -> None:
         d = self.panel_drag
         if not d:
@@ -2172,6 +2217,8 @@ class WidgetApp:
             px, py = win32gui.GetCursorPos()
             sx, sy = d.get("pantalla") or (px, py)
             wr = win32gui.GetWindowRect(self.hwnd_panel)
+            if os.environ.get("GORUS_DEBUG_MOUSE"):
+                self.log("panel: mover delta=(%s,%s) desde %s", px - sx, py - sy, wr)
             win32gui.SetWindowPos(self.hwnd_panel, 0, wr[0] + (px - sx), wr[1] + (py - sy),
                                   0, 0, win32con.SWP_NOSIZE | win32con.SWP_NOZORDER
                                   | win32con.SWP_NOACTIVATE)
@@ -2351,19 +2398,7 @@ class WidgetApp:
             pan_check(60, "Modo gaming (chico y sin robar el foco)", gaming)
             win32gui.AppendMenu(pan_sub, win32con.MF_SEPARATOR, 0, "")
             pan_check(61, "Tamano chico", str(self.cfg.get("panel_size", "normal")) == "chico")
-            pan_check(62, "No robar el foco del juego", bool(self.cfg.get("panel_no_robar", False)))
-            pan_check(63, "Siempre arriba de todo", bool(self.cfg.get("panel_topmost", False)))
             pan_check(64, "Dejar pasar los clics al juego", bool(self.cfg.get("panel_clics_al_juego", False)))
-            pan_check(65, "Aparecer al cambiar de cancion", bool(self.cfg.get("panel_hud", False)))
-            auto_sub = win32gui.CreatePopupMenu()
-            auto_actual = float(self.cfg.get("panel_auto_hide_s", 0) or 0)
-            for i, (seg, etiqueta) in enumerate(PANEL_AUTO_HIDE):
-                flags = win32con.MF_STRING
-                if abs(auto_actual - seg) < 0.5:
-                    flags |= win32con.MF_CHECKED
-                win32gui.AppendMenu(auto_sub, flags, 66 + i, etiqueta)
-            win32gui.AppendMenu(pan_sub, win32con.MF_POPUP | win32con.MF_STRING,
-                                auto_sub, "Ocultarse solo")
             alpha_sub = win32gui.CreatePopupMenu()
             alpha_actual = int(self.cfg.get("panel_alpha", 255))
             for i, (val, etiqueta) in enumerate(PANEL_ALPHAS):
@@ -2386,41 +2421,31 @@ class WidgetApp:
             win32gui.AppendMenu(pan_sub, win32con.MF_STRING, 74,
                                 "Volver a anclarlo al widget")
 
-            step = self._seek_step()
-            seek_ok = self._can_seek()
-            vol_ok = self._vol_disponible()
+            # Menu corto a proposito: queda solo lo que NO se puede hacer de otra
+            # forma. Sacado (sigue en config.json, documentado en el README): atrasar y
+            # adelantar (barra, rueda, atajos), silenciar y volumen (celda del altavoz,
+            # rueda, atajos), mover paso a paso y centrar (se arrastra con el mouse),
+            # mostrar el altavoz, apagar los atajos, abrir la carpeta del proyecto, y los
+            # interruptores internos del panel que ahora fija el modo gaming.
             items = [
                 ("item", 1, "Ocultar widget" if self.visible else "Mostrar widget", True),
+                ("check", 26, "Abrir el panel (clic en la caratula)", bool(self.panel_visible)),
+                ("popup", pan_sub, "Panel", True),
                 ("sep", 0, "", None),
-                ("popup", alpha_sub, "Fondo", True),
+                ("popup", alpha_sub, "Fondo del widget", True),
                 ("popup", subs[0][0], subs[0][1], True),
                 ("popup", subs[1][0], subs[1][1], True),
                 *([("popup", mon_sub, "Monitor", True)] if mon_sub else []),
                 ("sep", 0, "", None),
-                ("item", 13, f"◀◀   Atrasar {step:.0f} s", seek_ok),
-                ("item", 14, f"Adelantar {step:.0f} s   ▶▶", seek_ok),
-                ("sep", 0, "", None),
                 ("check", 15, "Ondas de sonido", bool(self.cfg.get("show_waves", False))),
-                ("check", 19, "Mostrar altavoz", bool(self.cfg.get("show_volume", True))),
-                ("check", 24, "Atajos globales (Ctrl+Alt+...)", bool(self.cfg.get("hotkeys", True))),
-                ("check", 26, "Abrir el panel (clic en la caratula)", bool(self.panel_visible)),
-                ("popup", pan_sub, "Panel", True),
-                ("sep", 0, "", None),
-                ("check", 16, "Silenciar", bool(self._vol_estado()[1]) if self._vol_disponible() else False),
-                ("item", 17, f"Volumen +{self.cfg.get('volume_step', 5)}%", vol_ok),
-                ("item", 18, f"Volumen -{self.cfg.get('volume_step', 5)}%", vol_ok),
-                ("sep", 0, "", None),
-                ("item", 3, "◀  Mover a la izquierda", True),
-                ("item", 4, "Mover a la derecha  ▶", True),
-                ("item", 5, "Centrar en la barra", True),
-                ("item", 6, "Volver al extremo derecho", True),
                 ("sep", 0, "", None),
                 ("item", 7, f"Ancho: {self.cfg.get('width', 260)} px", False),
-                ("item", 8, "   Más ancho", True),
-                ("item", 9, "   Más angosto", True),
+                ("item", 8, "   Mas ancho", True),
+                ("item", 9, "   Mas angosto", True),
                 ("sep", 0, "", None),
+                ("item", 6, "Volver al extremo derecho", True),
                 ("item", 10, "Refrescar ahora", True),
-                ("item", 11, "Abrir carpeta del proyecto", True),
+                ("sep", 0, "", None),
                 ("item", 12, "Salir", True),
             ]
             for kind, ident, label, enabled in items:
@@ -2459,22 +2484,8 @@ class WidgetApp:
             self.toggle_visible()
         elif 20 <= cmd <= 20 + len(ALPHA_LEVELS) - 1:
             self.set_chip_alpha(ALPHA_LEVELS[cmd - 20][0])
-        elif cmd == 13:
-            self._seek_by(-self._seek_step())
-        elif cmd == 14:
-            self._seek_by(self._seek_step())
         elif cmd == 15:
             self.set_waves(not self.cfg.get("show_waves", False))
-        elif cmd == 16:
-            self._vol_toggle_mute()
-        elif cmd == 17:
-            self._vol_step(1)
-        elif cmd == 18:
-            self._vol_step(-1)
-        elif cmd == 19:
-            self.set_volume_visible(not self.cfg.get("show_volume", True))
-        elif cmd == 24:
-            self.set_hotkeys(not self.cfg.get("hotkeys", True))
         elif cmd == 26:
             self.toggle_panel()
         elif cmd == 60:
@@ -2483,19 +2494,9 @@ class WidgetApp:
         elif cmd == 61:
             self.set_panel_size("chico" if str(self.cfg.get("panel_size", "normal"))
                                 != "chico" else "normal")
-        elif cmd == 62:
-            self.set_panel_ajuste("panel_no_robar",
-                                  not self.cfg.get("panel_no_robar", False))
-        elif cmd == 63:
-            self.set_panel_ajuste("panel_topmost",
-                                  not self.cfg.get("panel_topmost", False))
         elif cmd == 64:
             self.set_panel_ajuste("panel_clics_al_juego",
                                   not self.cfg.get("panel_clics_al_juego", False))
-        elif cmd == 65:
-            self.set_panel_ajuste("panel_hud", not self.cfg.get("panel_hud", False))
-        elif 66 <= cmd <= 66 + len(PANEL_AUTO_HIDE) - 1:
-            self.set_panel_ajuste("panel_auto_hide_s", PANEL_AUTO_HIDE[cmd - 66][0])
         elif 70 <= cmd <= 70 + len(PANEL_ALPHAS) - 1:
             self.set_panel_ajuste("panel_alpha", PANEL_ALPHAS[cmd - 70][0])
         elif 75 <= cmd <= 75 + len(PANEL_BG_ALPHAS) - 1:
@@ -2512,12 +2513,6 @@ class WidgetApp:
             if i < len(barras):
                 b = barras[i]
                 self.set_taskbar(None if b["primario"] else b["monitor"])
-        elif cmd == 3:
-            self._nudge(-int(round(NUDGE_PX * self.k)))
-        elif cmd == 4:
-            self._nudge(int(round(NUDGE_PX * self.k)))
-        elif cmd == 5:
-            self.set_position(0.5)
         elif cmd == 6:
             self.set_position(None)
         elif cmd == 8:
@@ -2534,11 +2529,6 @@ class WidgetApp:
             self.state = self.poller.state()
             self._sig = None
             self._repaint_if_needed(force=True)
-        elif cmd == 11:
-            try:
-                os.startfile(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            except Exception:
-                pass
         elif cmd == 12:
             win32gui.PostMessage(self.hwnd_ctl, win32con.WM_CLOSE, 0, 0)
 
