@@ -53,6 +53,20 @@ WM_APP_MOVE = win32con.WM_APP + 1   # wParam = fraccion de posicion x1000; 0xFFF
 WM_APP_ALPHA = win32con.WM_APP + 2  # wParam = alpha del chip (0 = sin fondo)
 WM_APP_CANCEL_SCRUB = win32con.WM_APP + 3   # aborta un arrastre de la barra de progreso
 WM_APP_WAVES = win32con.WM_APP + 4  # wParam = 1/0: prende y apaga las ondas de sonido
+WM_APP_COLOR = win32con.WM_APP + 5  # wParam = 1 barra / 2 ondas; lParam = 0xRRGGBB (0 = tema)
+
+# Colores que ofrece el menu para la barra de progreso y las ondas (None = el del
+# tema). El menu guarda el hex en config.json; a mano tambien vale [r, g, b].
+COLOR_CHOICES = (
+    (None, "Color del tema"),
+    ("#60CD91", "Verde"),
+    ("#56B6FF", "Celeste"),
+    ("#B08CFF", "Violeta"),
+    ("#FF78B4", "Rosa"),
+    ("#FFAA5A", "Naranja"),
+    ("#F0D76E", "Amarillo"),
+    ("#EBEEF5", "Blanco"),
+)
 
 WS_EX_LAYERED = 0x00080000
 ULW_ALPHA = 0x02
@@ -568,6 +582,9 @@ class WidgetApp:
                 self.hover, self.width_px, self.height_px, self.base, st.stopped,
                 int(self.cfg.get("chip_alpha", 232)), self.layered,
                 -1 if self._scrub_t is None else int(self._scrub_t),
+                # los colores elegidos a mano tambien forman parte de lo que se ve
+                draw.parse_color(self.cfg.get("progress_color")),
+                draw.parse_color(self.cfg.get("waves_color")),
                 # Con sin_ondas=True, la firma ignora las alturas: es la que decide si
                 # hay que redibujar el chip completo (caratula, textos, barra). La
                 # animacion de las ondas se pega encima y no obliga a repintarlo todo.
@@ -852,6 +869,25 @@ class WidgetApp:
         self._repaint_if_needed(force=True)
         self.log("ondas de sonido: %s", "encendidas" if on else "apagadas")
 
+    def set_color(self, key: str, value, save: bool = True) -> None:
+        """Color de la barra de progreso o de las ondas (None = el color del tema).
+
+        El chip cacheado lleva el color de la barra dibujado, asi que hay que tirarlo;
+        la tira de las ondas se dibuja en cada cuadro y toma el cambio sola.
+        """
+        if key not in ("progress_color", "waves_color"):
+            return
+        self.cfg[key] = value
+        if save:
+            cfgmod.save(self.cfg)
+        self._sig = None
+        self._base_sig = None
+        self._repaint_if_needed(force=True)
+        c = draw.parse_color(value)
+        self.log("%s: %s", "color de la barra" if key == "progress_color"
+                 else "color de las ondas",
+                 draw.hex_color(c) if c else "color del tema")
+
     def _widget_wndproc(self, hwnd, msg, wp, lp):
         try:
             if msg == win32con.WM_PAINT:
@@ -969,6 +1005,11 @@ class WidgetApp:
                 return 0
             if msg == WM_APP_WAVES:
                 self.set_waves(bool(wp), save=bool(lp))
+                return 0
+            if msg == WM_APP_COLOR:
+                rgb = int(lp) & 0xFFFFFF
+                self.set_color("progress_color" if wp == 1 else "waves_color",
+                               None if rgb == 0 else "#%06X" % rgb, save=False)
                 return 0
             if msg == win32con.WM_RBUTTONUP:
                 if self.cfg.get("right_click_menu", True):
@@ -1154,12 +1195,35 @@ class WidgetApp:
                     flags |= win32con.MF_CHECKED
                 win32gui.AppendMenu(alpha_sub, flags, 20 + i, label)
 
+            # Submenus de color: la barra de progreso y las ondas por separado
+            subs = []
+            for base_id, key, titulo in ((30, "progress_color", "Color de la barra"),
+                                         (40, "waves_color", "Color de las ondas")):
+                sub = win32gui.CreatePopupMenu()
+                actual = draw.parse_color(self.cfg.get(key))
+                conocidos = [draw.parse_color(v) for v, _ in COLOR_CHOICES if v]
+                if actual is not None and actual not in conocidos:
+                    # Elegido a mano en config.json: se muestra cual esta activo (no
+                    # se puede clickear, se cambia editando el archivo).
+                    win32gui.AppendMenu(sub, win32con.MF_STRING | win32con.MF_CHECKED
+                                        | win32con.MF_GRAYED, base_id + 100,
+                                        f"Personalizado ({draw.hex_color(actual)})")
+                    win32gui.AppendMenu(sub, win32con.MF_SEPARATOR, 0, "")
+                for i, (valor, etiqueta) in enumerate(COLOR_CHOICES):
+                    flags = win32con.MF_STRING
+                    if draw.parse_color(valor) == actual:
+                        flags |= win32con.MF_CHECKED
+                    win32gui.AppendMenu(sub, flags, base_id + i, etiqueta)
+                subs.append((sub, titulo))
+
             step = self._seek_step()
             seek_ok = self._can_seek()
             items = [
                 ("item", 1, "Ocultar widget" if self.visible else "Mostrar widget", True),
                 ("sep", 0, "", None),
                 ("popup", alpha_sub, "Fondo", True),
+                ("popup", subs[0][0], subs[0][1], True),
+                ("popup", subs[1][0], subs[1][1], True),
                 ("sep", 0, "", None),
                 ("item", 13, f"◀◀   Atrasar {step:.0f} s", seek_ok),
                 ("item", 14, f"Adelantar {step:.0f} s   ▶▶", seek_ok),
@@ -1221,6 +1285,10 @@ class WidgetApp:
             self._seek_by(self._seek_step())
         elif cmd == 15:
             self.set_waves(not self.cfg.get("show_waves", False))
+        elif 30 <= cmd <= 30 + len(COLOR_CHOICES) - 1:
+            self.set_color("progress_color", COLOR_CHOICES[cmd - 30][0])
+        elif 40 <= cmd <= 40 + len(COLOR_CHOICES) - 1:
+            self.set_color("waves_color", COLOR_CHOICES[cmd - 40][0])
         elif cmd == 3:
             self._nudge(-int(round(NUDGE_PX * self.k)))
         elif cmd == 4:

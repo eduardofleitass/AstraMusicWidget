@@ -46,6 +46,9 @@ VARIANTS = [
      dict(hover=-1, marquee=0)),
     ("reproduciendo / ondas de sonido", state("Radio Ga Ga", "Queen"),
      dict(hover=-1, marquee=0, waves=[0.35, 0.9, 0.15, 0.7])),
+    ("colores elegidos: barra celeste, ondas rosa", state("Radio Ga Ga", "Queen"),
+     dict(hover=-1, marquee=0, waves=[0.35, 0.9, 0.15, 0.7],
+          _cfg=dict(CFG, progress_color="#56B6FF", waves_color="#FF78B4"))),
     ("pausado / ondas planas", state("Love of My Life", "Queen", playing=False, pos=42),
      dict(hover=-1, marquee=0, waves=[0.12, 0.12, 0.12, 0.12])),
     ("reproduciendo / titulo largo (marquesina)", state(
@@ -72,12 +75,14 @@ def main() -> int:
     font = draw._font("body", 13)
     y = pad
     for label, st, kwargs in VARIANTS:
+        kwargs = dict(kwargs)
+        cfg_v = kwargs.pop("_cfg", CFG)
         k = 1.0
-        SS = max(1, int(CFG.get("supersample", 3)))
+        SS = max(1, int(cfg_v.get("supersample", 3)))
         art = draw.get_art(st.art, st.art_key, int(round(draw.ART * k * SS)),
                            int(round(draw.ART_RADIUS * k * SS))
-                           ) if CFG.get("show_art", True) else None
-        img = draw.render(st, CFG, art=art, k=k, base=(28, 30, 38), height=40, **kwargs)
+                           ) if cfg_v.get("show_art", True) else None
+        img = draw.render(st, cfg_v, art=art, k=k, base=(28, 30, 38), height=40, **kwargs)
         big = img.resize((W, H), Image.LANCZOS)
         sheet.paste(big.convert("RGB"), (pad, y + label_h))
         d.text((pad, y), label, font=font, fill=(150, 158, 180))

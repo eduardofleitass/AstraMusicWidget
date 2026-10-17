@@ -44,6 +44,11 @@ DEFAULTS = {
     # Cuadros por segundo de la animacion. Baja la cifra si te importa la CPU:
     # es el unico motivo por el que el widget repinta mas seguido que el texto.
     "wave_fps": 20,
+    # Color de la barra de progreso y de las ondas. null = el color de acento del
+    # tema. Se puede escribir como "#RRGGBB" o [r, g, b]; el menu guarda hex.
+    # Son independientes del auto-contraste: si los elegis, se usan tal cual.
+    "progress_color": None,
+    "waves_color": None,
     "auto_contrast": True,
     "theme": {
         "chip": [21, 23, 30],

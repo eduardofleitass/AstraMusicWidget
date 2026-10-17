@@ -27,6 +27,7 @@ Probado en Windows 10 22H2 (19045), escala 100% y 1920x1080.
 | Mostrar / ocultar sin cerrarlo | `Ctrl + Alt + M` (la misma tecla lo vuelve a mostrar) |
 | Atrasarlo o adelantarlo | clic en la barra de progreso, o la rueda del mouse (±10 s) |
 | Ondas de sonido (animacion) | clic derecho > *Ondas de sonido* |
+| Color de la barra o de las ondas | clic derecho > *Color de la barra* / *Color de las ondas* |
 | Fondo transparente | clic derecho > *Fondo* |
 | Moverlo a otra parte de la barra | arrastralo con el boton izquierdo, o clic derecho > *Mover / Centrar* |
 | Menu (ondas, fondo, adelantar/atrasar, mover, ancho, salir) | clic derecho sobre el widget |
@@ -196,6 +197,36 @@ La frecuencia se puede bajar con `wave_fps` (20 por defecto) si te importa la CP
 es lo unico que hace que el widget repinte mas seguido que el texto.
 
 
+## Colores
+
+La barra de progreso y las ondas tienen **su propio color**, independiente del tema.
+Se cambian con clic derecho > *Color de la barra* / *Color de las ondas*, que traen
+una paleta corta (verde, celeste, violeta, rosa, naranja, amarillo, blanco) y
+*Color del tema* para volver al de acento del tema.
+
+Para cualquier otro color, se escribe a mano en `config.json`:
+
+```json
+"progress_color": "#56B6FF",
+"waves_color": [255, 120, 180]
+```
+
+Se acepta `"#RRGGBB"`, `"#RGB"` o `[r, g, b]`, y `null` (por defecto) es *el color
+del tema*. Si el color no se entiende, se usa el del tema en vez de fallar.
+
+Dos cosas a tener en cuenta:
+
+- **El auto-contraste no los toca.** Los colores de texto e iconos se adaptan al
+  fondo de la barra, pero si vos elegis un color, se usa ese tal cual: uno muy
+  oscuro sobre una barra oscura no se va a ver. El menu muestra
+  `Personalizado (#RRGGBB)` cuando el color no es de la paleta.
+- **El color de la barra** pinta el relleno del progreso, el indicador del arrastre
+  y la hora destino que aparece mientras arrastras. **El de las ondas** pinta las
+  barras del visualizador (que siguen quedando planas y apagadas en pausa).
+
+Ninguno de los dos cambia el chip, la caratula ni los textos.
+
+
 ## Como funciona
 
 Tres piezas bien separadas:
@@ -285,7 +316,7 @@ falla posible de esta tecnica:
 - `python tools\stop.py --force` mata el proceso y repara la barra si quedo
   inconsistente.
 
-43 de 43 pruebas pasan (`python tools\selftest.py` con el widget en marcha):
+49 de 49 pruebas pasan (`python tools\selftest.py` con el widget en marcha):
 anclaje, reconstruccion forzada, recuperacion de espacio, pixeles realmente
 pintados, transparencia del fondo medida contra la barra, recorrido completo del
 movimiento (que nunca quede tapado), la barra de progreso (que su zona clicable
@@ -294,13 +325,16 @@ abortar no se mande ningun salto), que el widget reciba el mouse en toda su
 superficie con el fondo transparente, las ondas de sonido (que su franja entre
 entre el texto y los botones, que apagadas no pinten nada, que encendidas cambien
 de cuadro —8 de 8 distintos— que el texto quede recortado antes y que las barras
-no se salgan de su franja), y 30 muestras de vigilancia del pintado (30/30 cuadros
-correctos). Y 12 de 12 de interaccion real (`python tools\clicktest.py`): el hover
-ilumina los tres botones, un clic de verdad cambia el estado de reproduccion, el
-segundo clic lo restaura, un clic en la caratula no dispara nada, un clic en la
-barra de progreso salta a esa posicion (medido: pedido 157 s, informado 157 s) sin
-mover el widget, el salto se puede devolver a donde estaba, y la rueda adelanta y
-atrasa el paso configurado (medido: -9,9 s para un paso de -10 s).
+no se salgan de su franja), los colores elegidos (que se entiendan en hex, lista y
+corto; que la barra tome el suyo —medido en rojo puro— que las ondas tomen el suyo
+—medido en azul— y que ninguno tome el del otro) y 30 muestras de vigilancia del
+pintado (30/30 cuadros correctos). Y 12 de 12 de interaccion real
+(`python tools\clicktest.py`): el hover ilumina los tres botones, un clic de verdad
+cambia el estado de reproduccion, el segundo clic lo restaura, un clic en la
+caratula no dispara nada, un clic en la barra de progreso salta a esa posicion
+(medido: pedido 157 s, informado 157 s) sin mover el widget, el salto se puede
+devolver a donde estaba, y la rueda adelanta y atrasa el paso configurado
+(medido: -9,9 s para un paso de -10 s).
 
 En `clicktest.py`, si una lista de reproduccion cambia de tema justo mientras se
 mide, el comando se pierde y la prueba lo informa como `SALTA` (interferencia) en
@@ -330,6 +364,8 @@ encogimiento.
 | `show_waves` | false | Ondas de sonido animadas entre el texto y los botones (menu > *Ondas de sonido*) |
 | `wave_bars` | 4 | Cuantas barras tienen las ondas (1 a 12) |
 | `wave_fps` | 20 | Cuadros por segundo de la animacion. El unico motivo por el que el widget repinta mas seguido que el texto |
+| `progress_color` | `null` | Color de la barra de progreso (relleno, indicador de arrastre y hora destino). `null` = el del tema; tambien `"#RRGGBB"` o `[r, g, b]` |
+| `waves_color` | `null` | Color de las ondas de sonido. Mismas formas que `progress_color` |
 | `position_frac` | `null` | `null` = pegado al extremo derecho. `0..1` = posicion libre dentro del tramo util |
 | `drag_to_move` | true | Permite moverlo arrastrando con el boton izquierdo |
 | `chip_alpha` | 232 | Transparencia del fondo: 232 solido, 170 translucido, 100 muy transparente, 0 sin fondo |

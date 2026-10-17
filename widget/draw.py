@@ -77,6 +77,34 @@ def _lum(c: tuple) -> float:
     return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
 
 
+def parse_color(v) -> tuple | None:
+    """Interpreta un color elegido a mano: "#RRGGBB", "#RGB", [r, g, b] o None.
+
+    Se aceptan las dos formas porque el menu guarda hex y a mano es comodo escribir
+    una lista. Lo que no se entiende (o None) significa "el color del tema".
+    """
+    if v is None:
+        return None
+    if isinstance(v, (list, tuple)) and len(v) >= 3:
+        try:
+            return tuple(max(0, min(255, int(c))) for c in v[:3])
+        except Exception:
+            return None
+    s = str(v).strip().lstrip("#")
+    if len(s) == 3:
+        s = "".join(c * 2 for c in s)
+    if len(s) == 6:
+        try:
+            return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+        except ValueError:
+            return None
+    return None
+
+
+def hex_color(c: tuple) -> str:
+    return "#%02X%02X%02X" % (int(c[0]), int(c[1]), int(c[2]))
+
+
 # Colores para una barra de tareas clara (tema claro de Windows): si el fondo es
 # claro, el texto blanco desaparece. Con el fondo transparente esto deja de ser
 # un caso raro y pasa a ser algo que hay que resolver.
@@ -92,12 +120,18 @@ LIGHT_THEME = {
 
 
 def theme_for_base(cfg: dict, base: tuple) -> dict:
-    """Tema efectivo: el configurado, o su version oscura/clara segun el fondo."""
+    """Tema efectivo: el configurado, o su version oscura/clara segun el fondo.
+
+    Ademas resuelve los colores elegidos a mano para la barra de progreso y las
+    ondas. Son independientes del tema (y del auto-contraste: si el usuario eligio
+    un color, se usa ese, aunque en su barra se note poco).
+    """
     theme = dict(cfg.get("theme") or {})
-    if not cfg.get("auto_contrast", True):
-        return theme
-    if _lum(tuple(base)[:3]) > 130:
+    if cfg.get("auto_contrast", True) and _lum(tuple(base)[:3]) > 130:
         theme.update(LIGHT_THEME)
+    accent = theme.get("accent") or (96, 205, 145)
+    theme["accent_progress"] = parse_color(cfg.get("progress_color")) or tuple(accent)
+    theme["accent_waves"] = parse_color(cfg.get("waves_color")) or tuple(accent)
     return theme
 
 
@@ -298,7 +332,7 @@ def render_waves(state, cfg: dict, levels, k: float = 1.0, base: tuple = (32, 34
     img = Image.new("RGBA", (W * WAVE_SS, H * WAVE_SS), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     theme = theme_for_base(cfg, base)
-    col = _col(theme, "accent", 255 if state.playing else 110)
+    col = _col(theme, "accent_waves", 255 if state.playing else 110)
     dibujar_ondas(d, levels, cfg, S, 0.0, H * WAVE_SS / 2.0, col)
     if WAVE_SS <= 1:
         return img
@@ -408,7 +442,7 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
     if scrub is not None and state.duration > 0:
         # mientras se arrastra la barra, el renglon del artista dice a donde va
         artist = f"{fmt_time(scrub)} / {fmt_time(state.duration)}"
-        acol = _col(theme, "accent", 255)
+        acol = _col(theme, "accent_progress", 255)
     f_artist_max = area_w
     if d.textlength(artist, font=f_artist) > f_artist_max:
         while artist and d.textlength(artist + "…", font=f_artist) > f_artist_max:
@@ -447,7 +481,7 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
         # Barras tipo "nota de voz": redondeadas, cortas cuando no hay sonido.
         # El alto lo trae quien dibuja (app.py), que es el que tiene el reloj.
         dibujar_ondas(d, waves, cfg, S, wb[0] * S, WAVE_CY * S,
-                      _col(theme, "accent", 255 if state.playing else 110))
+                      _col(theme, "accent_waves", 255 if state.playing else 110))
 
     # ----------------------------------------------------------------- progreso
     sp = progress_span(int(cfg.get("width", 260)), cfg)
@@ -465,11 +499,11 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
         frac = max(0.0, min(1.0, shown / state.duration))
         if frac > 0:
             d.rounded_rectangle([x0, y0, x0 + max((y1 - y0), (x1 - x0) * frac), y1],
-                                radius=(y1 - y0) / 2.0, fill=_col(theme, "accent", 255))
+                                radius=(y1 - y0) / 2.0, fill=_col(theme, "accent_progress", 255))
         if active:
             r = KNOB_R * S
             kx = x0 + (x1 - x0) * frac
-            d.ellipse([kx - r, cy - r, kx + r, cy + r], fill=_col(theme, "accent", 255),
+            d.ellipse([kx - r, cy - r, kx + r, cy + r], fill=_col(theme, "accent_progress", 255),
                       outline=_col(theme, "chip", 255), width=max(1, int(round(0.6 * S))))
 
     # --- presentacion: contra el color real de la barra, o con alpha real ------

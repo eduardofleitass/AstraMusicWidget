@@ -27,6 +27,7 @@ WM_APP_MOVE = win32con.WM_APP + 1
 WM_APP_ALPHA = win32con.WM_APP + 2
 WM_APP_CANCEL_SCRUB = win32con.WM_APP + 3
 WM_APP_WAVES = win32con.WM_APP + 4
+WM_APP_COLOR = win32con.WM_APP + 5
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
 WM_CAPTURECHANGED = 0x0215
@@ -508,6 +509,77 @@ def main() -> int:
         time.sleep(0.4)
     except Exception as exc:
         check("medicion de las ondas de sonido", False, repr(exc))
+
+    # --- colores personalizados --------------------------------------------
+    print("\n-- colores de la barra de progreso y de las ondas --")
+    try:
+        from PIL import ImageGrab
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        wr = rect(w_now)
+        ww2 = wr[2] - wr[0]
+        check("los colores se entienden en hex, en lista y en corto",
+              draw.parse_color("#FF0000") == (255, 0, 0)
+              and draw.parse_color("#f00") == (255, 0, 0)
+              and draw.parse_color([0, 128, 255]) == (0, 128, 255)
+              and draw.parse_color("no es un color") is None
+              and draw.parse_color(None) is None,
+              f"'#f00' -> {draw.parse_color('#f00')}, '[0,128,255]' -> "
+              f"{draw.parse_color([0, 128, 255])}, basura -> {draw.parse_color('no es un color')}")
+
+        pr = draw.progress_rect(ww2, k, cfg)
+        wrec = draw.wave_rect(ww2, k, cfg)
+        y_barra = wr[1] + int(35.5 * k)
+
+        def cuenta(box, cual):
+            im = ImageGrab.grab(bbox=box).convert("RGB")
+            out = 0
+            for q in im.get_flattened_data():
+                r, g, b = q
+                if cual == "rojo" and r > g + 60 and r > b + 60:
+                    out += 1
+                elif cual == "azul" and b > r + 60 and b > g + 60:
+                    out += 1
+            return out
+
+        caja_barra = (wr[0] + pr[0], y_barra, wr[0] + pr[2], y_barra + 1)
+        caja_ondas = (wr[0] + wrec[0], wr[1] + wrec[1], wr[0] + wrec[2], wr[1] + wrec[3])
+        estaba_w = bool(cfg.get("show_waves", False))
+        prob_antes, ond_antes = cfg.get("progress_color"), cfg.get("waves_color")
+
+        win32gui.SendMessage(w_now, WM_APP_WAVES, 1, 0)
+        win32gui.SendMessage(w_now, WM_APP_COLOR, 1, 0xFF0000)   # barra roja
+        win32gui.SendMessage(w_now, WM_APP_COLOR, 2, 0x0000FF)   # ondas azules
+        time.sleep(0.8)
+        rojo_barra = cuenta(caja_barra, "rojo")
+        azul_ondas = cuenta(caja_ondas, "azul")
+        check("la barra de progreso toma el color elegido", rojo_barra >= 4,
+              f"{rojo_barra} pixeles rojos en la barra")
+        check("las ondas toman su propio color", azul_ondas >= 4,
+              f"{azul_ondas} pixeles azules en la franja de las ondas")
+        check("cada uno con su color: la barra no se pinta de azul",
+              cuenta(caja_barra, "azul") == 0,
+              f"{cuenta(caja_barra, 'azul')} pixeles azules en la barra")
+        check("cada uno con su color: las ondas no se pintan de rojo",
+              cuenta(caja_ondas, "rojo") == 0,
+              f"{cuenta(caja_ondas, 'rojo')} pixeles rojos en las ondas")
+
+        # volver como estaba (sin guardar en config.json)
+        for wp, valor in ((1, prob_antes), (2, ond_antes)):
+            c = draw.parse_color(valor)
+            win32gui.SendMessage(w_now, WM_APP_COLOR, wp,
+                                 0 if c is None else (c[0] << 16) | (c[1] << 8) | c[2])
+        win32gui.SendMessage(w_now, WM_APP_WAVES, 1 if estaba_w else 0, 0)
+        time.sleep(0.7)
+        azul_final = cuenta(caja_ondas, "azul")
+        if ond_antes is None:
+            check("al volver al color del tema las ondas dejan el azul",
+                  azul_final <= max(1, azul_ondas // 4),
+                  f"{azul_final} pixeles azules despues de restaurar (habia {azul_ondas})")
+        else:
+            check("al volver a su color guardado las ondas dejan el azul", False,
+                  f"el color guardado era {ond_antes!r}: no aplica", skipped=True)
+    except Exception as exc:
+        check("medicion de los colores", False, repr(exc))
 
     # --- vigilancia del pintado --------------------------------------------
     print("\n-- vigilancia del pintado (30 muestras, ~9 s) --")
