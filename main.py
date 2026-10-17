@@ -15,7 +15,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from widget import config as cfgmod  # noqa: E402
+from widget import __version__, config as cfgmod  # noqa: E402
 
 if getattr(sys, "frozen", False):
     # Empaquetado: la carpeta del .exe (no la carpeta temporal de PyInstaller, que se
@@ -169,6 +169,8 @@ def main() -> int:
     ap.add_argument("--waves", action="store_true",
                     help="con --shot: dibujar las ondas de sonido (alturas de ejemplo)")
     ap.add_argument("--config", metavar="JSON", help="ruta alternativa de configuracion")
+    ap.add_argument("--version", action="version",
+                    version=f"Astra-Music-widget {__version__}")
     ap.add_argument("--flotante", action="store_true",
                     help="forzar el modo flotante (ventana propia sobre el borde, sin "
                          "barra). Es lo que se usa solo en Windows 11")

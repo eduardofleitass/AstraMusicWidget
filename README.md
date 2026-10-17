@@ -2,6 +2,8 @@
 
 Widget de musica para la barra de tareas de Windows, en Python.
 
+![El widget en la barra de tareas y el panel abierto](assets/captura.png)
+
 Muestra lo que esta sonando **dentro** de la barra de tareas de Windows 10:
 caratula, titulo, artista, barra de progreso y botones de anterior / play-pausa /
 siguiente. Se ve como una parte nativa de la barra y reserva su propio espacio.
@@ -734,6 +736,16 @@ Si te gusta mas ancho o mas angosto: clic derecho sobre el widget > *Más ancho*
 *Más angosto*. Y el fondo, en el submenu *Fondo*.
 
 
+## Version
+
+El numero vive en **un solo lugar**: `widget/__init__.py` (`__version__`). Al empaquetar,
+`tools/build_exe.py` lo propaga al ejecutable (es lo que Windows muestra en Propiedades) y
+al instalador (`instalador/version.iss`, de donde sale el nombre del `setup.exe`). Para
+sacar una version nueva: cambiarlo ahi, `python -c "from widget import __version__;
+print(__version__)"` para confirmar, y volver a empaquetar. `main.py --version` tambien lo
+muestra.
+
+
 ## Empaquetado (.exe)
 
     python tools/build_exe.py          # dist/Astra-Music-widget.exe (un solo archivo)
@@ -796,7 +808,8 @@ python tools\watch.py            # estado en vivo, muestreado cada 0,5 s
 python tools\preview.py hoja.png # hoja con todas las variantes visuales
 python tools\selftest.py         # suite de verificacion (widget en marcha)
 python toolslotante_test.py    # el modo de Windows 11 (ventana propia, sin barra)
-python toolsuild_exe.py        # empaqueta el .exe
+python toolsuild_exe.py        # empaqueta el .exe (y propaga la version)
+python tools\make_readme_shots.py   # regenera assets/captura.png (con datos de ejemplo)
 ISCC.exe instalador\Astra-Music-widget.iss   # arma el instalador (Inno Setup 6)
 python tools\clicktest.py        # prueba de clic real con el mouse (restaura el estado)
 python tools\hotkeytest.py       # atajos globales con teclas REALES y rueda con modificadores

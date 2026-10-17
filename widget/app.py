@@ -103,8 +103,6 @@ WM_APP_SHOW = win32con.WM_APP + 8    # pedirle a la instancia viva que se muestr
 WM_APP_HOTKEYS = win32con.WM_APP + 9  # wParam = 1/0: prender o apagar los atajos
 WM_APP_PANEL = win32con.WM_APP + 10  # wParam = 1/0: abrir o cerrar el panel
 WM_APP_PANEL_CFG = win32con.WM_APP + 11  # pruebas: cambiar un ajuste del panel
-# Opciones del submenu Panel (ids 60..).
-PANEL_AUTO_HIDE = [(0, "Nunca"), (3, "A los 3 s"), (6, "A los 6 s"), (10, "A los 10 s")]
 PANEL_ALPHAS = [(255, "Todo nitido"), (235, "Leve"), (200, "Translucido"),
                 (160, "Muy transparente")]
 # Alfa del FONDO dibujado (el chip detras del texto). Es independiente del anterior:
@@ -276,6 +274,7 @@ class WidgetApp:
         self._log_fh = None
         if log_path:
             try:
+                self._rotar_log(log_path)
                 self._log_fh = open(log_path, "a", encoding="utf-8", buffering=1)
             except Exception:
                 self._log_fh = None
@@ -477,6 +476,23 @@ class WidgetApp:
             pass
         if self._log_fh:
             self._log_fh.close()
+
+    @staticmethod
+    def _rotar_log(path: str, limite_mb: float = 2.0) -> None:
+        """Si el log paso el limite, se guarda como .1 y se arranca de cero.
+
+        El widget puede quedar corriendo dias: sin esto el archivo crece sin control
+        (medido: 250 KB en una tarde de pruebas con la depuracion prendida; en un mes de
+        uso normal serian varios MB de historial que nadie lee).
+        """
+        try:
+            if os.path.exists(path) and os.path.getsize(path) > limite_mb * 1024 * 1024:
+                viejo = path + ".1"
+                if os.path.exists(viejo):
+                    os.remove(viejo)
+                os.replace(path, viejo)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ widget
     def _create_widget(self) -> bool:
@@ -1524,7 +1540,7 @@ class WidgetApp:
         self._repaint_if_needed(force=True)
         self.log("fondo: alpha %d", alpha)
 
-    def _nudge(self, delta: int) -> None:
+    def _nudge_sin_uso(self, delta: int) -> None:
         x = self.host.clamp_x(self._widget_x() + delta, self.width_px, self._min_free())
         self.set_position(self.host.frac_from_x(x, self.width_px, self._min_free()))
 
@@ -1843,7 +1859,7 @@ class WidgetApp:
         self._sig = None
         self._repaint_if_needed(force=True)
 
-    def set_volume_visible(self, on: bool, save: bool = True) -> None:
+    def _set_volume_visible_sin_uso(self, on: bool, save: bool = True) -> None:
         """Muestra u oculta el altavoz (cambia el ancho de los textos y las ondas)."""
         on = bool(on)
         self.cfg["show_volume"] = on

@@ -16,8 +16,9 @@
 ; - En la desinstalacion se pregunta si conservar los ajustes antes de borrar config.json.
 
 #define MiNombre "Astra-Music-widget"
-#define MiVersion "1.0.0"
 #define MiExe "Astra-Music-widget.exe"
+; MiVersion la escribe tools/build_exe.py desde widget/__init__.py (fuente unica)
+#include "version.iss"
 
 [Setup]
 AppId={{7F3A9C21-5E4B-4D18-9A62-3C7E51D08B44}

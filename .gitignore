@@ -24,3 +24,6 @@ tools/_rig_state.json
 
 # el instalador armado (los fuentes .iss si se versionan)
 instalador/*.exe
+
+# config del usuario: se crea solo (los valores por defecto viven en widget/config.py)
+config.json
