@@ -1,6 +1,6 @@
 """Empaqueta el widget en un .exe: se puede usar sin Python ni el entorno virtual.
 
-    python tools/build_exe.py            # deja dist/WidgetMusica.exe
+    python tools/build_exe.py            # deja dist/Astra-Music-widget.exe
     python tools/build_exe.py --dir      # una carpeta en vez de un solo archivo
 
 Detalles que importan:
@@ -20,7 +20,7 @@ import sys
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ICONO = os.path.join(HERE, "assets", "icono.ico")
-NOMBRE = "WidgetMusica"
+NOMBRE = "Astra-Music-widget"
 
 
 def main() -> int:

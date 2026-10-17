@@ -18,8 +18,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(HERE)
 VBS = os.path.join(PROJECT, "run.vbs")
-EXE = os.path.join(PROJECT, "dist", "WidgetMusica.exe")
-NAME = "Widget Musica.lnk"
+EXE = os.path.join(PROJECT, "dist", "Astra-Music-widget.exe")
+NAME = "Astra-Music-widget.lnk"
 
 
 def startup_dir() -> str:
@@ -51,7 +51,7 @@ def install() -> int:
     lnk.TargetPath = objetivo
     lnk.Arguments = args
     lnk.WorkingDirectory = PROJECT if os.path.exists(VBS) else os.path.dirname(EXE)
-    lnk.Description = "Widget de musica en la barra de tareas"
+    lnk.Description = "Astra-Music-widget"
     lnk.IconLocation = icono
     lnk.Save()
     print("Arranque automatico ACTIVADO")

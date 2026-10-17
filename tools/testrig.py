@@ -33,10 +33,10 @@ PORT = 8765
 _last = {}
 
 TRACKS = [
-    ("Gorus Test Track One", "Gorus Dev", (60, 120, 220), (250, 210, 90)),
-    ("Segunda Pista de Prueba Con Un Nombre Bastante Largo", "Gorus Dev",
+    ("Astra Test Track One", "Astra Dev", (60, 120, 220), (250, 210, 90)),
+    ("Segunda Pista de Prueba Con Un Nombre Bastante Largo", "Astra Dev",
      (200, 70, 90), (255, 240, 200)),
-    ("Third Track", "Gorus Dev", (30, 170, 140), (240, 240, 240)),
+    ("Third Track", "Astra Dev", (30, 170, 140), (240, 240, 240)),
 ]
 
 
@@ -77,7 +77,7 @@ def cover_png(idx: int) -> bytes:
 
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8">
-<title>Gorus Test Track One</title></head>
+<title>Astra Test Track One</title></head>
 <body style="background:#111;color:#eee;font-family:Segoe UI,sans-serif;padding:24px">
 <h2 id="now">...</h2>
 <p>Banco de pruebas del widget. Usa el widget o estos botones; todo pasa por SMTC.</p>

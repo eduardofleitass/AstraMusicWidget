@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Punto de entrada del widget de musica para la barra de tareas.
+"""Punto de entrada de Astra-Music-widget.
 
     python main.py                 # en la barra de tareas
     python main.py --no-embed      # ventana flotante (desarrollo)
@@ -154,7 +154,7 @@ def do_diagnose(cfg, cmd=None, seek=None):
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Widget de musica para la barra de tareas")
+    ap = argparse.ArgumentParser(description="Astra-Music-widget")
     ap.add_argument("--no-embed", action="store_true",
                     help="ventana flotante en vez de incrustar en la barra")
     ap.add_argument("--diagnose", action="store_true", help="mostrar datos de SMTC y salir")
@@ -183,7 +183,7 @@ def main() -> int:
                        state_kind="idle" if args.idle else "play", no_session=args.idle,
                        scrub=args.scrub, waves=WAVES_DEMO if args.waves else None)
 
-    log_path = os.path.join(HERE, cfg.get("log_file", "widget.log"))
+    log_path = os.path.join(HERE, cfg.get("log_file", "astra-widget.log"))
     from widget.app import run
     # Modo flotante: si la barra no sirve para incrustar (Windows 11), se pasa solo.
     # Con --flotante se fuerza en cualquier Windows, que es como se prueba en 10.

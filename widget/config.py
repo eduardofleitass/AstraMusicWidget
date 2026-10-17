@@ -1,4 +1,4 @@
-"""Configuracion del widget de musica para la barra de tareas."""
+"""Configuracion de Astra-Music-widget: valores por defecto y lectura/escritura."""
 from __future__ import annotations
 
 import copy
@@ -99,7 +99,7 @@ DEFAULTS = {
         "icon_dim": [104, 110, 128],
     },
     "right_click_menu": True,
-    "log_file": "widget.log",
+    "log_file": "astra-widget.log",
 }
 
 def raiz() -> str:

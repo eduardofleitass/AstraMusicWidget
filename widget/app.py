@@ -38,9 +38,9 @@ ALPHA_LEVELS = ((232, "Solido"), (170, "Translucido"), (100, "Muy transparente")
                 (0, "Sin fondo (solo caratula, textos y botones)"))
 NUDGE_PX = 20
 
-CTL_CLASS = "GorusTaskbarMusicCtl"
-WIDGET_CLASS = "GorusTaskbarMusicWnd"
-PANEL_CLASS = "GorusTaskbarMusicPanel"
+CTL_CLASS = "AstraMusicCtl"
+WIDGET_CLASS = "AstraMusicWnd"
+PANEL_CLASS = "AstraMusicPanel"
 
 # Tamanos del panel en el submenu (la etiqueta solo la usa el menu).
 PANEL_TAMANOS = (
@@ -48,7 +48,7 @@ PANEL_TAMANOS = (
     ("chico", "Chico (para jugar)"),
     ("tira", "Tira fina (una sola fila)"),
 )
-MUTEX_NAME = "Local\\GorusTaskbarMusicWidget"
+MUTEX_NAME = "Local\\AstraMusicWidget"
 TIMER_TICK = 1
 TIMER_LAYOUT = 2
 HOTKEY_TOGGLE = 1
@@ -412,7 +412,7 @@ class WidgetApp:
         self._register_classes()
         hinst = win32api.GetModuleHandle(None)
         self.hwnd_ctl = win32gui.CreateWindowEx(
-            0, CTL_CLASS, "gorus-ctl", win32con.WS_POPUP,
+            0, CTL_CLASS, "astra-ctl", win32con.WS_POPUP,
             0, 0, 0, 0, 0, None, hinst, None)
         if not self.hwnd_ctl:
             self.log("no se pudo crear la ventana controladora")
@@ -500,7 +500,7 @@ class WidgetApp:
             self.hwnd_widget = win32gui.CreateWindowEx(
                 win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW
                 | (WS_EX_LAYERED if self.layered else 0),
-                WIDGET_CLASS, "gorus-widget", win32con.WS_POPUP,
+                WIDGET_CLASS, "astra-music-widget", win32con.WS_POPUP,
                 x_rel, self.host.strip_y(), self.width_px, self.height_px,
                 0, None, hinst, None)
             if not self.hwnd_widget:
@@ -516,7 +516,7 @@ class WidgetApp:
             return True
         self.hwnd_widget = win32gui.CreateWindowEx(
             WS_EX_LAYERED if self.layered else 0,
-            WIDGET_CLASS, "gorus-widget",
+            WIDGET_CLASS, "astra-music-widget",
             win32con.WS_CHILD | win32con.WS_CLIPSIBLINGS,
             x_rel, 0, self.width_px, self.height_px,
             self.host.tray, None, hinst, None)
@@ -537,7 +537,7 @@ class WidgetApp:
         self.width_px = int(self.cfg.get("width", 260))
         self.hwnd_widget = win32gui.CreateWindowEx(
             win32con.WS_EX_TOPMOST | (WS_EX_LAYERED if self.layered else 0),
-            WIDGET_CLASS, "Gorus - widget de musica", win32con.WS_POPUP,
+            WIDGET_CLASS, "Astra-Music-widget", win32con.WS_POPUP,
             1200, 960, self.width_px, self.height_px, 0, None, hinst, None)
         self._needs_show = True
         self.dib = None
@@ -1292,7 +1292,7 @@ class WidgetApp:
                 if self._vol_drag is not None:
                     self._vol_drag_move(x)
                     return 0
-                if os.environ.get("GORUS_DEBUG_MOUSE"):
+                if os.environ.get("ASTRA_DEBUG_MOUSE"):
                     self.log("WM_MOUSEMOVE x=%s y=%s hit=%s hover_prev=%s",
                              x, y, self._hit_at(x, y), self.hover)
                 hit = self._hit_at(x, y)
@@ -1339,7 +1339,7 @@ class WidgetApp:
                 x = lp & 0xFFFF
                 y = (lp >> 16) & 0xFFFF
                 hit = self._hit_at(x, y)
-                if os.environ.get("GORUS_DEBUG_MOUSE"):
+                if os.environ.get("ASTRA_DEBUG_MOUSE"):
                     r = draw.progress_rect(self.width_px, self.k, self.cfg)
                     dentro = bool(r and r[0] <= x <= r[2] and r[1] <= y <= r[3])
                     self.log("WM_LBUTTONDOWN x=%s y=%s hit=%s barra=%s dentro=%s "
@@ -1364,7 +1364,7 @@ class WidgetApp:
                 # de verdad: con la captura en un estado inconsistente, el sistema
                 # la resetea en el mismo mousedown y el salto nunca se mandaba). Si
                 # el usuario esta arrastrando la barra, el salto se aplica igual.
-                if os.environ.get("GORUS_DEBUG_MOUSE"):
+                if os.environ.get("ASTRA_DEBUG_MOUSE"):
                     self.log("WM_CAPTURECHANGED arrastre=%s arrastre_barra=%s",
                              self._drag is not None, self._scrub is not None)
                 if self._scrub is not None:
@@ -1379,7 +1379,7 @@ class WidgetApp:
                     self._apply_layout(force=True)
                 return 0
             if msg == win32con.WM_LBUTTONUP:
-                if os.environ.get("GORUS_DEBUG_MOUSE"):
+                if os.environ.get("ASTRA_DEBUG_MOUSE"):
                     self.log("WM_LBUTTONUP x=%s y=%s arrastre=%s arrastre_barra=%s",
                              lp & 0xFFFF, (lp >> 16) & 0xFFFF,
                              self._drag is not None, self._scrub is not None)
@@ -1915,7 +1915,7 @@ class WidgetApp:
         # widget para ver y manejar la musica, no una aplicacion aparte.
         self.hwnd_panel = win32gui.CreateWindowEx(
             self._panel_ex_style(),
-            PANEL_CLASS, "gorus-panel",
+            PANEL_CLASS, "astra-panel",
             win32con.WS_POPUP | win32con.WS_CLIPSIBLINGS,
             0, 0, w, h, 0, None, hinst, None)
         if not self.hwnd_panel:
@@ -2171,7 +2171,7 @@ class WidgetApp:
                 x, y = self._xy(lp)
                 self._panel_int = time.monotonic()      # usarlo reinicia el auto-ocultar
                 if self.panel_drag is not None:
-                    if os.environ.get("GORUS_DEBUG_MOUSE"):
+                    if os.environ.get("ASTRA_DEBUG_MOUSE"):
                         self.log("panel: MOUSEMOVE x=%s y=%s arrastre=%s", x, y,
                                  self.panel_drag.get("hit"))
                     self._panel_drag_move(x, y)
@@ -2196,7 +2196,7 @@ class WidgetApp:
                 x, y = self._xy(lp)
                 self._panel_int = time.monotonic()
                 hit = panel_mod.hit(x, y, self._panel_k(), self.cfg)
-                if os.environ.get("GORUS_DEBUG_MOUSE"):
+                if os.environ.get("ASTRA_DEBUG_MOUSE"):
                     self.log("panel: LBUTTONDOWN x=%s y=%s hit=%s captura=%s",
                              x, y, hit, hex(win32gui.GetCapture()))
                 if hit in (3, 4):
@@ -2227,7 +2227,7 @@ class WidgetApp:
                 return 0
             if msg == win32con.WM_LBUTTONUP:
                 x, y = self._xy(lp)
-                if os.environ.get("GORUS_DEBUG_MOUSE"):
+                if os.environ.get("ASTRA_DEBUG_MOUSE"):
                     self.log("panel: LBUTTONUP x=%s y=%s arrastre=%s", x, y,
                              self.panel_drag is not None)
                 if self.panel_drag is not None:
@@ -2312,7 +2312,7 @@ class WidgetApp:
             px, py = win32gui.GetCursorPos()
             sx, sy = d.get("pantalla") or (px, py)
             wr = win32gui.GetWindowRect(self.hwnd_panel)
-            if os.environ.get("GORUS_DEBUG_MOUSE"):
+            if os.environ.get("ASTRA_DEBUG_MOUSE"):
                 self.log("panel: mover delta=(%s,%s) desde %s", px - sx, py - sy, wr)
             win32gui.SetWindowPos(self.hwnd_panel, 0, wr[0] + (px - sx), wr[1] + (py - sy),
                                   0, 0, win32con.SWP_NOSIZE | win32con.SWP_NOZORDER

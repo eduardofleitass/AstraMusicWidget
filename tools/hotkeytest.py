@@ -107,7 +107,7 @@ def posicion_estable(poller, timeout=5.0):
 
 def widget():
     for b in list_bars():
-        w = win32gui.FindWindowEx(b["tray"], 0, "GorusTaskbarMusicWnd", None)
+        w = win32gui.FindWindowEx(b["tray"], 0, "AstraMusicWnd", None)
         if w:
             return w
     return 0
@@ -291,7 +291,7 @@ def main() -> int:
         time.sleep(0.8)
 
         def panel_abierto() -> bool:
-            p = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+            p = win32gui.FindWindow("AstraMusicPanel", None)
             return bool(p and win32gui.IsWindowVisible(p))
 
         acorde(["CTRL", "ALT", "O"], espera=1.3)

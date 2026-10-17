@@ -2,7 +2,7 @@
 rem Crea el entorno virtual e instala las dependencias.
 setlocal
 cd /d "%~dp0"
-echo === Widget de musica para la barra de tareas: instalacion ===
+echo === Astra-Music-widget: instalacion ===
 echo.
 
 where uv >nul 2>nul

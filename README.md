@@ -1,4 +1,6 @@
-# Widget de musica para la barra de tareas
+# Astra-Music-widget
+
+Widget de musica para la barra de tareas de Windows, en Python.
 
 Muestra lo que esta sonando **dentro** de la barra de tareas de Windows 10:
 caratula, titulo, artista, barra de progreso y botones de anterior / play-pausa /
@@ -726,7 +728,7 @@ donde 12 son atajos de cosas que ya se hacen con el mouse es un menu que no se l
 | `show_art` / `show_controls` / `show_progress` | true | Que elementos se dibujan |
 | `corner_radius` / `chip_alpha` | 7 / 232 | Forma y transparencia del chip |
 | `theme` | ver archivo | Colores del chip, borde, textos, acento, pista e iconos |
-| `right_click_menu` / `log_file` | true / `widget.log` | Menu contextual y archivo de log |
+| `right_click_menu` / `log_file` | true / `astra-widget.log` | Menu contextual y archivo de log |
 
 Si te gusta mas ancho o mas angosto: clic derecho sobre el widget > *Más ancho* /
 *Más angosto*. Y el fondo, en el submenu *Fondo*.
@@ -734,7 +736,7 @@ Si te gusta mas ancho o mas angosto: clic derecho sobre el widget > *Más ancho*
 
 ## Empaquetado (.exe)
 
-    python tools/build_exe.py          # dist/WidgetMusica.exe (un solo archivo)
+    python tools/build_exe.py          # dist/Astra-Music-widget.exe (un solo archivo)
     python tools/build_exe.py --dir    # una carpeta en vez de un archivo
 
 - Un solo archivo, sin consola y con el icono de las ondas (`tools/make_icon.py` lo
@@ -777,7 +779,7 @@ python tools\testrig.py          # banco de pruebas: reproductor simulado con 3 
 ```
 
 Para depurar la entrada de mouse, arrancar con `tools\debug_mouse.vbs`: cada
-`WM_MOUSEMOVE`, `WM_LBUTTONDOWN` y `WM_LBUTTONUP` queda anotado en `widget.log`
+`WM_MOUSEMOVE`, `WM_LBUTTONDOWN` y `WM_LBUTTONUP` queda anotado en `astra-widget.log`
 con sus coordenadas, que devolvio el analisis de zonas (`hit`) y si el punto cae
 dentro de la franja de la barra.
 
@@ -793,9 +795,9 @@ afuera que un clic realmente cambio de tema o movio la reproduccion.
 
 - Windows 10 1809 o posterior (SMTC necesita esa version). En Windows 11 anda en modo
   flotante (ver esa seccion).
-- **O el .exe**: `python tools/build_exe.py` deja `dist/WidgetMusica.exe` (27 MB, sin
+- **O el .exe**: `python tools/build_exe.py` deja `dist/Astra-Music-widget.exe` (27 MB, sin
   consola, con su icono). No necesita Python ni el entorno virtual: es un archivo para
-  pasar a otra maquina. Guarda su `config.json` y su `widget.log` **al lado del
+  pasar a otra maquina. Guarda su `config.json` y su `astra-widget.log` **al lado del
   ejecutable**.
 - O para correr desde el codigo: Python 3.11. Las dependencias las instala `setup.bat`;
   son tres: `winsdk` (SMTC), `pywin32` (Win32) y `pillow` (dibujo).

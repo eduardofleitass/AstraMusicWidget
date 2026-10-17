@@ -28,7 +28,7 @@
   "progress_color": "#B08CFF",
   "waves_color": "#B08CFF",
   "panel_mode": "gaming",
-  "panel_size": "chico",
+  "panel_size": "normal",
   "panel_no_robar": true,
   "panel_topmost": true,
   "panel_clics_al_juego": false,
@@ -91,5 +91,5 @@
     ]
   },
   "right_click_menu": true,
-  "log_file": "widget.log"
+  "log_file": "astra-widget.log"
 }

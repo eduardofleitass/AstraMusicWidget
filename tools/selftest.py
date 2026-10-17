@@ -54,7 +54,7 @@ def barra_del_widget():
     """
     barras = list_bars()
     for b in barras:
-        w = win32gui.FindWindowEx(b["tray"], 0, "GorusTaskbarMusicWnd", None)
+        w = win32gui.FindWindowEx(b["tray"], 0, "AstraMusicWnd", None)
         if w:
             return b, w
     return (barras[0] if barras else None), 0
@@ -127,7 +127,7 @@ def fila_dif(a: list, b: list, umbral: int = 25) -> tuple:
 
 def log_lineas() -> list:
     try:
-        with open(os.path.join(os.path.dirname(HERE), "widget.log"), encoding="utf-8") as fh:
+        with open(os.path.join(os.path.dirname(HERE), "astra-widget.log"), encoding="utf-8") as fh:
             return fh.readlines()
     except Exception:
         return []
@@ -241,11 +241,11 @@ def main() -> int:
     print("\n-- prueba de recuperacion: destruir la ventana del widget --")
     win32gui.PostMessage(p["widget"], win32con.WM_CLOSE, 0, 0)
     time.sleep(0.4)
-    gone = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+    gone = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
     reborn = 0
     for _ in range(30):
         time.sleep(0.2)
-        reborn = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        reborn = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
         if reborn:
             break
     check("el widget se reconstruye solo", bool(reborn),
@@ -274,7 +274,7 @@ def main() -> int:
     for _ in range(25):
         time.sleep(0.2)
         rr2 = win32gui.GetWindowRect(p["rebar"])
-        wg = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        wg = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
         if wg and rr2[2] <= win32gui.GetWindowRect(wg)[0] + 2:
             ok = True
             break
@@ -284,7 +284,7 @@ def main() -> int:
     # --- transparencia real -------------------------------------------------
     print("\n-- fondos: transparencia real medida contra la barra --")
     try:
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
         tt = rect(p["tray"])[1]
         wr = posicion(w_now, 0xFFFF, 232)          # extremo derecho, chip solido
         an = rect(p["anchor"])
@@ -332,7 +332,7 @@ def main() -> int:
             h = user32.WindowFromPoint(wt.POINT(int(x), int(y)))
             return win32gui.GetClassName(h) if h else "ninguna"
 
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
         filas = []
         for f in range(0, 11, 2):
             frac = f / 10.0
@@ -350,7 +350,7 @@ def main() -> int:
               all(f[2][2] <= f[1][0] + 1 for f in filas),
               f"peor: {max(f[2][2] - f[1][0] for f in filas)} px de invasión")
         check("nadie mas lo tapa en su zona",
-              all(f[4] == "GorusTaskbarMusicWnd" for f in filas),
+              all(f[4] == "AstraMusicWnd" for f in filas),
               str({f[4] for f in filas}))
         check("nunca invade el bloque de la bandeja",
               all(f[1][2] <= f[3][0] for f in filas),
@@ -368,7 +368,7 @@ def main() -> int:
     # --- barra de progreso: zona clicable y previsualizacion ---------------
     print("\n-- barra de progreso: zona clicable y previsualizacion --")
     try:
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
         wr = rect(w_now)
         ww2, wh2 = wr[2] - wr[0], wr[3] - wr[1]
         pr = draw.progress_rect(ww2, k, cfg)
@@ -455,7 +455,7 @@ def main() -> int:
         u32 = ctypes.windll.user32
         u32.WindowFromPoint.restype = wt.HWND
         u32.WindowFromPoint.argtypes = [wt.POINT]
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
         # Sin fondo es el caso que fallaba: el alpha 0 por pixel hace que Windows
         # le entregue el mouse a la barra de tareas en las zonas vacias.
         posicion(w_now, 0xFFFF, 0)
@@ -479,7 +479,7 @@ def main() -> int:
     try:
         from PIL import ImageGrab
         from widget.media import MediaPoller
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
         wr = rect(w_now)
         ww2 = wr[2] - wr[0]
         wb = draw.wave_band(ww2, cfg)
@@ -580,7 +580,7 @@ def main() -> int:
     print("\n-- colores de la barra de progreso y de las ondas --")
     try:
         from PIL import ImageGrab
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
         wr = rect(w_now)
         ww2 = wr[2] - wr[0]
         check("los colores se entienden en hex, en lista y en corto",
@@ -720,7 +720,7 @@ def main() -> int:
             # comprobar (Windows le entrega la pantalla al juego). Se detecta por la
             # ventana que aparece encima y se salta, en vez de contarlo como falla.
             juego = False
-            if w2 and tapado != "GorusTaskbarMusicWnd":
+            if w2 and tapado != "AstraMusicWnd":
                 try:
                     tapadora_h = win32gui.WindowFromPoint(
                         wt.POINT(int(centro[0]), int(centro[1])))
@@ -730,13 +730,13 @@ def main() -> int:
                     # (un juego en primer plano) que tape toda la barra: en los dos
                     # casos el widget no puede verse y no hay nada que comprobar.
                     ajena = clase not in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd",
-                                          "WorkerW", "Progman", "GorusTaskbarMusicWnd")
+                                          "WorkerW", "Progman", "AstraMusicWnd")
                     br = destino["rect"]
                     juego = ajena and tr[0] <= br[0] and tr[1] <= br[1] \
                         and tr[2] >= br[2] and tr[3] >= br[3]
                 except Exception:
                     juego = False
-            check("nadie lo tapa en la barra nueva", bool(w2) and tapado == "GorusTaskbarMusicWnd",
+            check("nadie lo tapa en la barra nueva", bool(w2) and tapado == "AstraMusicWnd",
                   f"en el centro devuelve {tapado}"
                   + (" (hay una ventana en pantalla completa tapando la barra)" if juego
                      else ""),
@@ -765,7 +765,7 @@ def main() -> int:
     # --- vigilancia del pintado --------------------------------------------
     print("\n-- vigilancia del pintado (30 muestras, ~9 s) --")
     try:
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
         posicion(w_now, 0xFFFF, 232)
         tt = rect(p["tray"])[1]
         malos = 0
@@ -784,7 +784,7 @@ def main() -> int:
         check("vigilancia del pintado", False, repr(exc))
 
     try:
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
         posicion(w_now, 0xFFFF, int(cfg.get("chip_alpha", 232)))  # dejar como estaba
     except Exception:
         pass
@@ -792,7 +792,7 @@ def main() -> int:
     # --- volumen: celda del altavoz, fila de volumen y sesion de audio ---------
     print("\n-- volumen de la app --")
     # (a) geometria: el altavoz va despues de los botones y no pisa nada
-    w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+    w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
     ww3 = (rect(w_now)[2] - rect(w_now)[0]) if w_now else int(cfg.get("width", 300))
     ctrls = draw.control_rects(ww3, k, cfg)
     wrec = draw.wave_rect(ww3, k, cfg)
@@ -993,8 +993,8 @@ def main() -> int:
     # --- el fundido de mostrar/ocultar, medido en vivo -------------------------
     try:
         from PIL import ImageGrab
-        w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
-        ctl = win32gui.FindWindow("GorusTaskbarMusicCtl", None)
+        w_now = win32gui.FindWindowEx(p["tray"], 0, "AstraMusicWnd", None)
+        ctl = win32gui.FindWindow("AstraMusicCtl", None)
         wr = rect(w_now)
 
         def claros(caja=wr):
@@ -1254,7 +1254,7 @@ def main() -> int:
         # (e) en vivo: abrir, ver y cerrar
         win32gui.PostMessage(w_now, WM_APP_PANEL, 1, 1)
         time.sleep(0.9)
-        w_panel = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+        w_panel = win32gui.FindWindow("AstraMusicPanel", None)
         if not w_panel:
             check("el panel se abre y se ve", False, "no encontre la ventana del panel")
         else:
@@ -1306,11 +1306,11 @@ def main() -> int:
             time.sleep(1.0)
             win32gui.PostMessage(w_now, WM_APP_PANEL, 1, 1)
             time.sleep(1.0)
-            w_antes = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+            w_antes = win32gui.FindWindow("AstraMusicPanel", None)
             pr_antes = rect(w_antes) if w_antes else (0, 0, 0, 0)
             win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 6, 1)      # modo gaming
             time.sleep(1.2)
-            w_panel = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+            w_panel = win32gui.FindWindow("AstraMusicPanel", None)
             pr_g = rect(w_panel)
             ex_g = win32gui.GetWindowLong(w_panel, win32con.GWL_EXSTYLE)
             L = panel_mod.layout(cfgmod.load())
@@ -1371,7 +1371,7 @@ def main() -> int:
             time.sleep(0.7)
             check("el panel se cierra",
                   not win32gui.IsWindowVisible(
-                      win32gui.FindWindow("GorusTaskbarMusicPanel", None) or w_panel))
+                      win32gui.FindWindow("AstraMusicPanel", None) or w_panel))
     except Exception as exc:
         check("el panel", False, repr(exc))
 

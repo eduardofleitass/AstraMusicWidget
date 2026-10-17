@@ -94,7 +94,7 @@ def find_widget():
     que no se puede asumir la principal.
     """
     for b in list_bars():
-        w = win32gui.FindWindowEx(b["tray"], 0, "GorusTaskbarMusicWnd", None)
+        w = win32gui.FindWindowEx(b["tray"], 0, "AstraMusicWnd", None)
         if w:
             # WIN lo usan las comprobaciones "el cursor quedo sobre el widget": al
             # mudarse de barra el hwnd cambia, asi que hay que refrescarlo aca.
@@ -751,7 +751,7 @@ def main() -> int:
     else:
         click(*tapa)
         time.sleep(1.1)
-        hp = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+        hp = win32gui.FindWindow("AstraMusicPanel", None)
         abierto = bool(hp and win32gui.IsWindowVisible(hp))
         check("un clic seco en la caratula abre el panel", abierto,
               f"panel {hex(hp or 0)}, rect {win32gui.GetWindowRect(hp) if hp else '-'}")
@@ -1064,7 +1064,7 @@ def main() -> int:
                 cfg_tira = dict(cfgmod.load(), panel_size="tira")
                 w_t, h_t = panel_mod.size(k_t, cfg_tira)
                 hp_t = win32gui.FindWindow(PANEL_CLASS if "PANEL_CLASS" in dir() else
-                                           "GorusTaskbarMusicPanel", None)
+                                           "AstraMusicPanel", None)
                 rr = win32gui.GetWindowRect(hp_t) if hp_t else (0, 0, 0, 0)
                 check("el tamano tira fina achica el panel a una fila",
                       hp_t and win32gui.IsWindowVisible(hp_t)
@@ -1085,10 +1085,10 @@ def main() -> int:
                               skipped=True)
                 win32gui.PostMessage(w, win32con.WM_APP + 11, 5, tam_panel)
                 time.sleep(0.8)
-                hp = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+                hp = win32gui.FindWindow("AstraMusicPanel", None)
                 win32gui.PostMessage(w, win32con.WM_APP + 10, 1, 1)     # reabrir
                 time.sleep(1.0)
-                hp = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+                hp = win32gui.FindWindow("AstraMusicPanel", None)
                 pr = win32gui.GetWindowRect(hp)
             except Exception as exc:
                 check("el tamano tira fina achica el panel a una fila", False, repr(exc))

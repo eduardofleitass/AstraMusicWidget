@@ -41,7 +41,7 @@ def check(nombre, ok, detalle="", skipped=False):
 
 
 def widget_flotante() -> int:
-    return win32gui.FindWindow("GorusTaskbarMusicWnd", None)
+    return win32gui.FindWindow("AstraMusicWnd", None)
 
 
 def ventanas_widget() -> list:
@@ -49,7 +49,7 @@ def ventanas_widget() -> list:
     fuera = []
 
     def cb(h, _):
-        if win32gui.GetClassName(h) in ("GorusTaskbarMusicWnd", "GorusTaskbarMusicCtl"):
+        if win32gui.GetClassName(h) in ("AstraMusicWnd", "AstraMusicCtl"):
             fuera.append(h)
         return True
 
@@ -146,8 +146,8 @@ def main() -> int:
     check("el widget flotante arranca y se ve", True, f"hwnd {hex(hp)}")
     check("es la instancia nueva (una sola ventana de widget)",
           len([h for h in ventanas_widget()
-               if win32gui.GetClassName(h) == "GorusTaskbarMusicWnd"]) == 1,
-          f"{len([h for h in ventanas_widget() if win32gui.GetClassName(h) == 'GorusTaskbarMusicWnd'])}"
+               if win32gui.GetClassName(h) == "AstraMusicWnd"]) == 1,
+          f"{len([h for h in ventanas_widget() if win32gui.GetClassName(h) == 'AstraMusicWnd'])}"
           f" ventanas de widget")
 
     cfg = cfgmod.load()
@@ -214,19 +214,19 @@ def main() -> int:
                 time.sleep(0.7)
 
     # atajo global y panel: siguen andando sin barra
-    ctl = win32gui.FindWindow("GorusTaskbarMusicCtl", None)
+    ctl = win32gui.FindWindow("AstraMusicCtl", None)
     if not ctl:
         check("el panel abre con Ctrl+Alt+O en flotante", False, "no hay controladora",
               skipped=True)
     else:
-        antes_p = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+        antes_p = win32gui.FindWindow("AstraMusicPanel", None)
         for t in ("CONTROL", "MENU", "O"):
             u32.keybd_event({"CONTROL": 0x11, "MENU": 0x12, "O": 0x4F}[t], 0, 0, 0)
         time.sleep(0.1)
         for t in ("O", "MENU", "CONTROL"):
             u32.keybd_event({"CONTROL": 0x11, "MENU": 0x12, "O": 0x4F}[t], 0, 2, 0)
         time.sleep(1.4)
-        panel = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+        panel = win32gui.FindWindow("AstraMusicPanel", None)
         abierto = bool(panel and win32gui.IsWindowVisible(panel))
         check("el panel abre con Ctrl+Alt+O en flotante", abierto,
               f"panel {hex(panel or 0)} visible={abierto}")
@@ -235,7 +235,7 @@ def main() -> int:
             # banco de siempre): a la controladora no le llegan
             win32gui.PostMessage(hp, win32con.WM_APP + 11, 5, 2)   # tamano tira
             time.sleep(1.0)
-            pp = win32gui.FindWindow("GorusTaskbarMusicPanel", None)
+            pp = win32gui.FindWindow("AstraMusicPanel", None)
             rp = win32gui.GetWindowRect(pp) if pp else (0, 0, 0, 0)
             check("el panel tambien anda en flotante (tira fina)",
                   pp and win32gui.IsWindowVisible(pp) and abs((rp[2] - rp[0]) - 320) <= 3,
@@ -261,7 +261,7 @@ def main() -> int:
     vuelto = 0
     for _ in range(20):
         for b in list_bars():
-            h = win32gui.FindWindowEx(b["tray"], 0, "GorusTaskbarMusicWnd", None)
+            h = win32gui.FindWindowEx(b["tray"], 0, "AstraMusicWnd", None)
             if h and win32gui.IsWindowVisible(h):
                 vuelto = h
         if vuelto:

@@ -59,7 +59,7 @@ def estado() -> list[tuple]:
         host = host_de(b)
         cont = win32gui.GetWindowRect(host.container) if host.container else (0, 0, 0, 0)
         ancla = host._anchor_rect()
-        hay = bool(win32gui.FindWindowEx(b["tray"], 0, "GorusTaskbarMusicWnd", None))
+        hay = bool(win32gui.FindWindowEx(b["tray"], 0, "AstraMusicWnd", None))
         filas.append((b["nombre"], cont[2] - cont[0], ancla[0] - cont[0], hay))
     return filas
 
@@ -69,13 +69,13 @@ def main() -> int:
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 
-    ctl = win32gui.FindWindow("GorusTaskbarMusicCtl", None)
+    ctl = win32gui.FindWindow("AstraMusicCtl", None)
     if ctl and not args.force:
         print(f"pidiendo cierre ordenado a {hex(ctl)}")
         win32gui.PostMessage(ctl, win32con.WM_CLOSE, 0, 0)
         for _ in range(20):
             time.sleep(0.25)
-            if not win32gui.FindWindow("GorusTaskbarMusicCtl", None):
+            if not win32gui.FindWindow("AstraMusicCtl", None):
                 break
     elif args.force:
         k = ctypes.windll.kernel32
@@ -97,7 +97,7 @@ def main() -> int:
     def cerrar_y_reparar(espera: float) -> bool:
         t0 = time.time()
         while time.time() - t0 < espera:
-            if not win32gui.FindWindow("GorusTaskbarMusicCtl", None) and not any(
+            if not win32gui.FindWindow("AstraMusicCtl", None) and not any(
                     f[3] for f in estado()):
                 break
             time.sleep(0.25)
