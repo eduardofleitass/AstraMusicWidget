@@ -209,16 +209,48 @@ def _draw_icon(d: ImageDraw.ImageDraw, center_x: float, center_y: float, kind: s
         d.polygon([(center_x + box * 0.02, y0), (x0 + bar, center_y),
                    (center_x + box * 0.02, y1)], fill=color)
         d.rectangle([x0, y0, x0 + bar, y1], fill=color)
+    elif kind in ("vol", "vol_mute"):
+        # Altavoz: caja + cono. Con silencio, una cruz en vez de las ondas.
+        cuerpo = x0 + box * 0.06
+        d.rounded_rectangle([cuerpo, center_y - box * 0.16, cuerpo + box * 0.22,
+                             center_y + box * 0.16], radius=bar * 0.6, fill=color)
+        d.polygon([(cuerpo + box * 0.20, center_y - box * 0.16),
+                   (cuerpo + box * 0.52, center_y - box * 0.42),
+                   (cuerpo + box * 0.52, center_y + box * 0.42),
+                   (cuerpo + box * 0.20, center_y + box * 0.16)], fill=color)
+        onda = max(1.0, 1.3 * S)
+        if kind == "vol":
+            d.arc([center_x + box * 0.05, center_y - box * 0.26,
+                   center_x + box * 0.55, center_y + box * 0.26],
+                  start=-58, end=58, fill=color, width=int(max(1, round(onda))))
+            d.arc([center_x + box * 0.02, center_y - box * 0.46,
+                   center_x + box * 0.85, center_y + box * 0.46],
+                  start=-52, end=52, fill=color, width=int(max(1, round(onda))))
+        else:
+            cruce = box * 0.22
+            cxx, cyy = center_x + box * 0.18, center_y
+            d.line([(cxx - cruce, cyy - cruce), (cxx + cruce, cyy + cruce)],
+                   fill=color, width=int(max(1, round(onda))))
+            d.line([(cxx - cruce, cyy + cruce), (cxx + cruce, cyy - cruce)],
+                   fill=color, width=int(max(1, round(onda))))
+
+
+def celdas(cfg: dict) -> int:
+    """Cuantas celdas de botones tiene el widget: las 3 del transporte y, si esta
+    activado, la del altavoz (que va al final, asi los indices del resto no cambian).
+    """
+    return 4 if cfg.get("show_volume", True) else 3
 
 
 def control_rects(width: int, k: float, cfg: dict) -> list[tuple[int, int, int, int]]:
-    """Zonas clicables (en px reales) de anterior / play-pausa / siguiente."""
+    """Zonas clicables (en px reales) de anterior / play-pausa / siguiente [/ altavoz]."""
     if not cfg.get("show_controls", True):
         return []
     cell = ICON_CELL * k
-    start = (width - RIGHT_PAD * k) - 3 * cell
+    n = celdas(cfg)
+    start = (width - RIGHT_PAD * k) - n * cell
     rects = []
-    for i in range(3):
+    for i in range(n):
         x = int(round(start + i * cell))
         rects.append((x, 0, int(round(x + cell)), int(round(REF_H * k))))
     return rects
@@ -235,7 +267,7 @@ def progress_span(width: int, cfg: dict) -> tuple[float, float] | None:
     x0 = float(TEXT_X)
     x1 = float(width - RIGHT_PAD)
     if cfg.get("show_controls", True):
-        x1 = min(x1, width - RIGHT_PAD - 3 * ICON_CELL)
+        x1 = min(x1, width - RIGHT_PAD - celdas(cfg) * ICON_CELL)
     if x1 <= x0:
         return None
     return (x0, x1)
@@ -279,7 +311,7 @@ def wave_band(width: int, cfg: dict) -> tuple[float, float] | None:
     ancho = n * WAVE_BAR_W + (n - 1) * WAVE_BAR_GAP
     x1 = float(width - RIGHT_PAD)
     if cfg.get("show_controls", True):
-        x1 -= 3 * ICON_CELL
+        x1 -= celdas(cfg) * ICON_CELL
     x1 -= WAVE_GAP
     x0 = x1 - ancho
     if x0 <= TEXT_X + WAVE_MIN_TEXT:
@@ -347,7 +379,8 @@ def render_waves(state, cfg: dict, levels, k: float = 1.0, base: tuple = (32, 34
 def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
            marquee: float = 0.0, k: float = 1.0, base: tuple = (32, 34, 42),
            height: int | None = None, opaque: bool = True,
-           scrub: float | None = None, waves: list[float] | None = None) -> Image.Image:
+           scrub: float | None = None, waves: list[float] | None = None,
+           volume: tuple | None = None) -> Image.Image:
     """Devuelve el widget dibujado como imagen RGBA del tamano exacto a mostrar.
 
     opaque=True  -> la transparencia se resuelve mezclando contra `base` (el color
@@ -363,6 +396,10 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
     waves        -> alturas (0..1) de las ondas de sonido, una por barra. None = no
                     se dibujan. Es una animacion: quien dibuja no sabe de audio, solo
                     recibe las alturas del momento.
+    volume       -> (nivel 0..1, silenciado, mostrando, disponible). Con `mostrando`
+                    la fila del progreso pasa a ser la barra de volumen y el renglon
+                    del artista dice el porcentaje; con `disponible` en False el
+                    altavoz se dibuja atenuado (esa app no tiene sesion de audio).
     """
     SS = max(1, int(cfg.get("supersample", 3)))
     theme = theme_for_base(cfg, base)
@@ -384,6 +421,10 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
 
     idle = not state.has_session
     dim = 0.55 if idle else 1.0
+    vol_nivel = float(volume[0]) if volume else 0.0
+    vol_mudo = bool(volume[1]) if volume else False
+    vol_mostrar = bool(volume[2]) if volume else False
+    vol_disponible = bool(volume[3]) if volume else False
 
     # ---------------------------------------------------------------- caratula
     text_x = TEXT_X * S
@@ -443,6 +484,9 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
         # mientras se arrastra la barra, el renglon del artista dice a donde va
         artist = f"{fmt_time(scrub)} / {fmt_time(state.duration)}"
         acol = _col(theme, "accent_progress", 255)
+    elif vol_mostrar:
+        artist = "Silencio" if vol_mudo else f"Volumen {int(round(vol_nivel * 100))}%"
+        acol = _col(theme, "accent_progress", 255)
     f_artist_max = area_w
     if d.textlength(artist, font=f_artist) > f_artist_max:
         while artist and d.textlength(artist + "…", font=f_artist) > f_artist_max:
@@ -456,8 +500,10 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
         # ImageDraw sobre RGBA reemplaza el pixel (no mezcla), asi que dibujar el
         # circulo translucido directo sobre el chip lo dejaria con alpha 26, o sea
         # un agujero casi transparente en vez de un resaltado.
-        if hover >= 0 and not idle and hover < len(controls):
-            x0, y0, x1, y1 = controls[hover]
+        # 5 = el altavoz: ocupa la cuarta celda, asi que el resaltado va ahi
+        celda_hover = 3 if hover == 5 else hover
+        if 0 <= celda_hover < len(controls) and not idle:
+            x0, y0, x1, y1 = controls[celda_hover]
             hl = Image.new("RGBA", canvas, (0, 0, 0, 0))
             hd = ImageDraw.Draw(hl)
             r = (ICON_CELL * k * SS) / 2.0
@@ -469,11 +515,14 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
         icon_col = _col(theme, "icon", int(255 * dim))
         dim_col = _col(theme, "icon_dim", int(255 * dim))
         kinds = ["prev", "pause" if state.playing else "play", "next"]
+        if len(controls) > 3:
+            # el altavoz va al final: los indices del transporte no cambian
+            kinds.append("vol_mute" if vol_mudo else "vol")
         for i, ((x0, y0, x1, y1), kind) in enumerate(zip(controls, kinds)):
             cx = (x0 + x1) / 2.0 * SS
             cy = (y0 + y1) / 2.0 * SS
             enabled = (i == 1 and state.can_toggle) or (i == 0 and state.can_prev) \
-                or (i == 2 and state.can_next)
+                or (i == 2 and state.can_next) or (i == 3 and vol_disponible)
             _draw_icon(d, cx, cy, kind, S, icon_col if (enabled and not idle) else dim_col)
 
     # ------------------------------------------------------------- ondas
@@ -485,8 +534,8 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
 
     # ----------------------------------------------------------------- progreso
     sp = progress_span(int(cfg.get("width", 260)), cfg)
-    if sp and not idle and state.duration > 0:
-        active = scrub is not None or hover == 3
+    if sp and not idle and (state.duration > 0 or vol_mostrar):
+        active = scrub is not None or hover == 3 or vol_mostrar
         # al pasar el mouse la barra se engrosa: avisa que se puede mover sin
         # cambiar el aspecto en reposo
         bar_h = PROG_H * (1.8 if active else 1.0)
@@ -495,8 +544,11 @@ def render(state, cfg: dict, *, art: Image.Image | None = None, hover: int = -1,
         y0, y1 = cy - bar_h * S / 2.0, cy + bar_h * S / 2.0
         d.rounded_rectangle([x0, y0, x1, y1], radius=(y1 - y0) / 2.0,
                             fill=_col(theme, "track", 255 if active else 240))
-        shown = scrub if scrub is not None else state.live_position()
-        frac = max(0.0, min(1.0, shown / state.duration))
+        if vol_mostrar:
+            frac = 0.0 if vol_mudo else max(0.0, min(1.0, vol_nivel))
+        else:
+            shown = scrub if scrub is not None else state.live_position()
+            frac = max(0.0, min(1.0, shown / state.duration))
         if frac > 0:
             d.rounded_rectangle([x0, y0, x0 + max((y1 - y0), (x1 - x0) * frac), y1],
                                 radius=(y1 - y0) / 2.0, fill=_col(theme, "accent_progress", 255))

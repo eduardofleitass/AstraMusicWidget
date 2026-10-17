@@ -49,6 +49,12 @@ DEFAULTS = {
     # Son independientes del auto-contraste: si los elegis, se usan tal cual.
     "progress_color": None,
     "waves_color": None,
+    # Volumen de la app que esta sonando (API de audio de Windows, no el del
+    # sistema): la celda del altavoz va despues de los botones del transporte.
+    # Con el cursor encima, la fila del progreso pasa a ser la barra de volumen;
+    # un clic seco en el altavoz silencia y la rueda mueve `volume_step` por muesca.
+    "show_volume": True,
+    "volume_step": 5,
     # Barra de tareas donde vive el widget: null = la del monitor principal. El
     # menu "Monitor" guarda aca el nombre del dispositivo (p. ej. "\\.\DISPLAY2").
     "taskbar_monitor": None,

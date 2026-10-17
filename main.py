@@ -97,6 +97,18 @@ def do_diagnose(cfg, cmd=None, seek=None):
     print(f"controles     : prev={st.can_prev} toggle={st.can_toggle} next={st.can_next}")
     print(f"salto         : {'si' if st.can_seek else 'no'}  "
           f"rango {st.min_seek:.0f}-{st.max_seek:.0f}s de {st.duration:.0f}s")
+    # Volumen de la app (API de audio de Windows): es lo que mueve el altavoz
+    from widget import volume as volume_mod
+    volume_mod.iniciar_com()
+    try:
+        v = volume_mod.estado(st.app_id) if st.app_id else None
+    except Exception as exc:
+        v = None
+        print("volumen       : error al consultar:", exc)
+    if v:
+        print(f"volumen       : {v[0] * 100:.0f}%  silenciado: {v[1]}")
+    else:
+        print("volumen       : la app no tiene sesion de audio")
     if st.art:
         import io
         from PIL import Image

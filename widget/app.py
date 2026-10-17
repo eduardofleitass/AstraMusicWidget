@@ -26,6 +26,7 @@ from PIL import Image, ImageChops
 
 from . import config as cfgmod
 from . import draw
+from . import volume as volume_mod
 from .media import MediaPoller, MediaState
 from .taskbarwin import TaskbarHost, list_bars, set_dpi_aware
 
@@ -55,6 +56,8 @@ WM_APP_CANCEL_SCRUB = win32con.WM_APP + 3   # aborta un arrastre de la barra de 
 WM_APP_WAVES = win32con.WM_APP + 4  # wParam = 1/0: prende y apaga las ondas de sonido
 WM_APP_COLOR = win32con.WM_APP + 5  # wParam = 1 barra / 2 ondas; lParam = 0xRRGGBB (0 = tema)
 WM_APP_MONITOR = win32con.WM_APP + 6  # wParam = indice de barra (0 = principal)
+WM_APP_VOLUME = win32con.WM_APP + 7  # wParam = volumen x1000; lParam 1 silenciar / 2 sonar
+WM_APP_SHOW = win32con.WM_APP + 8    # pedirle a la instancia viva que se muestre
 
 # Colores que ofrece el menu para la barra de progreso y las ondas (None = el del
 # tema). El menu guarda el hex en config.json; a mano tambien vale [r, g, b].
@@ -231,6 +234,11 @@ class WidgetApp:
         self._drag_x = None    # x (pantalla) mientras se arrastra
         self._scrub = None     # estado del arrastre sobre la barra de progreso
         self._scrub_t = None   # segundos destino mientras se arrastra la barra
+        self._vol_drag = None   # estado del arrastre sobre la barra de volumen
+        self._vol_t = None      # nivel que se esta mostrando mientras se arrastra
+        self._vol_last = None   # ultimo nivel aplicado (para no mandar de mas)
+        self._vol_info = None   # dato de volumen cacheado: nivel, mudo, disponible
+        self._vol_app = None    # app de la que se leyo ese dato
         self._wave_phase = 0.0    # fase de la animacion de ondas (solo avanza suena)
         self._wave_t = time.monotonic()
         self._levels: list[float] | None = None   # alturas de las ondas ahora mismo
@@ -283,10 +291,28 @@ class WidgetApp:
     # ------------------------------------------------------------------ ciclo
     def run(self) -> int:
         set_dpi_aware()
+        # COM en ESTE hilo: las llamadas de audio (ctypes) se hacen desde los
+        # manejadores de la ventana, que corren aca. Se ignora si ya estaba.
+        try:
+            if not volume_mod.iniciar_com():
+                self.log("volumen: COM no se pudo inicializar, el altavoz no va a andar")
+        except Exception as exc:
+            self.log("volumen: COM fallo: %r", exc)
         # una sola instancia: dos widgets se pelearían por el mismo espacio
         self._mutex = win32event.CreateMutex(None, False, MUTEX_NAME)
         if win32api.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            # Antes esta rama solo dejaba una linea en el log y salia: si el widget
+            # estaba oculto, relanzarlo no hacia nada visible y parecia roto (con
+            # pythonw ni siquiera hay consola donde leer el motivo). Ahora le pide a
+            # la instancia viva que se muestre: es lo que el usuario espera al
+            # volver a arrancarlo, y es idempotente (si ya esta visible, no pasa nada).
             self.log("ya hay otra instancia corriendo")
+            vivo = win32gui.FindWindow(CTL_CLASS, None)
+            if vivo:
+                win32gui.PostMessage(vivo, WM_APP_SHOW, 0, 0)
+                self.log("le pedi a la instancia viva (0x%X) que se muestre", vivo)
+                return 0
+            self.log("no encontre la ventana de la instancia viva")
             return 2
 
         self._register_classes()
@@ -583,6 +609,8 @@ class WidgetApp:
                 self.hover, self.width_px, self.height_px, self.base, st.stopped,
                 int(self.cfg.get("chip_alpha", 232)), self.layered,
                 -1 if self._scrub_t is None else int(self._scrub_t),
+                # el volumen que se esta mostrando (nivel, mudo, mostrando, hay sesion)
+                self._vol_para_render(),
                 # los colores elegidos a mano tambien forman parte de lo que se ve
                 draw.parse_color(self.cfg.get("progress_color")),
                 draw.parse_color(self.cfg.get("waves_color")),
@@ -614,7 +642,8 @@ class WidgetApp:
                            marquee=self.marquee, k=self.k, base=self.base,
                            height=self.height_px, opaque=not self.layered,
                            scrub=self._scrub_t,
-                           waves=[] if self._levels is not None else None)
+                           waves=[] if self._levels is not None else None,
+                           volume=self._vol_para_render())
 
     def _pegar_ondas(self, img: Image.Image) -> None:
         """Pega la tira de las ondas sobre un cuadro ya dibujado.
@@ -764,6 +793,11 @@ class WidgetApp:
             if msg == win32con.WM_HOTKEY and wp == HOTKEY_TOGGLE:
                 self.toggle_visible()
                 return 0
+            if msg == WM_APP_SHOW:
+                # mostrarse es idempotente: si ya esta visible no se oculta
+                if not self.visible:
+                    self.toggle_visible()
+                return 0
             if msg == WM_APP_MOVE:
                 self.set_position(None if wp >= 0xFFFF else wp / 1000.0,
                                   save=bool(lp))
@@ -804,10 +838,15 @@ class WidgetApp:
         """
         for i, (x0, y0, x1, y1) in enumerate(draw.control_rects(self.width_px, self.k, self.cfg)):
             if x0 <= x <= x1 and y0 <= y <= y1:
-                return i
+                # 5 = el altavoz, para no confundirlo con el 3 de la barra
+                return 5 if i == 3 else i
         r = draw.progress_rect(self.width_px, self.k, self.cfg)
-        if r and self._can_seek() and r[0] <= x <= r[2] and r[1] <= y <= r[3]:
-            return 3
+        if r and r[0] <= x <= r[2] and r[1] <= y <= r[3]:
+            # Con el altavoz bajo el cursor, esa misma fila hace de barra de volumen
+            if self._vol_mostrar() and self._vol_disponible():
+                return 4
+            if self._can_seek():
+                return 3
         return -1
 
     # ------------------------------------------------------------ salto de tiempo
@@ -947,6 +986,9 @@ class WidgetApp:
                 if self._scrub is not None:
                     self._scrub_move(x)
                     return 0
+                if self._vol_drag is not None:
+                    self._vol_drag_move(x)
+                    return 0
                 if os.environ.get("GORUS_DEBUG_MOUSE"):
                     self.log("WM_MOUSEMOVE x=%s y=%s hit=%s hover_prev=%s",
                              x, y, self._hit_at(x, y), self.hover)
@@ -970,7 +1012,12 @@ class WidgetApp:
                 # a la ventana que esta bajo el cursor, no a la que tiene el foco.
                 steps = ctypes.c_short((wp >> 16) & 0xFFFF).value / 120.0
                 if steps:
-                    self._seek_by(steps * self._seek_step())
+                    # Sobre el altavoz la rueda mueve el volumen; en el resto, el tiempo
+                    c = win32gui.ScreenToClient(hwnd, win32gui.GetCursorPos())
+                    if self._hit_at(*c) == 5:
+                        self._vol_step(steps)
+                    else:
+                        self._seek_by(steps * self._seek_step())
                 return 0
             if msg == win32con.WM_LBUTTONDOWN:
                 x = lp & 0xFFFF
@@ -987,6 +1034,9 @@ class WidgetApp:
                     # Sobre la barra de progreso: arrastrar (o un clic seco) salta
                     # a esa posicion.
                     self._start_scrub(x)
+                elif hit == 4:
+                    # La fila esta mostrando el volumen: arrastrar el nivel
+                    self._start_vol_drag(x)
                 elif hit == -1 and self.cfg.get("drag_to_move", True):
                     # Arrastrar desde cualquier parte que no sea un boton ni la
                     # barra mueve el widget a lo largo de la barra de tareas.
@@ -1003,6 +1053,9 @@ class WidgetApp:
                              self._drag is not None, self._scrub is not None)
                 if self._scrub is not None:
                     self._end_scrub(self._scrub.get("x", 0))
+                    return 0
+                if self._vol_drag is not None:
+                    self._end_vol_drag(self._vol_drag.get("x", 0))
                     return 0
                 if self._drag is not None:
                     self._drag = None
@@ -1022,6 +1075,9 @@ class WidgetApp:
                 if self._scrub is not None:
                     self._end_scrub(x)
                     return 0
+                if self._vol_drag is not None:
+                    self._end_vol_drag(x)
+                    return 0
                 hit = self._hit_at(x, y)
                 if hit == 0:
                     self.poller.prev_track()
@@ -1029,6 +1085,9 @@ class WidgetApp:
                     self.poller.toggle()
                 elif hit == 2:
                     self.poller.next_track()
+                elif hit == 5:
+                    # clic seco en el altavoz: silencio si/no
+                    self._vol_toggle_mute()
                 self._repaint_if_needed(force=True)
                 return 0
             if msg == WM_APP_MOVE:
@@ -1040,6 +1099,9 @@ class WidgetApp:
                 return 0
             if msg == WM_APP_CANCEL_SCRUB:
                 self.cancel_scrub()
+                return 0
+            if msg == WM_APP_VOLUME:
+                self._vol_remoto(int(wp) / 1000.0, int(lp))
                 return 0
             if msg == WM_APP_WAVES:
                 self.set_waves(bool(wp), save=bool(lp))
@@ -1241,6 +1303,195 @@ class WidgetApp:
                      "arrastre" if (d or {}).get("moved") else "clic")
         self._repaint_if_needed(force=True)
 
+    # ---------------------------------------------------------------- volumen
+    VOL_TTL = 2.0          # vida del dato de volumen mientras el usuario lo usa
+    VOL_TTL_QUIETO = 10.0  # ...y el resto del tiempo (cambios hechos afuera)
+
+    def _vol_estado(self) -> tuple[float, bool, bool]:
+        """(nivel 0..1, silenciado, disponible) de la app que esta sonando.
+
+        El dato se cachea porque leerlo son un par de milisegundos de llamadas COM
+        y la firma se consulta en cada tick. Se refresca al cambiar de app, mientras
+        el usuario lo esta usando, y cada tanto para ver cambios hechos afuera (el
+        mezclador de Windows).
+        """
+        app = self.state.app_id or ""
+        ahora = time.monotonic()
+        info = self._vol_info
+        vencido = (info is None or self._vol_app != app
+                   or (ahora - info[3]) > (self.VOL_TTL if self._vol_mostrar()
+                                           else self.VOL_TTL_QUIETO))
+        if vencido:
+            nivel, mudo, disp = 0.0, False, False
+            if app:
+                try:
+                    r = volume_mod.estado(app)
+                except Exception as exc:
+                    r = None
+                    self.log("volumen: no se pudo leer: %r", exc)
+                if r:
+                    nivel, mudo, disp = float(r[0]), bool(r[1]), True
+            info = (nivel, mudo, disp, ahora)
+            self._vol_info, self._vol_app = info, app
+        return (info[0], info[1], info[2])
+
+    def _vol_disponible(self) -> bool:
+        """Si la app que suena tiene sesion de audio (o sea: si se le puede cambiar)."""
+        try:
+            return bool(self._vol_estado()[2])
+        except Exception:
+            return False
+
+    def _vol_mostrar(self) -> bool:
+        """Si la fila del progreso esta haciendo de barra de volumen ahora mismo.
+
+        Pasa con el altavoz bajo el cursor o mientras se arrastra el nivel: la fila
+        no gana lugar propio, se reusa la del progreso (que ademas ya tiene la zona
+        clicable comoda).
+        """
+        if not self.cfg.get("show_volume", True):
+            return False
+        return self.hover in (4, 5) or self._vol_drag is not None
+
+    def _vol_para_render(self) -> tuple[float, bool, bool, bool]:
+        """Lo que necesita el dibujo: nivel, mudo, mostrando, hay sesion."""
+        nivel, mudo, disp = self._vol_estado()
+        if self._vol_t is not None:
+            nivel = self._vol_t      # previsualizacion del arrastre
+        mostrar = bool(self.cfg.get("show_volume", True) and disp and self._vol_mostrar())
+        return (float(nivel), bool(mudo), bool(mostrar), bool(disp))
+
+    def _vol_app_id(self) -> str:
+        return self.state.app_id or ""
+
+    def _vol_anotar(self, nivel: float, mudo: bool) -> None:
+        self._vol_info = (max(0.0, min(1.0, nivel)), bool(mudo), True, time.monotonic())
+        self._vol_app = self._vol_app_id()
+
+    def _vol_aplicar(self, nivel: float, mudo: bool | None = None) -> bool:
+        """Fija el volumen de la app (0..1) y deja el dato cacheado al dia."""
+        app = self._vol_app_id()
+        if not app:
+            return False
+        nivel = max(0.0, min(1.0, float(nivel)))
+        try:
+            volume_mod.fijar(app, nivel)
+            if mudo is not None:
+                volume_mod.silenciar(app, bool(mudo))
+        except Exception as exc:
+            self.log("volumen: no se pudo fijar: %r", exc)
+            return False
+        self._vol_anotar(nivel, self._vol_info[1] if mudo is None else mudo)
+        self._vol_last = nivel
+        return True
+
+    def _vol_step(self, muescas: float) -> None:
+        """Rueda sobre el altavoz: sube o baja el volumen por muescas."""
+        nivel, mudo, disp = self._vol_estado()
+        if not disp:
+            return
+        paso = max(1, int(self.cfg.get("volume_step", 5))) / 100.0
+        nuevo = max(0.0, min(1.0, nivel + muescas * paso))
+        if self._vol_aplicar(nuevo, mudo=False):
+            self.log("volumen: %.0f%% (rueda)", nuevo * 100)
+        self._sig = None
+        self._repaint_if_needed(force=True)
+
+    def _vol_toggle_mute(self) -> None:
+        """Clic seco en el altavoz: silencio si/no."""
+        app = self._vol_app_id()
+        if not app:
+            return
+        try:
+            r = volume_mod.silenciar(app, None)
+        except Exception as exc:
+            self.log("volumen: el silencio fallo: %r", exc)
+            return
+        if r is None:
+            self.log("volumen: %s no tiene sesion de audio", app)
+            return
+        self._vol_anotar(self._vol_estado()[0], bool(r))
+        self.log("volumen: %s", "silencio" if r else "sonando")
+        self._sig = None
+        self._repaint_if_needed(force=True)
+
+    def _start_vol_drag(self, x: int) -> None:
+        self._vol_drag = {"x0": x, "x": x, "moved": False}
+        self._vol_t = self._vol_nivel_at(x)
+        self._vol_aplicar(self._vol_t)
+        try:
+            win32gui.SetCapture(self.hwnd_widget)
+            win32gui.SetCursor(win32gui.LoadCursor(0, IDC_SIZEWE))
+        except Exception:
+            pass
+        self._repaint_if_needed(force=True)
+
+    def _vol_nivel_at(self, x: int) -> float:
+        frac = draw.progress_frac_at(x, self.width_px, self.k, self.cfg)
+        return max(0.0, min(1.0, float(frac)))
+
+    def _vol_drag_move(self, x: int) -> None:
+        d = self._vol_drag
+        if not d:
+            return
+        if abs(x - d["x0"]) >= 3:
+            d["moved"] = True
+        d["x"] = x
+        self._vol_t = self._vol_nivel_at(x)
+        # Se aplica en vivo (el mezclador lo muestra al instante), pero solo cuando
+        # el nivel cambia de verdad: cada llamada es un ida y vuelta con el servicio
+        # de audio, y el mouse manda muchos eventos por segundo.
+        if self._vol_last is None or abs(self._vol_t - self._vol_last) >= 0.01:
+            self._vol_aplicar(self._vol_t)
+        try:
+            win32gui.SetCursor(win32gui.LoadCursor(0, IDC_SIZEWE))
+        except Exception:
+            pass
+        self._repaint_if_needed(force=True)
+
+    def _end_vol_drag(self, x: int) -> None:
+        d, self._vol_drag = self._vol_drag, None
+        self._vol_t = None
+        self._vol_last = None
+        try:
+            win32gui.ReleaseCapture()
+        except Exception:
+            pass
+        if d:
+            nivel = self._vol_nivel_at(x)
+            if self._vol_aplicar(nivel):
+                self.log("volumen: %.0f%% (%s)", nivel * 100,
+                         "arrastre" if d.get("moved") else "clic")
+        self._repaint_if_needed(force=True)
+
+    def _vol_remoto(self, nivel: float, modo: int) -> None:
+        """Cambia el volumen desde afuera (lo usan las pruebas) y lo deja informado."""
+        if not self._vol_aplicar(nivel):
+            self.log("volumen: la app no tiene sesion de audio")
+            return
+        if modo in (1, 2):
+            app = self._vol_app_id()
+            try:
+                r = volume_mod.silenciar(app, modo == 1)
+            except Exception:
+                r = None
+            if r is not None:
+                self._vol_anotar(nivel, bool(r))
+        self.log("volumen: %.0f%% (remoto)", nivel * 100)
+        self._sig = None
+        self._repaint_if_needed(force=True)
+
+    def set_volume_visible(self, on: bool, save: bool = True) -> None:
+        """Muestra u oculta el altavoz (cambia el ancho de los textos y las ondas)."""
+        on = bool(on)
+        self.cfg["show_volume"] = on
+        if save:
+            cfgmod.save(self.cfg)
+        self._sig = None
+        self._base_sig = None
+        self._repaint_if_needed(force=True)
+        self.log("altavoz: %s", "visible" if on else "oculto")
+
     # ------------------------------------------------------------------- menu
     def _show_menu(self) -> None:
         try:
@@ -1293,6 +1544,7 @@ class WidgetApp:
 
             step = self._seek_step()
             seek_ok = self._can_seek()
+            vol_ok = self._vol_disponible()
             items = [
                 ("item", 1, "Ocultar widget" if self.visible else "Mostrar widget", True),
                 ("sep", 0, "", None),
@@ -1305,6 +1557,11 @@ class WidgetApp:
                 ("item", 14, f"Adelantar {step:.0f} s   ▶▶", seek_ok),
                 ("sep", 0, "", None),
                 ("check", 15, "Ondas de sonido", bool(self.cfg.get("show_waves", False))),
+                ("check", 19, "Mostrar altavoz", bool(self.cfg.get("show_volume", True))),
+                ("sep", 0, "", None),
+                ("check", 16, "Silenciar", bool(self._vol_estado()[1]) if self._vol_disponible() else False),
+                ("item", 17, f"Volumen +{self.cfg.get('volume_step', 5)}%", vol_ok),
+                ("item", 18, f"Volumen -{self.cfg.get('volume_step', 5)}%", vol_ok),
                 ("sep", 0, "", None),
                 ("item", 3, "◀  Mover a la izquierda", True),
                 ("item", 4, "Mover a la derecha  ▶", True),
@@ -1361,6 +1618,14 @@ class WidgetApp:
             self._seek_by(self._seek_step())
         elif cmd == 15:
             self.set_waves(not self.cfg.get("show_waves", False))
+        elif cmd == 16:
+            self._vol_toggle_mute()
+        elif cmd == 17:
+            self._vol_step(1)
+        elif cmd == 18:
+            self._vol_step(-1)
+        elif cmd == 19:
+            self.set_volume_visible(not self.cfg.get("show_volume", True))
         elif 30 <= cmd <= 30 + len(COLOR_CHOICES) - 1:
             self.set_color("progress_color", COLOR_CHOICES[cmd - 30][0])
         elif 40 <= cmd <= 40 + len(COLOR_CHOICES) - 1:

@@ -28,6 +28,7 @@ Probado en Windows 10 22H2 (19045), escala 100% y 1920x1080.
 | Atrasarlo o adelantarlo | clic en la barra de progreso, o la rueda del mouse (±10 s) |
 | Ondas de sonido (animacion) | clic derecho > *Ondas de sonido* |
 | Color de la barra o de las ondas | clic derecho > *Color de la barra* / *Color de las ondas* |
+| Volumen de lo que suena | pasá el mouse por el altavoz y arrastrá la barra que aparece; rueda del mouse encima del altavoz (±5%); clic seco = silencio |
 | Ponerlo en la barra de otro monitor | arrastralo al otro monitor, o clic derecho > *Monitor* |
 | Fondo transparente | clic derecho > *Fondo* |
 | Moverlo a otra parte de la barra | arrastralo con el boton izquierdo, o clic derecho > *Mover / Centrar* |
@@ -228,6 +229,43 @@ Dos cosas a tener en cuenta:
 Ninguno de los dos cambia el chip, la caratula ni los textos.
 
 
+## Volumen
+
+El widget controla el volumen de **la aplicacion que esta sonando**, no el del
+sistema. Es la misma perilla que ves en el mezclador de volumen de Windows, asi que
+si estas escuchando musica mientras una reunion habla, bajas la musica sin quedarte
+sordo en la reunion.
+
+Esta en la **celda del altavoz**, despues de los botones del transporte:
+
+- **Con el cursor encima**, la fila del progreso se convierte en la barra de volumen
+  (mas gruesa, con su perilla) y el renglon del artista dice el porcentaje. La fila no
+  gana lugar propio: reusa la del progreso, que ya tiene la zona clicable comoda.
+- **Arrastrar** sobre esa barra (o un clic seco en cualquier punto) fija el nivel.
+- **Rueda del mouse** sobre el altavoz: ±5% por muesca (el paso se configura).
+- **Un clic seco en el altavoz** silencia y lo vuelve a sacar. El icono se dibuja con
+  una cruz mientras esta en silencio.
+- En el menu: *Silenciar*, *Volumen +5%*, *Volumen -5%* y *Mostrar altavoz* (para
+  esconder la celda si no la queres).
+
+SMTC dice **que** suena, pero no su volumen: para eso el widget habla con la API de
+audio de Windows (Core Audio), la del mezclador. Eso trae dos detalles que valen la
+pena saber:
+
+- La sesion de audio de una app suele **no incluir su PID en SMTC**, asi que se
+  emparejan por **nombre de ejecutable** (`brave.exe`, `spotify.exe`...), que es lo
+  unico que ambos lados comparten.
+- Un navegador suele abrir **varias sesiones** (una por proceso de audio). El widget
+  las mueve todas juntas: es lo que hace el mezclador.
+
+Si la app que suena no tiene sesion de audio (algunos reproductores rutean el sonido
+de otra forma), el altavoz se dibuja **atenuado** y no hace nada: antes de mentirte
+con un control que no controla, lo muestra apagado.
+
+No agrega dependencias: pywin32 y winsdk no exponen estas interfaces, asi que los
+objetos COM se llaman a mano con `ctypes` (`widget/volume.py`) y COM se inicializa una
+vez en el hilo de la ventana.
+
 ## Varios monitores
 
 En Windows 10 **cada monitor tiene su propia barra de tareas**, asi que el widget
@@ -264,6 +302,7 @@ Tres piezas bien separadas:
 |---|---|
 | `widget/media.py` | Lee el SMTC en un hilo propio con su propio event loop asyncio. Publica una foto inmutable (`MediaState`) y despacha los comandos. |
 | `widget/draw.py` | Dibuja el widget con Pillow en un lienzo ampliado x3 y lo reduce con LANCZOS: asi los bordes redondeados, los iconos vectoriales y el texto salen suaves sin depender de GDI+ ni de un framework de UI. Con el fondo transparente la reduccion se hace en espacio premultiplicado, para que no quede un halo oscuro en los bordes. Las ondas de sonido se dibujan aparte, en su propia tira, para poder animarlas sin repintar el chip. |
+| `widget/volume.py` | Volumen de la app que suena, por la API de audio de Windows (Core Audio) con `ctypes`: enumera las sesiones de audio del dispositivo por defecto, las empareja por ejecutable y lee/escribe volumen y silencio. |
 | `widget/app.py` + `taskbarwin.py` | Ventana Win32, superficie de doble buffer (DIB + `BitBlt`, o en capas con `UpdateLayeredWindow` cuando el fondo es transparente), entrada de mouse, arrastre, anclaje y posicion en la barra. |
 
 ### La incrustacion en la barra
@@ -353,8 +392,8 @@ falla posible de esta tecnica:
 - `python tools\stop.py --force` mata el proceso y repara la barra si quedo
   inconsistente.
 
-58 de 58 pruebas pasan (`python tools\selftest.py` con el widget en marcha; 59 en
-total, una se salta sola cuando el color de las ondas ya es personalizado):
+68 de 69 pruebas pasan (`python tools\selftest.py` con el widget en marcha; la que
+se salta es la de restaurar el color del tema, que no aplica cuando ya elegiste uno):
 anclaje, reconstruccion forzada, recuperacion de espacio, pixeles realmente
 pintados, transparencia del fondo medida contra la barra, recorrido completo del
 movimiento (que nunca quede tapado), la barra de progreso (que su zona clicable
@@ -407,6 +446,8 @@ encogimiento.
 | `wave_fps` | 20 | Cuadros por segundo de la animacion. El unico motivo por el que el widget repinta mas seguido que el texto |
 | `progress_color` | `null` | Color de la barra de progreso (relleno, indicador de arrastre y hora destino). `null` = el del tema; tambien `"#RRGGBB"` o `[r, g, b]` |
 | `waves_color` | `null` | Color de las ondas de sonido. Mismas formas que `progress_color` |
+| `show_volume` | true | Celda del altavoz despues de los botones (menu > *Mostrar altavoz*) |
+| `volume_step` | 5 | Cuanto sube o baja cada muesca de la rueda sobre el altavoz, en porcentaje |
 | `taskbar_monitor` | `null` | Barra de tareas donde vive el widget: `null` = la del monitor principal, o el nombre del dispositivo (`"\\.\DISPLAY5"`). Lo guarda el menu *Monitor* o el arrastre |
 | `position_frac` | `null` | `null` = pegado al extremo derecho. `0..1` = posicion libre dentro del tramo util |
 | `drag_to_move` | true | Permite moverlo arrastrando con el boton izquierdo |

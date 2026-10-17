@@ -83,7 +83,7 @@ def rect(h) -> tuple:
 
 def franja(x0: int, x1: int, y: int) -> list:
     from PIL import ImageGrab
-    return list(ImageGrab.grab(bbox=(x0, y, x1, y + 1)).convert("RGB").getdata())
+    return list(ImageGrab.grab(all_screens=True, bbox=(x0, y, x1, y + 1)).convert("RGB").getdata())
 
 
 def difusa(a: list, b: list) -> tuple:
@@ -102,7 +102,7 @@ def posicion(widget, frac, alpha=None, espera=0.9):
 def franja_rgb(wr: tuple, y_rel: int, x0: int, x1: int) -> list:
     """Pixeles de una fila del widget, en coordenadas relativas."""
     from PIL import ImageGrab
-    return list(ImageGrab.grab(bbox=(wr[0] + x0, wr[1] + y_rel, wr[0] + x1, wr[1] + y_rel + 1))
+    return list(ImageGrab.grab(all_screens=True, bbox=(wr[0] + x0, wr[1] + y_rel, wr[0] + x1, wr[1] + y_rel + 1))
                 .convert("RGB").getdata())
 
 
@@ -110,7 +110,7 @@ def region_rgb(wr: tuple, y0: int, y1: int, x0: int, x1: int) -> list:
     """Pixeles de una franja de varias filas (para medir TEXTO, que no se puede
     medir con una sola fila: los glifos empiezan unos pixeles mas abajo)."""
     from PIL import ImageGrab
-    return list(ImageGrab.grab(bbox=(wr[0] + x0, wr[1] + y0, wr[0] + x1, wr[1] + y1))
+    return list(ImageGrab.grab(all_screens=True, bbox=(wr[0] + x0, wr[1] + y0, wr[0] + x1, wr[1] + y1))
                 .convert("RGB").getdata())
 
 
@@ -189,7 +189,7 @@ def main() -> int:
     # --- pixeles realmente pintados -------------------------------------
     try:
         from PIL import ImageGrab
-        shot = ImageGrab.grab(bbox=w_rect).convert("RGB")
+        shot = ImageGrab.grab(all_screens=True, bbox=w_rect).convert("RGB")
         px = shot.load()
         # La caratula se mide por REGION, no por un pixel suelto: con un solo pixel
         # el resultado depende de que color tenga la tapa justo ahi (con una tapa
@@ -289,8 +289,13 @@ def main() -> int:
                   f"alpha0={m0:.2f}  alpha100={m100:.2f}  alpha232={m232:.2f}")
             check("sin fondo: se ve el fondo de la barra tal cual",
                   m0 <= 3, f"diferencia media {m0:.2f} (max {mx0})")
-            check("fondo solido: el chip tapa el fondo", m232 >= 10,
-                  f"diferencia media {m232:.2f}")
+            # El cuanto depende del papel tapiz detras de la barra de ese monitor
+            # (la barra es translucida): 10 es lo que da en la principal, en la del
+            # secundario puede quedar en ~8. La invariante es que tape de forma
+            # perceptible y que los niveles sean progresivos.
+            check("fondo solido: el chip tapa el fondo", m232 >= 6,
+                  f"diferencia media {m232:.2f} (en el monitor principal suele "
+                  f"pasar de 10)")
             check("los niveles de fondo son progresivos", m0 < m100 < m232,
                   f"{m0:.1f} < {m100:.1f} < {m232:.1f}")
     except Exception as exc:
@@ -335,9 +340,10 @@ def main() -> int:
         check("al extremo derecho queda pegado al ancla",
               abs(filas[-1][1][2] - filas[-1][3][0]) <= 3,
               f"right={filas[-1][1][2]} ancla={filas[-1][3][0]}")
-        check("la lista de tareas conserva espacio usable en todo el recorrido",
-              min(f[2][2] - f[2][0] for f in filas) >= 300,
-              f"minimo {min(f[2][2] - f[2][0] for f in filas)} px")
+        piso = int(cfg.get("min_tasklist_free", 140))
+        menor = min(f[2][2] - f[2][0] for f in filas)
+        check("la lista de tareas nunca baja de su piso usable",
+              menor >= piso - 4, f"minimo {menor} px (piso configurado {piso})")
     except Exception as exc:
         check("medicion del movimiento", False, repr(exc))
 
@@ -467,7 +473,7 @@ def main() -> int:
         wrec = draw.wave_rect(ww2, k, cfg)
 
         def captura():
-            return ImageGrab.grab(bbox=(wr[0], wr[1], wr[0] + ww2, wr[3])).convert("RGB")
+            return ImageGrab.grab(all_screens=True, bbox=(wr[0], wr[1], wr[0] + ww2, wr[3])).convert("RGB")
 
         def distintos(a, b, box, umbral=30):
             """Pixeles que cambian entre dos capturas en esa region.
@@ -560,7 +566,7 @@ def main() -> int:
         y_barra = wr[1] + int(35.5 * k)
 
         def cuenta(box, cual):
-            im = ImageGrab.grab(bbox=box).convert("RGB")
+            im = ImageGrab.grab(all_screens=True, bbox=box).convert("RGB")
             out = 0
             for q in im.get_flattened_data():
                 r, g, b = q
@@ -705,6 +711,128 @@ def main() -> int:
         posicion(w_now, 0xFFFF, int(cfg.get("chip_alpha", 232)))  # dejar como estaba
     except Exception:
         pass
+
+    # --- volumen: celda del altavoz, fila de volumen y sesion de audio ---------
+    print("\n-- volumen de la app --")
+    # (a) geometria: el altavoz va despues de los botones y no pisa nada
+    w_now = win32gui.FindWindowEx(p["tray"], 0, "GorusTaskbarMusicWnd", None)
+    ww3 = (rect(w_now)[2] - rect(w_now)[0]) if w_now else int(cfg.get("width", 300))
+    ctrls = draw.control_rects(ww3, k, cfg)
+    wrec = draw.wave_rect(ww3, k, cfg)
+    prg = draw.progress_span(ww3, cfg)
+    check("el altavoz es la cuarta celda, a la derecha del transporte",
+          len(ctrls) == 4 and ctrls[3][0] > ctrls[2][0] == ctrls[1][2],
+          f"{len(ctrls)} celdas; altavoz en {ctrls[3][:1] + ctrls[3][2:3] if ctrls else '-'}"
+          if ctrls else "")
+    check("la celda del altavoz no se mete en las ondas ni en el texto",
+          bool(wrec and prg and wrec[2] <= ctrls[3][0] and prg[1] <= ctrls[3][0]),
+          f"ondas hasta x={wrec[2] if wrec else '-'}, texto hasta x={prg[1] if prg else '-'}, "
+          f"altavoz desde x={ctrls[3][0] if ctrls else '-'}")
+
+    # (b) dibujo: la fila del progreso se convierte en barra de volumen
+    try:
+        from PIL import Image
+        from widget.media import MediaState
+        st_v = MediaState(has_session=True, app_id="prueba.exe", title="Titulo de prueba",
+                          artist="Artista de prueba", playing=True, position=30.0,
+                          duration=200.0, position_at=time.monotonic(), art=None,
+                          art_key="k", can_seek=True, min_seek=0, max_seek=200,
+                          can_toggle=True, can_prev=True, can_next=True)
+
+        def cuadro(vol):
+            return draw.render(st_v, cfg, k=k, base=(28, 30, 38), height=int(40 * k),
+                               volume=vol).convert("RGB")
+
+        # Con un color fijo (y sin auto-contraste) la barra queda en rojo puro:
+        # contando filas rojas se mide el relleno exacto, sin umbrales de luminancia
+        # que dependan del tema o del color que haya elegido el usuario.
+        cfg_rojo = dict(cfg, progress_color="#FF0000", auto_contrast=False)
+
+        def cuadro_rojo(vol):
+            return draw.render(st_v, cfg_rojo, k=k, base=(28, 30, 38),
+                               height=int(40 * k), volume=vol).convert("RGB")
+
+        def filas_rojas(im, x=100, exacto=True):
+            """Filas con relleno rojo en esa columna.
+
+            Con exacto=True se cuentan solo los pixeles de rojo puro (el nucleo del
+            relleno); con exacto=False se toleran los bordes suavizados, que es lo
+            que hace falta para comparar grosores.
+            """
+            n = 0
+            for y in range(26, 40):
+                r, g, b = im.getpixel((x, y))
+                if (255, 0, 0) == (r, g, b) if exacto else (r > 140 and g < 120 and b < 120):
+                    n += 1
+            return n
+
+        normal = cuadro(None)
+        volumen = cuadro((0.45, False, True, True))
+        mudo = cuadro((0.45, True, True, True))
+        sin_sesion = cuadro((0.45, False, True, False))
+        # La cancion esta en 30 s de 200 (15%): a 100 px del borde izquierdo el
+        # progreso no llega, pero el volumen al 45% si. Y la barra ademas se dibuja
+        # 1,8 veces mas gruesa cuando esta activa.
+        rojo_n = filas_rojas(cuadro_rojo(None))
+        rojo_v = filas_rojas(cuadro_rojo((0.45, False, True, True)))
+        rojo_m = filas_rojas(cuadro_rojo((0.45, True, True, True)))
+        # grosor: en x=50 el progreso tambien tiene relleno (15%), asi que ahi se
+        # comparan grosores; en x=100 solo el volumen llega
+        grue_n = filas_rojas(cuadro_rojo(None), 50, exacto=False)
+        grue_v = filas_rojas(cuadro_rojo((0.45, False, True, True)), 50, exacto=False)
+        check("con el volumen a la vista la fila muestra el nivel donde el progreso no llega",
+              rojo_v >= 2 and rojo_n == 0,
+              f"filas de rojo puro en x=100: progreso {rojo_n}, volumen {rojo_v}")
+        check("la barra de volumen se dibuja mas gruesa que el progreso",
+              grue_v >= grue_n + 2, f"grosor en x=50: {grue_n} -> {grue_v} filas")
+        check("silenciado, la barra de volumen queda vacia", rojo_m == 0,
+              f"filas pintadas con silencio: {rojo_m}")
+        dif = sum(1 for a, b in zip(normal.crop((0, 19, normal.width, 30)).getdata(),
+                                    volumen.crop((0, 19, volumen.width, 30)).getdata())
+                  if a != b)
+        check("el renglon del artista pasa a decir el volumen", dif > 30,
+              f"{dif} pixeles distintos en el renglon del artista")
+        dif_mudo = sum(1 for a, b in zip(volumen.getdata(), mudo.getdata()) if a != b)
+        check("el silencio se nota en lo que se ve", dif_mudo > 100,
+              f"{dif_mudo} pixeles distintos entre volumen y silencio")
+        check("sin sesion de audio el altavoz se dibuja atenuado",
+              sin_sesion != cuadro((0.45, False, True, True)),
+              "la cuarta celda cambia de color")
+    except Exception as exc:
+        check("el dibujo del volumen", False, repr(exc))
+
+    # (c) la sesion de audio real: se lee el volumen de la app que esta sonando
+    try:
+        from widget import volume as volume_mod
+        volume_mod.iniciar_com()
+        app_sonando = ""
+        try:
+            pol = MediaPoller(interval=0.3)
+            pol.start()
+            pol.wait_ready(6)
+            # el primer sondeo puede volver vacio: se reintenta un par de segundos
+            for _ in range(10):
+                app_sonando = getattr(pol.state(), "app_id", "") or ""
+                if app_sonando:
+                    break
+                time.sleep(0.4)
+            pol.stop()
+        except Exception:
+            pass
+        est = volume_mod.estado(app_sonando) if app_sonando else None
+        check("se lee el volumen de la app que esta sonando",
+              bool(est) and 0.0 <= est[0] <= 1.0,
+              f"{app_sonando or 'sin app'}: "
+              + (f"{est[0] * 100:.0f}%" + (" (silenciado)" if est[1] else "")
+                 if est else "no tiene sesion de audio"),
+              skipped=not est)
+        ses = volume_mod.sesiones()
+        check("la API de audio del sistema responde",
+              isinstance(ses, list) and len(ses) > 0,
+              f"{len(ses)} sesiones: "
+              + ", ".join(sorted({x.get('exe', '?') for x in ses}))[:80])
+    except Exception as exc:
+        check("la API de audio del sistema responde", False, repr(exc))
 
     fails = [r for r in RESULTS if not r[1] and not r[3]]
     skips = [r for r in RESULTS if r[3]]

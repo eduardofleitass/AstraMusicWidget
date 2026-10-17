@@ -14,7 +14,7 @@
   "corner_radius": 7,
   "chip_alpha": 0,
   "bg_mode": "layered",
-  "position_frac": 0.0,
+  "position_frac": null,
   "min_tasklist_free": 140,
   "drag_to_move": true,
   "seek_step_s": 10,
@@ -24,7 +24,9 @@
   "wave_fps": 20,
   "progress_color": "#FF78B4",
   "waves_color": "#FF78B4",
-  "taskbar_monitor": null,
+  "show_volume": true,
+  "volume_step": 5,
+  "taskbar_monitor": "\\\\.\\DISPLAY5",
   "auto_contrast": true,
   "theme": {
     "chip": [

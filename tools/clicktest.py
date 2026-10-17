@@ -25,6 +25,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import win32con  # noqa: E402
 import win32gui  # noqa: E402
 
 from widget import config as cfgmod, draw  # noqa: E402
@@ -155,8 +156,31 @@ def click(x, y) -> bool:
 
 
 def grab(wrect):
+    """Captura del widget. Con all_screens=True: si el widget vive en la barra del
+    monitor secundario, sin esto sale todo negro (ImageGrab solo toma el principal)."""
     from PIL import ImageGrab
-    return ImageGrab.grab(bbox=wrect).convert("L")
+    return ImageGrab.grab(bbox=wrect, all_screens=True).convert("L")
+
+
+def filas_barra(img, wrect):
+    """Cuantas filas de la franja de la barra estan pintadas, medido contra el fondo.
+
+    Sirve para distinguir la barra de progreso (2,5 px) de la de volumen, que se
+    dibuja 1,8 veces mas gruesa cuando esta activa. El fondo se estima con las filas
+    entre el renglon del artista y la barra, para que no dependa del tema ni del
+    color que haya elegido el usuario.
+    """
+    k = (wrect[3] - wrect[1]) / float(draw.REF_H)
+    cols = range(90, 160, 10)
+    fondo = min(img.getpixel((x, y)) for x in cols for y in (29, 30, 31, 32))
+    y0 = max(0, int(draw.PROG_Y * k) - 4)
+    y1 = min(img.height, int(draw.PROG_Y * k) + 5)
+    pintadas = set()
+    for x in cols:
+        for y in range(y0, y1):
+            if img.getpixel((x, y)) > fondo + 25:
+                pintadas.add(y)
+    return len(pintadas)
 
 
 def mean_lum(img, box):
@@ -222,6 +246,10 @@ def main() -> int:
     centers = button_centers(wrect, k, cfg)
     print(f"widget en pantalla: {wrect}")
     print(f"centros de botones: {centers}\n")
+
+    # El arrastre de prueba muda el widget de barra y de lugar: se anota donde
+    # estaba y se devuelve al final, para no dejarlo cambiado.
+    pos_ini = cfg.get("position_frac")
 
     poller = MediaPoller(interval=0.3)
     poller.start()
@@ -505,6 +533,146 @@ def main() -> int:
                           bool(w4) and b4 == actual,
                           f"quedo en la barra {hex(b4) if b4 else '-'} "
                           f"(se esperaba {hex(actual)}, {barra_actual['nombre']})")
+
+    # --- 7. volumen de la app (celda del altavoz) -----------------------------
+    print("\n-- volumen de la app (altavoz, rueda y arrastre) --")
+    try:
+        from widget import volume as volume_mod
+        volume_mod.iniciar_com()
+    except Exception as exc:
+        volume_mod = None
+        check("el control de volumen carga", False, f"{exc!r}")
+    app = getattr(poller.state(), "app_id", "") or ""
+    inicial = None
+    if volume_mod and app:
+        try:
+            inicial = volume_mod.estado(app)
+        except Exception as exc:
+            check("se puede leer el volumen de la app", False, f"{exc!r}")
+    if not (volume_mod and inicial):
+        check("se puede leer el volumen de la app", False,
+              f"{app!r} no tiene sesion de audio (¿no esta sonando?)", skipped=True)
+        check("la rueda sobre el altavoz mueve el volumen", False, "no aplica",
+              skipped=True)
+        check("un clic real en el altavoz silencia", False, "no aplica", skipped=True)
+        check("arrastrar sobre la barra de volumen cambia el nivel", False, "no aplica",
+              skipped=True)
+    else:
+        check("se puede leer el volumen de la app", True,
+              f"{app} al {inicial[0] * 100:.0f}%"
+              + (" (silenciado)" if inicial[1] else ""))
+        # el rect anterior puede estar viejo: el arrastre entre monitores deja el
+        # widget en otro lugar de la barra
+        w, wrect = rect_actual()
+        k = (wrect[3] - wrect[1]) / 40.0
+        centros = button_centers(wrect, k, cfg)
+        altavoz = centros[3] if len(centros) > 3 else centros[-1]
+        w_win = WIN["widget"]
+        # nivel conocido: asi lo que se mida despues es comparable
+        win32gui.PostMessage(w_win, win32con.WM_APP + 7, 300, 0)
+        time.sleep(0.4)
+
+        # (a) el cursor sobre el altavoz convierte la fila del progreso en volumen
+        park_away(wrect)
+        antes = filas_barra(grab(wrect), wrect)
+        if not place_cursor(*altavoz) or not sobre_widget(*altavoz):
+            check("con el cursor en el altavoz la fila hace de barra de volumen", False,
+                  "el cursor no quedo sobre el widget (interferencia)", skipped=True)
+        else:
+            time.sleep(0.6)
+            despues = filas_barra(grab(wrect), wrect)
+            check("con el cursor en el altavoz la fila hace de barra de volumen",
+                  despues >= antes + 2, f"grosor de la barra {antes} -> {despues} filas")
+
+            # (b) la rueda sobre el altavoz mueve el volumen, no el tiempo
+            v0 = volume_mod.estado(app)
+            user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, WHEEL_UP, 0)
+            time.sleep(0.6)
+            v1 = volume_mod.estado(app)
+            paso = int(cfg.get("volume_step", 5)) / 100.0
+            if v0 and v1:
+                check("la rueda sobre el altavoz mueve el volumen",
+                      abs((v1[0] - v0[0]) - paso) < 0.02,
+                      f"{v0[0] * 100:.0f}% -> {v1[0] * 100:.0f}% (paso {paso * 100:.0f}%)")
+            else:
+                check("la rueda sobre el altavoz mueve el volumen", False,
+                      "no se pudo leer el volumen despues de la rueda")
+
+            # (c) arrastrar sobre la fila del volumen (se baja el cursor a la fila)
+            span = draw.progress_span(wrect[2] - wrect[0], cfg)
+            fila_y = wrect[1] + int(draw.PROG_Y * k) + 1
+            if span:
+                x_25 = int(wrect[0] + span[0] + (span[1] - span[0]) * 0.25)
+                x_75 = int(wrect[0] + span[0] + (span[1] - span[0]) * 0.75)
+                # La celda del altavoz ocupa toda la altura, asi que el arrastre tiene
+                # que empezar sobre la fila a la izquierda de esa celda.
+                if place_cursor(x_25, fila_y) and sobre_widget(x_25, fila_y):
+                    time.sleep(0.4)
+                    user32.mouse_event(0x0002, 0, 0, 0, 0)      # LEFTDOWN en la fila
+                    time.sleep(0.2)
+                    for paso_x in (0.4, 0.7, 1.0):
+                        x = int(x_25 + (x_75 - x_25) * paso_x)
+                        user32.SetCursorPos(x, fila_y)
+                        time.sleep(0.2)
+                    user32.mouse_event(0x0004, 0, 0, 0, 0)      # LEFTUP
+                    time.sleep(0.6)
+                    v2 = volume_mod.estado(app)
+                    objetivo = (x_75 - wrect[0] - span[0]) / float(span[1] - span[0])
+                    if v2:
+                        check("arrastrar sobre la barra de volumen cambia el nivel",
+                              abs(v2[0] - objetivo) < 0.12,
+                              f"quedo en {v2[0] * 100:.0f}% (se apunto a "
+                              f"{objetivo * 100:.0f}%)")
+                    else:
+                        check("arrastrar sobre la barra de volumen cambia el nivel",
+                              False, "no se pudo leer el volumen")
+                else:
+                    check("arrastrar sobre la barra de volumen cambia el nivel", False,
+                          "el cursor no quedo sobre el widget (interferencia)",
+                          skipped=True)
+            else:
+                check("arrastrar sobre la barra de volumen cambia el nivel", False,
+                      "no hay barra de progreso en este ancho", skipped=True)
+
+            # (d) clic seco en el altavoz: silencio si/no (se restaura)
+            antes_mudo = (volume_mod.estado(app) or (0, False))[1]
+            if click(*altavoz):
+                mudo1 = (volume_mod.estado(app) or (0, False))[1]
+                time.sleep(0.3)
+                click(*altavoz)
+                mudo2 = (volume_mod.estado(app) or (0, False))[1]
+                check("un clic real en el altavoz silencia y el otro lo saca",
+                      mudo1 != antes_mudo and mudo2 == antes_mudo,
+                      f"silencio {antes_mudo} -> {mudo1} -> {mudo2}")
+            else:
+                check("un clic real en el altavoz silencia y el otro lo saca", False,
+                      "el cursor no quedo sobre el widget (interferencia)",
+                      skipped=True)
+
+        # dejar el volumen como estaba
+        try:
+            volume_mod.fijar(app, inicial[0])
+            volume_mod.silenciar(app, inicial[1])
+        except Exception:
+            pass
+        print(f"   volumen restaurado a {inicial[0] * 100:.0f}%"
+              + (" silenciado" if inicial[1] else ""))
+
+    # devolver el widget a su barra y a su lugar de siempre
+    w_fin = WIN.get("widget")
+    if w_fin and win32gui.IsWindow(w_fin):
+        barras = list_bars()
+        quiero = cfg.get("taskbar_monitor") or None
+        i = next((n for n, b in enumerate(barras)
+                  if (None if b["primario"] else b["monitor"]) == quiero), None)
+        if i is not None:
+            win32gui.PostMessage(w_fin, win32con.WM_APP + 6, i, 1)
+            time.sleep(0.6)
+            w_fin = find_widget()[1] or w_fin
+        if w_fin and win32gui.IsWindow(w_fin):
+            win32gui.PostMessage(w_fin, win32con.WM_APP + 1,
+                                 0xFFFF if pos_ini is None else int(pos_ini * 1000), 1)
+            time.sleep(0.6)
 
     user32.SetCursorPos(wrect[0] - 300, 560)
     poller.stop()
