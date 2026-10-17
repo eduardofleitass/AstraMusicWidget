@@ -1,4 +1,4 @@
-# Astra-Music-widget 1.0.2
+# Astra-Music-widget 1.0.3
 
 Widget de musica que vive **dentro** de la barra de tareas de Windows: muestra lo que esta
 sonando (caratula, titulo, artista, barra de progreso clicable, controles y el volumen de
@@ -8,19 +8,29 @@ de multimedia de Windows, no un reproductor en particular.
 
 ## Novedades de esta version
 
-- **Ahora, si el programa no puede arrancar, lo dice**: aparece un cartel con la causa y el
-  detalle queda escrito en el log. Antes, cualquier fallo de arranque era invisible (el
-  ejecutable no tiene consola) y el programa parecia "no hacer nada". Esa mejora vale para
-  todas las versiones, pero no podia faltar antes de que lo pruebe gente en otras maquinas.
+- **En Windows 11 ahora se ve.** Era el problema de fondo: en esta version de Windows el
+  programa arrancaba, el log decia que habia arrancado y en pantalla no habia nada. La causa
+  es que la barra de Windows 11 (24H2/25H2) **sigue teniendo** el `ReBarWindow32` y el reloj
+  de siempre, asi que la comprobacion "aca se puede incrustar" daba que si; el widget se
+  creaba **dentro** de la barra y Windows 11, que dibuja la barra por su cuenta, no lo pintaba
+  nunca: la ventana existia, contestaba que estaba visible, estaba bien ubicada y quedaba
+  tapada. Ahora la comprobacion mira la estructura real de la barra (el puente de composicion
+  XAML, o la lista de tareas vieja apagada) y el widget pasa solo al **modo flotante**, que es
+  el que se ve. Medido y arreglado en la build 26300.
+- **El log dice por que**: cuando el widget arranca en modo flotante, el motivo queda escrito
+  en `astra-widget.log`, ademas del cartel de error que ya habia.
+
+Lo de las versiones anteriores, que sigue valiendo:
+
+- **Si el programa no puede arrancar, lo dice**: aparece un cartel con la causa y el detalle
+  queda escrito en el log. Antes, cualquier fallo de arranque era invisible (el ejecutable no
+  tiene consola) y el programa parecia "no hacer nada".
 - **Si ya hay otra copia corriendo y no se la puede traer al frente, tambien avisa**: antes el
   segundo intento salia en silencio total, asi que parecia que el programa estaba roto.
-
-Lo de la version anterior, que sigue valiendo:
-
-- Si la **barra de tareas no esta abajo** (a un costado o arriba del monitor), el widget ya no
-  intenta incrustarse ahi: pasa solo al **modo flotante**, que no le toca la barra. La decision
-  se toma **midiendo** el rectangulo de la barra contra el del monitor, asi que no depende de
-  la version ni del idioma de Windows.
+- Si la **barra de tareas no esta abajo** (a un costado o arriba del monitor), el widget pasa
+  solo al **modo flotante**, que no le toca la barra. La decision se toma **midiendo** el
+  rectangulo de la barra contra el del monitor, asi que no depende de la version ni del idioma
+  de Windows.
 
 ## Si no arranca (para diagnosticar)
 
@@ -29,10 +39,11 @@ Lo de la version anterior, que sigue valiendo:
    Si aparece texto con el estado del reproductor, el programa funciona y el problema es de
    pantalla. Si **no aparece nada**, algo lo esta frenando fuera del programa.
 2. Mirar si se creo `astra-widget.log` al lado del ejecutable (o en la carpeta de instalacion).
-   Ahi dice que paso, con fecha y hora.
+   Ahi dice que paso, con fecha y hora: incluye el modo que eligio y por que.
 3. Si el archivo ni se creo, revisar **Seguridad de Windows → Proteccion contra virus y
    amenazas → Historial de proteccion**: Windows puede estar bloqueando un ejecutable sin
-   firma digital bajado de internet (elegir "Permitir en el dispositivo").
+   firma digital bajado de internet (elegir "Permitir en el dispositivo"). El primer arranque
+   de un ejecutable recien bajado tambien puede tardar: Windows lo esta revisando.
 
 ## Que se puede hacer
 
@@ -55,7 +66,7 @@ Lo de la version anterior, que sigue valiendo:
 
 Dos opciones, las dos sin Python:
 
-- **Instalador** (`Astra-Music-widget-1.0.2-setup.exe`, 30 MB): instala por usuario en
+- **Instalador** (`Astra-Music-widget-1.0.3-setup.exe`, 30 MB): instala por usuario en
   `%LOCALAPPDATA%\Programs\Astra-Music-widget`, crea los accesos del menu Inicio y el
   arranque con Windows, y deja un desinstalador en Ajustes → Aplicaciones. No pide
   administrador.
@@ -67,10 +78,10 @@ Dos opciones, las dos sin Python:
 
 ## Requisitos y detalles
 
-- Windows 10 1809 o posterior. En **Windows 11** la barra ya no permite incrustar ventanas,
+- Windows 10 1809 o posterior. En **Windows 11** la barra nueva no admite ventanas propias,
   asi que ahi el widget se dibuja como una **tira propia** pegada al borde de abajo (mismo
   dibujo, mismos clics, mismos atajos; se mueve a lo largo de la franja y se acuerda donde
-  lo dejaste).
+  lo dejaste). Lo comprueba solo al arrancar, mirando la estructura de la barra.
 - Para correrlo desde el codigo: Python 3.11 (`setup.bat` arma el entorno).
 
 ## Licencia
