@@ -844,6 +844,13 @@ afuera que un clic realmente cambio de tema o movio la reproduccion.
   son tres: `winsdk` (SMTC), `pywin32` (Win32) y `pillow` (dibujo).
 
 
+## Licencia
+
+MIT (ver [LICENSE](LICENSE)): cualquiera puede usar, copiar, modificar y distribuir este
+programa, tambien comercialmente, mientras mantenga el aviso de copyright. El copyright
+sigue siendo del autor y el software se entrega **sin garantia** de ningun tipo.
+
+
 ## Limitaciones conocidas
 
 - En Windows 11 **no se incrusta**: esa barra ya no tiene donde alojar una ventana, asi

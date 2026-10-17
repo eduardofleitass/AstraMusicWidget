@@ -45,6 +45,12 @@ Dos opciones, las dos sin Python:
   lo dejaste).
 - Para correrlo desde el codigo: Python 3.11 (`setup.bat` arma el entorno).
 
+## Licencia
+
+MIT: usalo, copialo, modificalo o vendelo si queres, manteniendo el aviso de copyright.
+El autor sigue siendo el dueño del codigo y el programa se entrega sin garantia.
+
+
 ## Lo que no hace
 
 - **Sobre un juego en pantalla completa exclusiva no se puede dibujar encima** (Windows le

@@ -50,7 +50,7 @@ VSVersionInfo(
         StringStruct('OriginalFilename', 'Astra-Music-widget.exe'),
         StringStruct('ProductName', 'Astra-Music-widget'),
         StringStruct('ProductVersion', '{__version__}'),
-        StringStruct('LegalCopyright', 'Uso libre')])]),
+        StringStruct('LegalCopyright', 'Copyright (C) 2026 Eduardo Fleitas (MIT)')])]),
     VarFileInfo([VarStruct('Translation', [1034, 1200])])
   ]
 )
