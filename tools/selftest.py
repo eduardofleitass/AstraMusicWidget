@@ -1105,10 +1105,15 @@ def main() -> int:
                  if est else "no tiene sesion de audio"),
               skipped=not est)
         ses = volume_mod.sesiones()
+        # La API puede contestar bien y no haber NINGUNA sesion de audio (nada usando el
+        # sonido en este momento, como una maquina con la musica en pausa): eso es el estado
+        # de la maquina, no una falla del programa. Solo es falla si la llamada revienta.
         check("la API de audio del sistema responde",
-              isinstance(ses, list) and len(ses) > 0,
+              isinstance(ses, list),
               f"{len(ses)} sesiones: "
-              + ", ".join(sorted({x.get('exe', '?') for x in ses}))[:80])
+              + (", ".join(sorted({x.get('exe', '?') for x in ses}))[:80]
+                 or "nada esta usando el audio ahora"),
+              skipped=isinstance(ses, list) and not ses)
     except Exception as exc:
         check("la API de audio del sistema responde", False, repr(exc))
 

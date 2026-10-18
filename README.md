@@ -21,7 +21,8 @@ que suene en Chrome, Edge o Brave), sin plugins ni integraciones.
 Los dos links son **fijos**: apuntan siempre al ultimo release publicado, asi que se pueden
 compartir (o guardar en un marcador) sin que dejen de valer en la version siguiente. Ninguna
 de las dos necesita Python instalado. Todas las versiones, con su numero y sus notas, quedan
-en [releases](https://github.com/eduardofleitass/AstraMusicWidget/releases).
+en [releases](https://github.com/eduardofleitass/AstraMusicWidget/releases) — si una version
+no anda en tu Windows, ahi esta la vuelta atras: las anteriores no se borran nunca.
 
 ![El widget animando las ondas en la barra de tareas](assets/demo.gif)
 
@@ -940,6 +941,9 @@ afuera que un clic realmente cambio de tema o movio la reproduccion.
 
 - Windows 10 1809 o posterior (SMTC necesita esa version). En Windows 11 anda en modo
   flotante (ver esa seccion).
+- Verificado en **Windows 10 22H2 (build 19045)**, incrustado en la barra, y en **Windows 11
+  24H2/25H2 (build 26300)**, en modo flotante. Es el mismo ejecutable: el modo se elige al
+  arrancar, midiendo la estructura de la barra (no la version de Windows).
 - **O el .exe**: `python tools/build_exe.py` deja `dist/Astra-Music-widget.exe` (27 MB, sin
   consola, con su icono). No necesita Python ni el entorno virtual: es un archivo para
   pasar a otra maquina. Guarda su `config.json` y su `astra-widget.log` **al lado del

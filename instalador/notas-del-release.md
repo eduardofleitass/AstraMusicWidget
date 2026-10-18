@@ -1,4 +1,4 @@
-# Astra-Music-widget 1.0.6
+# Astra-Music-widget 1.0.7
 
 Widget de musica que vive **dentro** de la barra de tareas de Windows: muestra lo que esta
 sonando (caratula, titulo, artista, barra de progreso clicable, controles y el volumen de
@@ -8,18 +8,21 @@ de multimedia de Windows, no un reproductor en particular.
 
 ## Novedades de esta version
 
-- **Los botones ya no tienen una columna muerta.** Las zonas clicables de anterior / play /
-  siguiente se calculaban redondeando los dos bordes de cada celda por separado, y en una
-  barra de tareas de 48 px (Windows 11) la tercera celda empezaba en el pixel 304 mientras la
-  segunda terminaba en el 303: quedaba una columna de 1 px sin dueno donde el clic no hacia
-  nada. Ahora cada celda empieza exactamente donde termina la anterior (verificado a 40, 48,
-  50 y 60 px de barra).
-- **Con el fondo en "Sin fondo" y el color del widget tomado de Windows, el texto se lee.**
-  El juego de colores (claro u oscuro) se elegia por el color del sistema aunque el fondo no se
-  dibujara, asi que sobre una barra de tareas clara quedaba texto claro (contraste 5, medido).
-  Ahora la eleccion mira el color del chip cuando el chip se dibuja, y lo que hay detras de la
-  barra cuando no. Lo mismo para el panel: con su fondo en 0, el texto sigue a lo que tenga
-  atras (sobre un juego claro, texto oscuro).
+- **Elegir el color del fondo hace algo tambien con el fondo apagado.** Con el widget en
+  *Fondo del widget → Sin fondo*, elegir *Claro*, *Oscuro* o *Del tema de Windows* no
+  cambiaba **nada** en pantalla: sin chip dibujado no hay color que pintar, asi que el menu
+  parecia roto (medido: con alfa 0, "claro" y "automatico" daban exactamente el mismo pixel).
+  Ahora, si elegis un color con el fondo apagado, el fondo se enciende (solido) y queda
+  anotado en el log; para volver a apagarlo esta el mismo submenu.
+- **Los links de descarga no cambian mas de una version a otra.** El README apunta a
+  `releases/latest/download/Astra-Music-widget-setup.exe` y
+  `releases/latest/download/Astra-Music-widget.exe`: siempre la ultima, siempre con el mismo
+  nombre. Cada release sube las dos copias versionadas y las dos de nombre fijo, asi que un
+  link que compartiste no queda apuntando a la version vieja.
+- **La verificacion del modo flotante dejo de mentir.** La suite que prueba el camino de
+  Windows 11 medía el color del fondo sobre un chip invisible cuando la configuracion tenia
+  *Sin fondo*, y reportaba tres fallas que no existian. Ahora fuerza un fondo visible mientras
+  mide y lo devuelve como estaba: 16/16, con la configuracion real del usuario.
 
 ## Una aclaracion sobre los atajos (Ctrl+Alt+flechas)
 
@@ -31,34 +34,42 @@ cualquier programa (probado registrando esa combinacion sola en una ventana de p
 toca, el ±10 s esta en la **rueda del mouse** (`Ctrl` = 1 s, `Shift` = 60 s, sola = 10 s) y en
 la **barra de progreso**, y las teclas se cambian en `widget/app.py` → tabla `HOTKEYS`.
 
-Lo de las versiones anteriores, que sigue valiendo:
+## Lo de las versiones anteriores, que sigue valiendo
 
+- **Los botones no tienen columnas muertas.** Las zonas clicables de anterior / play /
+  siguiente se calculaban redondeando los dos bordes de cada celda por separado, y en una
+  barra de tareas de 48 px (Windows 11) quedaba una columna de 1 px sin dueno donde el clic no
+  hacia nada. Ahora cada celda empieza exactamente donde termina la anterior (verificado a 40,
+  48, 50 y 60 px de barra).
+- **Con el fondo en *Sin fondo* y el color del widget tomado de Windows, el texto se lee.** El
+  juego de colores (claro u oscuro) se elegia por el color del sistema aunque el fondo no se
+  dibujara, asi que sobre una barra de tareas clara quedaba texto claro (contraste 5, medido).
+  Ahora la eleccion mira el color del chip cuando el chip se dibuja, y lo que hay detras de la
+  barra cuando no. Lo mismo para el panel: con su fondo en 0, el texto sigue a lo que tenga
+  atras (sobre un juego claro, texto oscuro).
 - **El fondo del widget se puede poner del color de Windows**: menu → *Color del widget* →
   *Del tema de Windows*. Toma el color con el que el sistema tiñe la barra de tareas y los
   bordes (el de Ajustes → Personalizacion → Colores; se lee de Windows, no hay que copiarlo a
   mano), asi el widget se ve como parte de la barra. Al lado quedan *Claro* y *Oscuro* para
-  forzarlo sin mirar el fondo, y *Automatico*, que es lo que hacia hasta ahora (tema claro si
-  lo que hay detras es claro).
+  forzarlo sin mirar el fondo, y *Automatico*, que es lo que hacia antes (tema claro si lo que
+  hay detras es claro).
 - **Opacidad de todo el widget**: menu → *Opacidad de todo el widget* (todo nitido / leve /
-  translucido / muy transparente). Es distinto de *Fondo del widget*: aquel decide cuanto se
-  ve la barra a traves del chip, y este apaga tambien el texto y la caratula, como ya hacia el
+  translucido / muy transparente). Es distinto de *Fondo del widget*: aquel decide cuanto se ve
+  la barra a traves del chip, y este apaga tambien el texto y la caratula, como ya hacia el
   panel. Combinado con *Sin fondo* deja el widget flotando sobre la barra sin caja.
-
-Lo de las versiones anteriores, que sigue valiendo:
-
-- **Las ondas de sonido ya no congelan el widget en Windows 11.** Con las ondas encendidas,
-  el widget se quedaba clavado: seguia corriendo, pero no volvia a dibujarse, asi que el menu
+- **Las ondas de sonido ya no congelan el widget en Windows 11.** Con las ondas encendidas, el
+  widget se quedaba clavado: seguia corriendo, pero no volvia a dibujarse, asi que el menu
   parecia no hacer nada. La tira de las ondas se pegaba sobre una franja calculada con dos
   cuentas distintas y, con la barra de tareas de 48 px, no caian en el mismo pixel.
 - **Los clics en la barra de progreso caen donde uno hace clic** (antes, con la barra de 48 px,
   el final de la barra saltaba al 72% del tema).
-- **En Windows 11 ahora se ve.** En esta version de Windows el programa arrancaba, el log
-  decia que habia arrancado y en pantalla no habia nada: la barra de Windows 11 (24H2/25H2)
-  **sigue teniendo** el `ReBarWindow32` y el reloj de siempre, asi que la comprobacion "aca
-  se puede incrustar" daba que si, el widget se creaba **dentro** de la barra y Windows 11,
-  que dibuja la barra por su cuenta, no lo pintaba nunca. Ahora la comprobacion mira la
-  estructura real de la barra y el widget pasa solo al **modo flotante**, que es el que se
-  ve. Medido y arreglado en la build 26300.
+- **En Windows 11 ahora se ve.** En esa version el programa arrancaba, el log decia que habia
+  arrancado y en pantalla no habia nada: la barra de Windows 11 (24H2/25H2) **sigue teniendo**
+  el `ReBarWindow32` y el reloj de siempre, asi que la comprobacion "aca se puede incrustar"
+  daba que si, el widget se creaba **dentro** de la barra y Windows 11, que dibuja la barra por
+  su cuenta, no lo pintaba nunca. Ahora la comprobacion mira la estructura real de la barra y
+  el widget pasa solo al **modo flotante**, que es el que se ve. Medido y arreglado en la build
+  26300.
 - **El log dice por que**: cuando el widget arranca en modo flotante, el motivo queda escrito
   en `astra-widget.log`, ademas del cartel de error que ya habia.
 - **Si el programa no puede arrancar, lo dice**: aparece un cartel con la causa y el detalle
@@ -103,14 +114,19 @@ Lo de las versiones anteriores, que sigue valiendo:
 
 ## Como se instala
 
-Dos opciones, las dos sin Python:
+Dos opciones, las dos sin Python. Los dos links son fijos (siempre la ultima version):
 
-- **Instalador** (`Astra-Music-widget-1.0.6-setup.exe`, 30 MB): instala por usuario en
-  `%LOCALAPPDATA%\Programs\Astra-Music-widget`, crea los accesos del menu Inicio y el
-  arranque con Windows, y deja un desinstalador en Ajustes → Aplicaciones. No pide
-  administrador.
-- **Portatil** (`Astra-Music-widget.exe`, 28 MB): un solo archivo, se copia donde quieras
-  y se ejecuta. Guarda su `config.json` y su log **al lado del ejecutable**.
+- **Instalador** ([`Astra-Music-widget-setup.exe`](https://github.com/eduardofleitass/AstraMusicWidget/releases/latest/download/Astra-Music-widget-setup.exe),
+  30 MB): instala por usuario en `%LOCALAPPDATA%\Programs\Astra-Music-widget`, crea los
+  accesos del menu Inicio y el arranque con Windows, y deja un desinstalador en Ajustes →
+  Aplicaciones. No pide administrador.
+- **Portatil** ([`Astra-Music-widget.exe`](https://github.com/eduardofleitass/AstraMusicWidget/releases/latest/download/Astra-Music-widget.exe),
+  28 MB): un solo archivo, se copia donde quieras y se ejecuta. Guarda su `config.json` y su
+  log **al lado del ejecutable**.
+
+En la release quedan ademas las copias con el numero en el nombre
+(`Astra-Music-widget-1.0.7-setup.exe`), por si hace falta quedarse en una version puntual: las
+versiones anteriores no se borran nunca.
 
 > **Windows va a avisar**: sin firma digital, SmartScreen muestra "Windows protegio tu PC"
 > la primera vez. Es el *Mas informacion* → *Ejecutar de todas formas*.
@@ -121,6 +137,9 @@ Dos opciones, las dos sin Python:
   asi que ahi el widget se dibuja como una **tira propia** pegada al borde de abajo (mismo
   dibujo, mismos clics, mismos atajos; se mueve a lo largo de la franja y se acuerda donde
   lo dejaste). Lo comprueba solo al arrancar, mirando la estructura de la barra.
+- Verificado en: **Windows 10 22H2 (build 19045)** con el widget incrustado en la barra, y
+  **Windows 11 24H2/25H2 (build 26300)** en modo flotante. El mismo ejecutable sirve para los
+  dos: el modo se elige al arrancar, midiendo la barra.
 - Para correrlo desde el codigo: Python 3.11 (`setup.bat` arma el entorno).
 
 ## Licencia
@@ -132,8 +151,8 @@ El autor sigue siendo el dueño del codigo y el programa se entrega sin garantia
 ## Lo que no hace
 
 - **Sobre un juego en pantalla completa exclusiva no se puede dibujar encima** (Windows le
-  entrega la pantalla al juego). Sobre juegos en ventana o pantalla completa sin bordes,
-  si: para eso esta el modo gaming del panel.
+  entrega la pantalla al juego). Sobre juegos en ventana o pantalla completa sin bordes, si:
+  para eso esta el modo gaming del panel.
 - Las **ondas son una animacion**, no un analisis de audio: Windows no expone los niveles
   por la via que usa el widget. Esta dicho en la documentacion para no vender humo.
 - No se puede mostrar en **dos barras a la vez** (vive en una por vez; se cambia de monitor
