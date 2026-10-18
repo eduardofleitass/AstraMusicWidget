@@ -228,6 +228,10 @@ def cfg_del_widget_en_ejecucion(cfg: dict) -> dict:
         if os.path.abspath(carpeta) == os.path.dirname(HERE):
             return cfg
         print(f"      (ajustes: los del widget que corre, en {carpeta})")
+        # OJO: no alcanza con devolver este dict. El bloque del panel vuelve a llamar a
+        # cfgmod.load(), y con el CONFIG_PATH del proyecto leia otros ajustes y despues los
+        # "restauraba" en el archivo del usuario (le dejaba el panel en modo gaming).
+        cfgmod.CONFIG_PATH = ruta
         return cfgmod.load(ruta)
     except Exception:
         return cfg
@@ -1614,7 +1618,7 @@ def main() -> int:
             time.sleep(1.0)
             w_antes = win32gui.FindWindow("AstraMusicPanel", None)
             pr_antes = rect(w_antes) if w_antes else (0, 0, 0, 0)
-            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 6, 1)      # modo gaming
+            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 6, 1)      # modo gaming (se devuelve al final)
             time.sleep(1.2)
             w_panel = win32gui.FindWindow("AstraMusicPanel", None)
             pr_g = rect(w_panel)
@@ -1631,12 +1635,12 @@ def main() -> int:
                   and pr_g[3] - pr_g[1] < pr_antes[3] - pr_antes[1],
                   f"{(pr_g[2] - pr_g[0])}x{pr_g[3] - pr_g[1]} "
                   f"(antes {pr_antes[2] - pr_antes[0]}x{pr_antes[3] - pr_antes[1]})")
-            cfg_g = cfgmod.load()
-            check("modo gaming: queda fijo (sin auto-ocultar ni HUD)",
-                  float(cfg_g.get("panel_auto_hide_s", 1) or 0) == 0
-                  and not cfg_g.get("panel_hud", True),
-                  f"auto-ocultar={cfg_g.get('panel_auto_hide_s')}, "
-                  f"hud={cfg_g.get('panel_hud')}")
+            # Se mira el comportamiento y no el archivo: la suite no guarda ajustes (los
+            # del usuario son suyos), asi que leer config.json diria cualquier cosa.
+            time.sleep(2.5)
+            check("modo gaming: queda fijo (no se oculta solo)",
+                  win32gui.IsWindowVisible(w_panel),
+                  f"visible a los 2,5 s = {win32gui.IsWindowVisible(w_panel)}")
             check("modo gaming: no le roba el foco al juego (NOACTIVATE) y va arriba",
                   bool(ex_g & 0x08000000) and bool(ex_g & 0x00000008),
                   f"NOACTIVATE={'si' if ex_g & 0x08000000 else 'no'}, "
