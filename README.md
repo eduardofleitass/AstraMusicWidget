@@ -563,10 +563,11 @@ con lugar para leer y apuntar bien.
   panel*). Un arrastre sobre la caratula sigue moviendo el widget: el panel se abre
   solo si no hubo movimiento.
 - **Cierra** con la cruz, con `Escape` (cuando tiene el foco), con `Ctrl+Alt+O` o con otro
-  clic en la caratula. **Tocar otra ventana no lo cierra**: el panel esta pensado para
-  cambiar de tema sin salir de lo que estas haciendo (un juego, una reunion, una planilla),
-  y cerrarse al tocar afuera lo dejaba inutil justo cuando se usa. Si lo preferis como globo
-  del sistema, `panel_cerrar_afuera` en `config.json` (ver la tabla de ajustes).
+  clic en la caratula. **Tocar otra ventana no lo cierra**, y ademas **queda siempre arriba**
+  de la ventana que estes usando: el panel esta pensado para cambiar de tema sin salir de lo
+  que estas haciendo (un juego, una reunion, una planilla), y si se cerrara o se fuera detras
+  al tocar afuera quedaria inutil justo cuando se usa. Si lo preferis como globo del sistema,
+  `panel_cerrar_afuera` en `config.json` (ver la tabla de ajustes).
 - **Tres tamanos** (menu > *Panel* > *Tamano*): *Normal* (320x178, caratula grande y tres
   lineas), *Chico* (280x84, dos filas) y *Tira fina* (320x34, **una sola fila**: caratula
   de 24, titulo y artista, barra de 2 px, los tres controles, el altavoz y la cruz). La
@@ -802,7 +803,6 @@ donde 12 son atajos de cosas que ya se hacen con el mouse es un menu que no se l
 | `panel_size` | `"normal"` | `"normal"` (320x178), `"chico"` (280x84) o `"tira"` (320x34, una fila) |
 | `panel_no_robar` | false | No le saca el foco a lo que este adelante (el juego sigue con el teclado) |
 | `panel_cerrar_afuera` | false | Con `true` el panel se cierra al tocar otra ventana (globo del sistema); por defecto queda abierto hasta que lo cierres |
-| `panel_topmost` | false | Queda siempre arriba (util con juegos en ventana) |
 | `panel_clics_al_juego` | false | Los clics pasan al juego como si el panel no estuviera |
 | `panel_auto_hide_s` | 0 | Se oculta solo tras N segundos sin usarlo (0 = nunca) |
 | `panel_hud` | false | Aparece un rato al cambiar de cancion |

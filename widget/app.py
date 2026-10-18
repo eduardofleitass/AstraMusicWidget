@@ -1503,7 +1503,7 @@ class WidgetApp:
             if msg == WM_APP_PANEL_CFG:
                 # pruebas y scripts: (clave, valor) en wParam/lParam no alcanza para
                 # texto, asi que la clave viene en wParam y el valor en lParam
-                claves = {1: "panel_no_robar", 2: "panel_topmost", 3: "panel_clics_al_juego",
+                claves = {1: "panel_no_robar", 3: "panel_clics_al_juego",
                           4: "panel_hud", 11: "panel_cerrar_afuera"}
                 if int(wp) == 5:
                     # 0 normal / 1 chico / 2 tira (lo usa el banco de pruebas)
@@ -2026,8 +2026,9 @@ class WidgetApp:
         ex = 0x00080000 | 0x00000080          # WS_EX_LAYERED | WS_EX_TOOLWINDOW
         if self.cfg.get("panel_no_robar", False):
             ex |= 0x08000000                  # WS_EX_NOACTIVATE
-        if self.cfg.get("panel_topmost", False):
-            ex |= 0x00000008                  # WS_EX_TOPMOST
+        # Siempre arriba: el panel es para cambiar de tema con otra app adelante, asi que
+        # quedarse debajo de esa app lo hace inutil (y se reporta como "se cerro").
+        ex |= 0x00000008                      # WS_EX_TOPMOST
         if self.cfg.get("panel_clics_al_juego", False):
             ex |= 0x00000020                  # WS_EX_TRANSPARENT
         return ex
@@ -2039,9 +2040,13 @@ class WidgetApp:
         try:
             win32gui.SetWindowLong(self.hwnd_panel, win32con.GWL_EXSTYLE,
                                    self._panel_ex_style())
-            win32gui.SetWindowPos(self.hwnd_panel, 0, 0, 0, 0, 0,
+            # El bit WS_EX_TOPMOST solo no sube la ventana: hay que decirselo a SetWindowPos.
+            # Con SWP_NOZORDER (lo que habia) el panel quedaba debajo de la ventana de
+            # adelante aunque el estilo dijera "topmost", y al tocar otra ventana parecia
+            # que se habia cerrado.
+            win32gui.SetWindowPos(self.hwnd_panel, win32con.HWND_TOPMOST, 0, 0, 0, 0,
                                   win32con.SWP_NOMOVE | win32con.SWP_NOSIZE
-                                  | win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE
+                                  | win32con.SWP_NOACTIVATE
                                   | 0x0020)   # SWP_FRAMECHANGED
         except Exception as exc:
             self.log("panel: no se pudieron aplicar los estilos: %r", exc)
@@ -2146,13 +2151,14 @@ class WidgetApp:
                                 win32con.SW_SHOWNOACTIVATE if sin_foco
                                 else win32con.SW_SHOW)
             if not sin_foco:
-                # Se activa: asi Escape y el clic afuera (WM_ACTIVATE) funcionan
+                # Se activa: asi Escape y el teclado funcionan
                 win32gui.SetForegroundWindow(self.hwnd_panel)
-            else:
-                # igual que arriba pero sin robar el foco
-                win32gui.SetWindowPos(self.hwnd_panel, -1, 0, 0, 0, 0,
-                                      win32con.SWP_NOMOVE | win32con.SWP_NOSIZE
-                                      | win32con.SWP_NOACTIVATE)
+            # Y queda SIEMPRE por encima de la ventana que estes usando: si no, al tocar
+            # otra ventana se va detras y parece que el panel se hubiera cerrado (sigue
+            # abierto, tapado).
+            win32gui.SetWindowPos(self.hwnd_panel, win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                                  win32con.SWP_NOMOVE | win32con.SWP_NOSIZE
+                                  | win32con.SWP_NOACTIVATE)
         except Exception:
             pass
         self.log("panel abierto en %s%s", (x, y, w, h),
@@ -2586,7 +2592,7 @@ class WidgetApp:
         self.cfg[clave] = valor
         if save:
             cfgmod.save(self.cfg)
-        if clave in ("panel_no_robar", "panel_topmost", "panel_clics_al_juego"):
+        if clave in ("panel_no_robar", "panel_clics_al_juego"):
             self._panel_aplicar_estilos()
         self._panel_sig = None
         self._panel_render(force=True)
@@ -2602,14 +2608,14 @@ class WidgetApp:
             # FONDO transparente. El alfa de todo el panel queda en 255 para que los
             # textos e iconos se lean nitidos sobre lo que haya detras.
             self.cfg.update({"panel_size": "chico", "panel_no_robar": True,
-                             "panel_topmost": True, "panel_auto_hide_s": 0,
+                             "panel_auto_hide_s": 0,
                              "panel_hud": False, "panel_alpha": 255,
                              "panel_bg_alpha": PANEL_BG_ALPHAS[0][0],
                              "panel_clics_al_juego": False,
                              "panel_cerrar_afuera": False})
         else:
             self.cfg.update({"panel_size": "normal", "panel_no_robar": False,
-                             "panel_topmost": False, "panel_auto_hide_s": 0,
+                             "panel_auto_hide_s": 0,
                              "panel_hud": False, "panel_alpha": 255,
                              "panel_bg_alpha": PANEL_BG_ALPHAS[0][0],
                              "panel_clics_al_juego": False})

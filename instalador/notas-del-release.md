@@ -1,4 +1,4 @@
-# Astra-Music-widget 1.0.8
+# Astra-Music-widget 1.0.9
 
 Widget de musica que vive **dentro** de la barra de tareas de Windows: muestra lo que esta
 sonando (caratula, titulo, artista, barra de progreso clicable, controles y el volumen de
@@ -7,6 +7,19 @@ sistema (Spotify, VLC, Groove, y lo que suene en Chrome/Edge/Brave), porque lee 
 de multimedia de Windows, no un reproductor en particular.
 
 ## Novedades de esta version
+
+- **El panel queda siempre arriba de la ventana que estes usando.** El arreglo anterior
+  (1.0.8) cubrio la mitad del problema: el panel ya no se *cierraba* al tocar otra ventana,
+  pero seguia siendo una ventana normal, asi que al tocar el juego o el navegador **se iba
+  detras** y parecia que habia desaparecido. Ahora se muestra siempre por encima (no es un
+  ajuste: es lo unico que tiene sentido para un panel que se usa con otra app adelante) y se
+  sube a la primera al abrirlo. Medido: con una consola en primer plano tapando toda esa
+  zona, el punto central del panel le pertenece al panel, no a la consola.
+- **La prueba que faltaba.** El banco *sabia* que otra ventana podia tapar el panel y en ese
+  caso se saltaba la comprobacion de dibujo, asi que el caso mas comun de uso no estaba
+  cubierto. Ahora hay una comprobacion propia: si algo tapa el panel, es FALLA.
+
+Lo de la 1.0.8, que sigue valiendo:
 
 - **El panel ya no se cierra al tocar otra ventana.** Era su peor defecto de uso: el panel
   existe para cambiar de tema **sin salir de lo que estas haciendo** (un juego, una reunion,
@@ -135,7 +148,7 @@ Dos opciones, las dos sin Python. Los dos links son fijos (siempre la ultima ver
   log **al lado del ejecutable**.
 
 En la release quedan ademas las copias con el numero en el nombre
-(`Astra-Music-widget-1.0.8-setup.exe`), por si hace falta quedarse en una version puntual: las
+(`Astra-Music-widget-1.0.9-setup.exe`), por si hace falta quedarse en una version puntual: las
 versiones anteriores no se borran nunca.
 
 > **Windows va a avisar**: sin firma digital, SmartScreen muestra "Windows protegio tu PC"

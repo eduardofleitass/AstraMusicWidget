@@ -80,7 +80,9 @@ DEFAULTS = {
     "panel_size": "normal",          # "normal" | "chico" (el chico es la mitad de alto)
     "panel_no_robar": False,         # WS_EX_NOACTIVATE: no le saca el foco al juego y
                                      # no se cierra al tocar afuera
-    "panel_topmost": False,          # siempre arriba de todo (juegos en ventana)
+    # El panel va SIEMPRE arriba de la ventana que estes usando (no es configurable: si
+    # queda debajo, al tocar otra ventana parece que se cerro y el panel no sirve para lo
+    # unico que sirve, cambiar de tema con otra app adelante).
     "panel_clics_al_juego": False,   # WS_EX_TRANSPARENT: los clics pasan al juego
     "panel_auto_hide_s": 0,          # 0 = nunca; se oculta solo tras N segundos
     "panel_hud": False,              # aparece un rato al cambiar de cancion

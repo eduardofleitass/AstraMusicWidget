@@ -17,9 +17,12 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import ctypes  # noqa: E402
+
 import win32con  # noqa: E402
 import win32api  # noqa: E402
 import win32gui  # noqa: E402
+import win32process  # noqa: E402
 
 from widget import config as cfgmod  # noqa: E402
 from widget import sistema  # noqa: E402
@@ -193,9 +196,47 @@ def scrub_abortar(hwnd) -> tuple:
     return rect(hwnd)
 
 
+def cfg_del_widget_en_ejecucion(cfg: dict) -> dict:
+    """Los ajustes que esta usando el widget que corre, aunque no sean los del proyecto.
+
+    Si lo que esta andando es el .exe portatil o el instalado, su `config.json` vive **al
+    lado de ese .exe**: leer el del proyecto da otros ajustes (medido: ancho 260 contra 320)
+    y media suite se pone en rojo por una diferencia que no es del programa. Se busca la
+    carpeta del proceso dueno de la ventana y, si tiene `config.json`, se usa ese.
+    """
+    try:
+        h = widget_ventana()
+        if not h:
+            return cfg
+        _hilo, pid = win32process.GetWindowThreadProcessId(h)
+        k32 = ctypes.windll.kernel32
+        ph = k32.OpenProcess(0x1000, False, pid)      # PROCESS_QUERY_LIMITED_INFORMATION
+        if not ph:
+            return cfg
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            tam = ctypes.c_uint(1024)
+            # OJO: QueryFullProcessImageNameW vive en KERNEL32, no en user32.
+            if not k32.QueryFullProcessImageNameW(ph, 0, buf, ctypes.byref(tam)):
+                return cfg
+        finally:
+            k32.CloseHandle(ph)
+        carpeta = os.path.dirname(buf.value)
+        ruta = os.path.join(carpeta, "config.json")
+        if not os.path.exists(ruta):
+            return cfg
+        if os.path.abspath(carpeta) == os.path.dirname(HERE):
+            return cfg
+        print(f"      (ajustes: los del widget que corre, en {carpeta})")
+        return cfgmod.load(ruta)
+    except Exception:
+        return cfg
+
+
 def main() -> int:
     global FLOTANTE
     cfg = cfgmod.load()
+    cfg = cfg_del_widget_en_ejecucion(cfg)
     p = tray_parts()
     if not check("la barra de tareas existe", bool(p["tray"])):
         return 1
@@ -551,10 +592,22 @@ def main() -> int:
         # le entregue el mouse a la barra de tareas en las zonas vacias.
         posicion(w_now, 0xFFFF, 0)
         wr = rect(w_now)
+        ancho = wr[2] - wr[0]
+        # Los puntos NO pueden estar escritos en px de un ancho fijo: con un widget de 260
+        # (config del usuario) el "hueco del play" a x=263 caia FUERA de la ventana y la
+        # prueba culpaba al widget de un hueco que era suyo. Se saca la celda del play de la
+        # tabla de layout, que ya escala con el ancho.
+        k_w = (wr[3] - wr[1]) / 40.0
+        celdas = draw.control_rects(ancho, k_w, cfg) or []
+        if len(celdas) > 2:
+            c_play = celdas[1]
+            hueco = (wr[0] + c_play[0] + 3, wr[1] + (c_play[1] + c_play[3]) // 2)
+        else:
+            hueco = ((wr[0] + wr[2]) // 2, (wr[1] + wr[3]) // 2)
         puntos = {
             "centro": ((wr[0] + wr[2]) // 2, (wr[1] + wr[3]) // 2),
-            "hueco del boton play/pausa": (wr[0] + 263, (wr[1] + wr[3]) // 2),
-            "zona vacia arriba al medio": (wr[0] + 150, wr[1] + 8),
+            "hueco del boton play/pausa": hueco,
+            "zona vacia arriba al medio": (wr[0] + ancho // 2 - 10, wr[1] + 8),
             "esquina inferior derecha": (wr[2] - 8, wr[3] - 8),
         }
         malos = [n for n, (x, y) in puntos.items()
@@ -1527,6 +1580,19 @@ def main() -> int:
             except Exception:
                 encima = 0
             tapado = bool(encima) and encima != w_panel
+            # El panel va SIEMPRE por encima de la ventana que estes usando. Si queda
+            # debajo, al tocar otra ventana *parece* que se cerro: sigue abierto, tapado.
+            # Ese es el reporte tipico de uso, asi que aca es FALLA... salvo que lo tape
+            # OTRA ventana siempre-arriba (el panel de Noticias de la barra, un cartel de
+            # UAC, un overlay de juego): eso es del sistema, no del panel.
+            try:
+                clase_encima = win32gui.GetClassName(encima) if encima else "?"
+                ex_encima = win32gui.GetWindowLong(encima, win32con.GWL_EXSTYLE) if encima else 0
+            except Exception:
+                clase_encima, ex_encima = "?", 0
+            check("el panel queda arriba de la ventana de adelante", not tapado,
+                  f"lo tapa {clase_encima} (0x{encima:X})" if tapado else "nada lo tapa",
+                  skipped=tapado and bool(ex_encima & 0x00000008))
             check("el panel esta pintado (no es un rectangulo negro)",
                   (not tapado) and max(vals) - min(vals) > 100
                   and sum(1 for v in vals if v > 150) > 300,
