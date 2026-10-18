@@ -8,7 +8,11 @@ listos para pegar.
 ## Lo que ya esta hecho
 
 - Repo publico con **descripcion, 7 topics, pagina web apuntando al release y licencia MIT**.
-- Release **v1.0.3** con los dos adjuntos (portatil de 28 MB e instalador de 30 MB).
+- **Links de descarga fijos** (no cambian con la version): el README apunta a
+  `releases/latest/download/Astra-Music-widget-setup.exe` y `.../Astra-Music-widget.exe`.
+  Cada release sube ademas una copia con nombre fijo; lo hace `tools\release.py`.
+- Release **v1.0.6** con los tres adjuntos (portatil de 28,7 MB, instalador de 30,4 MB y la
+  copia del instalador con nombre fijo).
 - README con **GIF animado**, distintivos (version, descargas, licencia), link de descarga
   arriba de todo y un **resumen en ingles**.
 - Tarjeta social **a medida** en `assets/social.png` (1280x640), lista para subir.
@@ -29,9 +33,9 @@ un grupo, se ve esa imagen o un cuadro gris. Es el multiplicador de todo lo dema
 ### Paso 2 — Publicarlo en winget (el canal que trae descargas sin que te busquen)
 
 Ya esta hecho y automatizado: `python tools\winget_pr.py` escribe el manifiesto en el repo,
-lo sube a una rama nueva del fork y abre el PR (el del 1.0.3 es el **#454943**). Para la
-proxima version se actualizan `VER` y `SHA` en ese script y se corre de nuevo; el SHA **se saca
-bajando el instalador ya publicado** en la release, nunca copiando el del archivo local.
+lo sube a una rama nueva del fork y abre el PR (el de la 1.0.5 es el **#454977**). La version
+sale de `widget/__init__.py` y el SHA se mide bajando el instalador ya publicado en la
+release, asi que no hay numeros que copiar a mano.
 
 Lo unico que no resuelve el codigo es el **CLA de Microsoft**: el bot lo pide en un comentario
 del PR y hasta que el dueño de la cuenta responda

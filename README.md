@@ -11,10 +11,17 @@ artista, barra de progreso clicable, controles y **el volumen de la app que suen
 sesion de multimedia del sistema, asi que anda con cualquier reproductor (Spotify, VLC, y lo
 que suene en Chrome, Edge o Brave), sin plugins ni integraciones.
 
-### [⬇️ Descargar la ultima version](https://github.com/eduardofleitass/AstraMusicWidget/releases/latest)
+### ⬇️ Descargar la ultima version
 
-Instalador (menu Inicio, arranque con Windows y desinstalador) o **portatil de un solo
-archivo**. Ninguna de las dos necesita Python instalado.
+| | que es | descarga |
+|---|---|---|
+| **Instalador** | menu Inicio, arranque con Windows y desinstalador | [`Astra-Music-widget-setup.exe`](https://github.com/eduardofleitass/AstraMusicWidget/releases/latest/download/Astra-Music-widget-setup.exe) |
+| **Portatil** | un solo archivo, no instala nada | [`Astra-Music-widget.exe`](https://github.com/eduardofleitass/AstraMusicWidget/releases/latest/download/Astra-Music-widget.exe) |
+
+Los dos links son **fijos**: apuntan siempre al ultimo release publicado, asi que se pueden
+compartir (o guardar en un marcador) sin que dejen de valer en la version siguiente. Ninguna
+de las dos necesita Python instalado. Todas las versiones, con su numero y sus notas, quedan
+en [releases](https://github.com/eduardofleitass/AstraMusicWidget/releases).
 
 ![El widget animando las ondas en la barra de tareas](assets/demo.gif)
 
@@ -26,9 +33,11 @@ clickable progress bar, transport controls and **per-app volume**, read from the
 media session (SMTC) so it works with Spotify, VLC and anything playing in the browser.
 Python + raw Win32 — no UI framework, no dependencies bundled.
 
-- **Download** the [latest release](https://github.com/eduardofleitass/AstraMusicWidget/releases/latest):
-  an installer (Start Menu shortcut, start with Windows, uninstaller) or a single portable
-  `.exe`. Neither requires Python on the target machine.
+- **Download** (both links are stable — they always point to the newest release):
+  the [installer](https://github.com/eduardofleitass/AstraMusicWidget/releases/latest/download/Astra-Music-widget-setup.exe)
+  (Start Menu shortcut, start with Windows, uninstaller) or the
+  [portable `.exe`](https://github.com/eduardofleitass/AstraMusicWidget/releases/latest/download/Astra-Music-widget.exe).
+  Neither requires Python on the target machine.
 - **Requires** Windows 10 1809 or later. On **Windows 11** the taskbar no longer allows
   embedding a window, so the widget runs as a floating strip pinned to the bottom edge
   (same drawing, same clicks, same hotkeys).
@@ -822,9 +831,20 @@ Si te gusta mas ancho o mas angosto: clic derecho sobre el widget > *Más ancho*
 El numero vive en **un solo lugar**: `widget/__init__.py` (`__version__`). Al empaquetar,
 `tools/build_exe.py` lo propaga al ejecutable (es lo que Windows muestra en Propiedades) y
 al instalador (`instalador/version.iss`, de donde sale el nombre del `setup.exe`). Para
-sacar una version nueva: cambiarlo ahi, `python -c "from widget import __version__;
-print(__version__)"` para confirmar, y volver a empaquetar. `main.py --version` tambien lo
-muestra.
+sacar una version nueva: cambiarlo ahi y correr
+
+    python tools\release.py     # compila, arma el instalador y sube la release
+
+que ademas sube una copia del instalador con **nombre fijo**
+(`Astra-Music-widget-setup.exe`), que es lo que hace que el link de descarga del README no
+cambie nunca. Despues, si corresponde, `python tools\winget_pr.py` (toma la version de ese
+mismo lugar y mide el SHA bajando el instalador publicado).
+
+Por que no una carpeta en el repo con los binarios: cada version pesa ~58 MB y git guarda
+**todas** para siempre, asi que el repo pasaria de 1 MB a cientos en pocas versiones (y
+GitHub rechaza archivos de mas de 100 MB). Una release guarda los mismos binarios con
+historial, contador de descargas y link estable, sin tocar el repositorio.
+
 
 
 ## Empaquetado (.exe)
@@ -891,6 +911,8 @@ python tools\selftest.py         # suite de verificacion (widget en marcha)
 python tools\flotante_test.py    # el modo de Windows 11 (ventana propia, sin barra)
 python tools\diagnostico_barra.py   # por que se incrusta o pasa a flotante (arbol y z-order)
 python tools\build_exe.py        # empaqueta el .exe (y propaga la version)
+python tools\release.py          # compila, arma el instalador y sube la release a GitHub
+python tools\winget_pr.py        # manifiesto de winget + PR (toma la version del codigo)
 python tools\make_readme_shots.py   # regenera assets/captura.png (con datos de ejemplo)
 ISCC.exe instalador\Astra-Music-widget.iss   # arma el instalador (Inno Setup 6)
 python tools\clicktest.py        # prueba de clic real con el mouse (restaura el estado)
