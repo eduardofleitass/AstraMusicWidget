@@ -1616,6 +1616,15 @@ class WidgetApp:
         modo = str(modo).lower()
         if modo not in modos:
             return
+        # Con el fondo en "sin fondo" (alfa 0) no hay chip que pintar, asi que elegir un
+        # color no cambiaba NADA en pantalla: parecia un menu roto (medido en la suite del
+        # modo flotante, donde 'claro' y 'auto' daban el mismo pixel). El color solo tiene
+        # sentido con el fondo dibujado, asi que se lo enciende; si el usuario lo quiere
+        # transparente otra vez, esta en el mismo submenu.
+        if int(self.cfg.get("chip_alpha", 232)) <= 0:
+            self.cfg["chip_alpha"] = ALPHA_LEVELS[0][0]
+            self.log("el fondo estaba en 'sin fondo': se puso %s para que el color se vea",
+                     ALPHA_LEVELS[0][1].lower())
         self.cfg["chip_color"] = modo
         if save:
             cfgmod.save(self.cfg)

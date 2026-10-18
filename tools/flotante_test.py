@@ -190,6 +190,7 @@ def main() -> int:
     # color de una franja del chip: arriba a la derecha del texto, donde no hay letras.
     WM_APP_CHIP_COLOR = win32con.WM_APP + 13
     WM_APP_WIDGET_ALPHA = win32con.WM_APP + 12
+    WM_APP_ALPHA = win32con.WM_APP + 2        # alfa del chip (0 = sin fondo)
     print("\n-- fondo del widget y opacidad de todo el widget --")
 
     def franja_chip():
@@ -206,6 +207,13 @@ def main() -> int:
 
     acento = sistema.color_acento()
     barra = barra_al_lado()
+    # El chip tiene que estar DIBUJADO para poder medir su color: si el usuario lo tiene en
+    # "sin fondo" (alfa 0) no hay chip que medir y las tres comprobaciones terminaban
+    # midiendo el fondo de la barra, con las dos mitades iguales (medido con alfa 0:
+    # 'claro' y 'auto' daban lo mismo, (39,54,63), y la opacidad tampoco se notaba).
+    # Se fuerza un fondo visible mientras se mide y se devuelve el que tenia al final.
+    alpha_antes = int(cfg.get("chip_alpha", 232))
+    win32gui.SendMessage(hp, WM_APP_ALPHA, 240, 0)
     fondo = {}
     for i, modo in enumerate(("auto", "accent", "light", "dark")):
         win32gui.SendMessage(hp, WM_APP_CHIP_COLOR, i, 0)
@@ -237,6 +245,7 @@ def main() -> int:
     check("la opacidad de todo el widget lo acerca al fondo de la barra",
           dist(op160, barra) < dist(op255, barra) and dist(op255, op160) >= 8,
           f"a 160 queda a {dist(op160, barra)} de la barra y a 255 a {dist(op255, barra)}")
+    win32gui.SendMessage(hp, WM_APP_ALPHA, alpha_antes, 0)   # el fondo que tenia el usuario
 
     # clic real sobre play/pausa, con el mismo camino que usa el usuario
     poller = MediaPoller(interval=0.4)
