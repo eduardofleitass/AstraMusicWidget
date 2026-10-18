@@ -84,6 +84,9 @@ DEFAULTS = {
     "panel_clics_al_juego": False,   # WS_EX_TRANSPARENT: los clics pasan al juego
     "panel_auto_hide_s": 0,          # 0 = nunca; se oculta solo tras N segundos
     "panel_hud": False,              # aparece un rato al cambiar de cancion
+    "panel_cerrar_afuera": False,    # cerrarse al tocar otra ventana (globo del sistema);
+                                     # por defecto NO: el panel es para cambiar de tema sin
+                                     # salir de lo que estas haciendo
     "panel_alpha": 255,              # opacidad de todo el panel (235 = leve, 160 = muy)
     "panel_bg_alpha": 250,           # alfa del fondo dibujado
     "panel_pos": None,               # [x, y] en pantalla; None = encima del widget

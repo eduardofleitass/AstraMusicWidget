@@ -1586,6 +1586,27 @@ def main() -> int:
                   win32gui.IsWindowVisible(w_panel),
                   f"visible={win32gui.IsWindowVisible(w_panel)}")
 
+            # Perder la activacion (lo que manda Windows al tocar otra ventana) tampoco lo
+            # cierra: el panel es para cambiar de tema sin salir de la app de adelante. Se
+            # manda el mensaje exacto en vez de esperar a que el sistema lo mande.
+            win32gui.SendMessage(w_panel, win32con.WM_ACTIVATE, 0, 0)   # WA_INACTIVE
+            time.sleep(0.7)
+            check("perder el foco NO cierra el panel",
+                  win32gui.IsWindowVisible(w_panel),
+                  f"visible={win32gui.IsWindowVisible(w_panel)}")
+            # la opcion que devuelve el comportamiento de globo del sistema (sin guardar)
+            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 11, 1)
+            time.sleep(0.6)
+            win32gui.SendMessage(w_panel, win32con.WM_ACTIVATE, 0, 0)
+            time.sleep(0.7)
+            check("con 'cerrar al tocar afuera' si se cierra",
+                  not win32gui.IsWindowVisible(w_panel),
+                  f"visible={win32gui.IsWindowVisible(w_panel)}")
+            win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 11, 0)
+            win32gui.PostMessage(w_now, WM_APP_PANEL, 1, 0)
+            time.sleep(0.8)
+            w_panel = win32gui.FindWindow("AstraMusicPanel", None)
+
             # (g) dejar pasar los clics al juego (WS_EX_TRANSPARENT)
             win32gui.PostMessage(w_now, WM_APP_PANEL_CFG, 3, 1)
             time.sleep(0.8)

@@ -1,4 +1,4 @@
-# Astra-Music-widget 1.0.7
+# Astra-Music-widget 1.0.8
 
 Widget de musica que vive **dentro** de la barra de tareas de Windows: muestra lo que esta
 sonando (caratula, titulo, artista, barra de progreso clicable, controles y el volumen de
@@ -7,6 +7,16 @@ sistema (Spotify, VLC, Groove, y lo que suene en Chrome/Edge/Brave), porque lee 
 de multimedia de Windows, no un reproductor en particular.
 
 ## Novedades de esta version
+
+- **El panel ya no se cierra al tocar otra ventana.** Era su peor defecto de uso: el panel
+  existe para cambiar de tema **sin salir de lo que estas haciendo** (un juego, una reunion,
+  una planilla), y cualquier clic afuera lo hacia desaparecer justo en el momento en que se
+  usa. Ahora queda abierto hasta que lo cierres con la cruz, con `Escape` (si tiene el foco)
+  o con `Ctrl+Alt+O`; el clic en la caratula tambien lo cierra. En modo gaming ya era asi;
+  ahora vale tambien en el modo escritorio, que era el que se comportaba como un globo del
+  sistema. Si alguien lo prefiere asi, `panel_cerrar_afuera` en `config.json` lo devuelve.
+
+Lo de la 1.0.7, que sigue valiendo:
 
 - **Elegir el color del fondo hace algo tambien con el fondo apagado.** Con el widget en
   *Fondo del widget → Sin fondo*, elegir *Claro*, *Oscuro* o *Del tema de Windows* no
@@ -125,7 +135,7 @@ Dos opciones, las dos sin Python. Los dos links son fijos (siempre la ultima ver
   log **al lado del ejecutable**.
 
 En la release quedan ademas las copias con el numero en el nombre
-(`Astra-Music-widget-1.0.7-setup.exe`), por si hace falta quedarse en una version puntual: las
+(`Astra-Music-widget-1.0.8-setup.exe`), por si hace falta quedarse en una version puntual: las
 versiones anteriores no se borran nunca.
 
 > **Windows va a avisar**: sin firma digital, SmartScreen muestra "Windows protegio tu PC"

@@ -1504,7 +1504,7 @@ class WidgetApp:
                 # pruebas y scripts: (clave, valor) en wParam/lParam no alcanza para
                 # texto, asi que la clave viene en wParam y el valor en lParam
                 claves = {1: "panel_no_robar", 2: "panel_topmost", 3: "panel_clics_al_juego",
-                          4: "panel_hud"}
+                          4: "panel_hud", 11: "panel_cerrar_afuera"}
                 if int(wp) == 5:
                     # 0 normal / 1 chico / 2 tira (lo usa el banco de pruebas)
                     self.set_panel_size(("normal", "chico", "tira")[min(2, int(lp))])
@@ -2282,10 +2282,13 @@ class WidgetApp:
                 # de los overlays: asi el juego no pierde el foco ni el teclado.
                 return 3      # MA_NOACTIVATE
             if msg == win32con.WM_ACTIVATE and (wp & 0xFFFF) == 0:   # WA_INACTIVE
-                # Clic afuera: el panel se cierra (como cualquier globo del sistema).
-                # En modo gaming NO: ahi el panel nunca tiene el foco, asi que tocar el
-                # juego no lo cierra (es lo que se pide para jugar).
-                if not self.cfg.get("panel_no_robar", False):
+                # Clic afuera. Por defecto **no** se cierra: el panel existe para cambiar
+                # de tema sin salir de lo que estas haciendo (un juego, una reunion, una
+                # planilla), y cerrarse al tocar cualquier otra ventana lo volvia inutil
+                # — justo el momento en que uno lo usa. Se cierra con la cruz, con Escape
+                # (si tiene el foco) o con el atajo `Ctrl+Alt+O`.
+                # `panel_cerrar_afuera` devuelve el comportamiento de globo del sistema.
+                if self.cfg.get("panel_cerrar_afuera", False):
                     self.toggle_panel(False)
                 return 0
             if msg == win32con.WM_KEYDOWN:
@@ -2602,7 +2605,8 @@ class WidgetApp:
                              "panel_topmost": True, "panel_auto_hide_s": 0,
                              "panel_hud": False, "panel_alpha": 255,
                              "panel_bg_alpha": PANEL_BG_ALPHAS[0][0],
-                             "panel_clics_al_juego": False})
+                             "panel_clics_al_juego": False,
+                             "panel_cerrar_afuera": False})
         else:
             self.cfg.update({"panel_size": "normal", "panel_no_robar": False,
                              "panel_topmost": False, "panel_auto_hide_s": 0,

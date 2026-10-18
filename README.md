@@ -562,8 +562,11 @@ con lugar para leer y apuntar bien.
 - **Abre** con un clic seco en la caratula del widget o desde el menu (*Abrir el
   panel*). Un arrastre sobre la caratula sigue moviendo el widget: el panel se abre
   solo si no hubo movimiento.
-- **Cierra** con la cruz, con `Escape`, con un clic afuera (pierde el foco) o con otro
-  clic en la caratula.
+- **Cierra** con la cruz, con `Escape` (cuando tiene el foco), con `Ctrl+Alt+O` o con otro
+  clic en la caratula. **Tocar otra ventana no lo cierra**: el panel esta pensado para
+  cambiar de tema sin salir de lo que estas haciendo (un juego, una reunion, una planilla),
+  y cerrarse al tocar afuera lo dejaba inutil justo cuando se usa. Si lo preferis como globo
+  del sistema, `panel_cerrar_afuera` en `config.json` (ver la tabla de ajustes).
 - **Tres tamanos** (menu > *Panel* > *Tamano*): *Normal* (320x178, caratula grande y tres
   lineas), *Chico* (280x84, dos filas) y *Tira fina* (320x34, **una sola fila**: caratula
   de 24, titulo y artista, barra de 2 px, los tres controles, el altavoz y la cruz). La
@@ -596,8 +599,9 @@ Detalles tecnicos que valen la pena:
   barra de tareas ni en Alt+Tab, es un globo del widget y no una aplicacion aparte.
   Con `WS_EX_LAYERED` tiene fondo redondeado y translucido (250/255) y se presenta con
   `UpdateLayeredWindow`, igual que el widget.
-- El cierre por "clic afuera" es `WM_ACTIVATE` con `WA_INACTIVE`, el mismo mecanismo que
-  usan los globos del sistema.
+- El "clic afuera" llega como `WM_ACTIVATE` con `WA_INACTIVE`. El panel **no** se cierra con
+  eso (antes si, y en medio de una partida desaparecia al tocar el juego, que es cuando uno
+  lo necesita); con `panel_cerrar_afuera` vuelve el comportamiento de globo del sistema.
 - Empezar un arrastre del widget (o mudarlo de barra) **cierra el panel primero**:
   medido, si el panel se cerraba en el medio de un arrastre, la transicion de foco se
   comia el `mousedown` y el arrastre no arrancaba.
@@ -614,8 +618,8 @@ derecho > *Panel* > *Modo gaming*) prende el conjunto:
 | Ajuste | Escritorio | Gaming |
 |---|---|---|
 | Tamano | 320x178 (caratula grande, 3 lineas) | **280x84** (dos filas: caratula y texto arriba, controles, barra y volumen abajo) |
-| Foco | se activa (Escape y clic afuera funcionan) | **no se activa nunca** (`WS_EX_NOACTIVATE` + `WM_MOUSEACTIVATE` → `MA_NOACTIVATE`) |
-| Al tocar afuera | se cierra | **sigue abierto** |
+| Foco | se activa (Escape y el teclado andan) | **no se activa nunca** (`WS_EX_NOACTIVATE` + `WM_MOUSEACTIVATE` → `MA_NOACTIVATE`) |
+| Al tocar afuera | **sigue abierto** | **sigue abierto** (igual en los dos modos) |
 | Capas | normal | **siempre arriba** (`WS_EX_TOPMOST`, sirve sobre juegos en ventana) |
 | Auto-ocultar | nunca | **nunca: queda fijo** hasta que lo cierres |
 | Al cambiar de cancion | no aparece | no aparece solo (se abre cuando vos queres, con `Ctrl+Alt+O`) |
@@ -796,7 +800,8 @@ donde 12 son atajos de cosas que ya se hacen con el mouse es un menu que no se l
 | `panel_mode` | `"normal"` | `"gaming"` recuerda el estado del interruptor del menu |
 | `flotante_reserva_derecha` | 300 | Hueco que se le deja al reloj en modo flotante (Windows 11) |
 | `panel_size` | `"normal"` | `"normal"` (320x178), `"chico"` (280x84) o `"tira"` (320x34, una fila) |
-| `panel_no_robar` | false | No le saca el foco a lo que este adelante y no se cierra al tocar afuera |
+| `panel_no_robar` | false | No le saca el foco a lo que este adelante (el juego sigue con el teclado) |
+| `panel_cerrar_afuera` | false | Con `true` el panel se cierra al tocar otra ventana (globo del sistema); por defecto queda abierto hasta que lo cierres |
 | `panel_topmost` | false | Queda siempre arriba (util con juegos en ventana) |
 | `panel_clics_al_juego` | false | Los clics pasan al juego como si el panel no estuviera |
 | `panel_auto_hide_s` | 0 | Se oculta solo tras N segundos sin usarlo (0 = nunca) |
