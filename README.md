@@ -926,6 +926,7 @@ python tools\selftest.py         # suite de verificacion (widget en marcha)
 python tools\flotante_test.py    # el modo de Windows 11 (ventana propia, sin barra)
 python tools\diagnostico_barra.py   # por que se incrusta o pasa a flotante (arbol y z-order)
 python tools\prueba_monitor.py   # elegir monitor: contrato del host (sin ventana) y --e2e en vivo
+python tools\menu_items.py       # que ofrece el menu contextual ahora (items, ids y submenus)
 python tools\build_exe.py        # empaqueta el .exe (y propaga la version)
 python tools\release.py          # compila, arma el instalador y sube la release a GitHub
 python tools\winget_pr.py        # manifiesto de winget + PR (toma la version del codigo)

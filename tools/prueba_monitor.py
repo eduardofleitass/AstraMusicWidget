@@ -42,6 +42,49 @@ def monitor_de(hwnd):
     return None
 
 
+def menu():
+    """El submenu *Monitor* se arma con la lista correcta en los DOS hosts.
+
+    Incrustado (Windows 10) la lista son las barras de tarea, una por monitor; flotante
+    (Windows 11) los monitores. Se comprueba sin abrir ventanas: el constructor de la
+    app no crea ninguna.
+    """
+    from widget.app import WidgetApp
+    from widget import config as cfgmod
+    from widget.taskbarwin import TaskbarHost, list_bars
+
+    print("\n-- submenu Monitor (los dos hosts) --")
+    app = WidgetApp(cfgmod.load())
+    mons = monitores()
+
+    app.host = FloatingHost(log=app.log)
+    op = app._monitor_opciones()
+    check("flotante: el menu ofrece los monitores",
+          [m["monitor"] for m in op] == [m["monitor"] for m in mons],
+          [m["nombre"] for m in op])
+    check("flotante: los ids 50+i caben en el rango que atiende _handle_menu",
+          all(50 <= 50 + i <= 59 for i in range(len(op))))
+    otro = next((m for m in op if not m["primario"]), None)
+    if otro:
+        app.host.select(otro["monitor"])
+        check("flotante: _misma_barra reconoce el monitor donde ya esta",
+              app._misma_barra(otro))
+        principal = next(m for m in op if m["primario"])
+        check("flotante: _misma_barra distingue el otro monitor",
+              not app._misma_barra(principal))
+
+    app.host = TaskbarHost(log=app.log)
+    op2 = app._monitor_opciones()
+    barras = list_bars()
+    check("incrustado: el menu sigue saliendo de las barras",
+          len(op2) == (len(barras) if len(barras) > 1 else 0),
+          [b["nombre"] for b in op2])
+    check("incrustado: con una sola barra el submenu no aparece",
+          len(barras) > 1 or op2 == [], op2)
+    check("incrustado: _misma_barra compara handles de barra",
+          app._misma_barra({"tray": app.host.tray}))
+
+
 def contrato():
     mons = monitores()
     print("-- monitores --")
@@ -123,5 +166,6 @@ if __name__ == "__main__":
     if a.e2e:
         raise SystemExit(e2e())
     contrato()
+    menu()
     print("\n%s" % ("TODO OK" if not fallos else "FALLARON: %s" % fallos))
     raise SystemExit(0 if not fallos else 1)

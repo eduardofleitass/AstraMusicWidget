@@ -2792,15 +2792,19 @@ class WidgetApp:
             win32gui.AppendMenu(pan_sub, win32con.MF_POPUP | win32con.MF_STRING,
                                 tam_sub, "Tamano")
             pan_check(64, "Dejar pasar los clics al juego", bool(self.cfg.get("panel_clics_al_juego", False)))
-            alpha_sub = win32gui.CreatePopupMenu()
+            # OJO con el nombre: `alpha_sub` (arriba) es el submenu del CHIP (ids 20..23,
+            # "Fondo del widget"). Este del panel necesita su propia variable: cuando se
+            # reuso `alpha_sub` aca, el item "Fondo del widget" quedo apuntando a la
+            # opacidad del PANEL y el fondo del widget se volvio un control muerto.
+            panel_alpha_sub = win32gui.CreatePopupMenu()
             alpha_actual = int(self.cfg.get("panel_alpha", 255))
             for i, (val, etiqueta) in enumerate(PANEL_ALPHAS):
                 flags = win32con.MF_STRING
                 if val == alpha_actual:
                     flags |= win32con.MF_CHECKED
-                win32gui.AppendMenu(alpha_sub, flags, 70 + i, etiqueta)
+                win32gui.AppendMenu(panel_alpha_sub, flags, 70 + i, etiqueta)
             win32gui.AppendMenu(pan_sub, win32con.MF_POPUP | win32con.MF_STRING,
-                                alpha_sub, "Opacidad de todo el panel")
+                                panel_alpha_sub, "Opacidad de todo el panel")
             fondo_sub = win32gui.CreatePopupMenu()
             fondo_actual = int(self.cfg.get("panel_bg_alpha", 250))
             for i, (val, etiqueta) in enumerate(PANEL_BG_ALPHAS):
