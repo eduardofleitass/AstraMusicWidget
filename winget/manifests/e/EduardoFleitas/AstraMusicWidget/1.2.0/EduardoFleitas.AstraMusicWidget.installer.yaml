@@ -1,5 +1,5 @@
 PackageIdentifier: EduardoFleitas.AstraMusicWidget
-PackageVersion: 1.1.0
+PackageVersion: 1.2.0
 InstallerLocale: es-ES
 Platform:
 - Windows.Desktop
@@ -14,10 +14,10 @@ UpgradeBehavior: install
 AppsAndFeaturesEntries:
 - DisplayName: Astra-Music-widget
   Publisher: Eduardo Fleitas
-  DisplayVersion: 1.1.0
+  DisplayVersion: 1.2.0
 Installers:
 - Architecture: x64
-  InstallerUrl: https://github.com/eduardofleitass/AstraMusicWidget/releases/download/v1.1.0/Astra-Music-widget-1.1.0-setup.exe
-  InstallerSha256: D72B47E1168BACF1AE2D3E4989D1F620D40E88FF68908F6241BDBDACC8E31EA1
+  InstallerUrl: https://github.com/eduardofleitass/AstraMusicWidget/releases/download/v1.2.0/Astra-Music-widget-1.2.0-setup.exe
+  InstallerSha256: 66C0D3BDDF6EA03BD2D050584FFC973134C43B14FCD3B78FC7EE6BCDE55DC1E2
 ManifestType: installer
 ManifestVersion: 1.6.0
