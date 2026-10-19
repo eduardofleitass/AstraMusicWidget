@@ -41,7 +41,12 @@ from widget import __version__  # noqa: E402
 REPO = "eduardofleitass/AstraMusicWidget"
 NOMBRE = "Astra-Music-widget"
 EXE = os.path.join(RAIZ, "dist", NOMBRE + ".exe")
-ISCC = r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+ISCC = next((ruta for ruta in (
+    os.environ.get("ISCC"),
+    r"C:\Users\eduardo.fleitas\Apps\InnoSetup6\ISCC.exe",   # portable, sin admin
+    r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    r"C:\Program Files\Inno Setup 6\ISCC.exe") if ruta and os.path.exists(ruta)),
+    r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe")
 GH = os.path.expandvars(r"%LOCALAPPDATA%\Temp\gh\bin\gh.exe")
 SETUP = os.path.join(RAIZ, "instalador", f"{NOMBRE}-{__version__}-setup.exe")
 NOTAS = os.path.join(RAIZ, "instalador", "notas-del-release.md")
