@@ -368,11 +368,18 @@ puede vivir en cualquiera de ellas. Hay dos formas de mudarlo:
   en la nueva y le reserva su lugar.
 - **Clic derecho > *Monitor***: lista las barras disponibles ("Principal (1920x1080)",
   "Monitor 2 (1366x768)") y deja tildada la que esta en uso. El submenu solo aparece
-  si hay mas de una barra.
+  si hay mas de un monitor (en Windows 10, mas de una barra).
 
 La eleccion se guarda en `config.json` (`taskbar_monitor`, el nombre del dispositivo,
 p. ej. `"\\.\DISPLAY5"`) y se respeta al arrancar. Si ese monitor ya no esta, vuelve
 solo a la principal.
+
+**En Windows 11** la barra es una sola (la dibuja XAML) y el widget vive como ventana
+propia sobre la franja de abajo, asi que ahi no hay barra que elegir: el submenu
+*Monitor* lista los **monitores** y al elegir uno la ventana se vuelve a apoyar en la
+franja de abajo de ESE monitor (mismo alto de barra y misma reserva a la derecha).
+Arrastrarlo al otro monitor hace exactamente lo mismo. La eleccion se guarda y se
+respeta al arrancar igual que en Windows 10.
 
 Lo que cambia por dentro (y costo encontrar): las barras **no tienen la misma
 estructura**. En la principal la lista de tareas cuelga de `ReBarWindow32` y el ancla
@@ -498,7 +505,9 @@ se salgan de su franja), los colores elegidos (que se entiendan en hex, lista y
 corto; que la barra tome el suyo —medido en rojo puro— que las ondas tomen el suyo
 —medido en azul— y que ninguno tome el del otro), la barra de otro monitor (que el
 widget se mude, quede dentro de esa barra, que ese monitor le ceda el espacio y
-que la barra que deja recupere su ancho natural, ida y vuelta) y 30 muestras de
+que la barra que deja recupere su ancho natural, ida y vuelta; en modo flotante, que
+la ventana se apoye en la franja de abajo del monitor elegido y quede adentro) y 30
+muestras de
 vigilancia del pintado (30/30 cuadros correctos). Y 20 de 20 de interaccion real
 (`python tools\clicktest.py`): el hover ilumina los tres botones, un clic de verdad
 cambia el estado de reproduccion, el segundo clic lo restaura, un clic en la
@@ -749,7 +758,7 @@ Clic derecho sobre el widget. Queda **solo lo que no se puede hacer de otra form
     Opacidad de todo el widget   todo nitido / leve / translucido / muy transparente
     Color del widget          automatico / del tema de Windows / claro / oscuro
     Color de la barra         (y Color de las ondas)
-    Monitor                   (solo si hay mas de una barra)
+    Monitor                   (solo si hay mas de un monitor)
     Ondas de sonido           (interruptor)
     Ancho: N px               Mas ancho / Mas angosto
     Volver al extremo derecho
@@ -916,6 +925,7 @@ python tools\preview.py hoja.png # hoja con todas las variantes visuales
 python tools\selftest.py         # suite de verificacion (widget en marcha)
 python tools\flotante_test.py    # el modo de Windows 11 (ventana propia, sin barra)
 python tools\diagnostico_barra.py   # por que se incrusta o pasa a flotante (arbol y z-order)
+python tools\prueba_monitor.py   # elegir monitor: contrato del host (sin ventana) y --e2e en vivo
 python tools\build_exe.py        # empaqueta el .exe (y propaga la version)
 python tools\release.py          # compila, arma el instalador y sube la release a GitHub
 python tools\winget_pr.py        # manifiesto de winget + PR (toma la version del codigo)

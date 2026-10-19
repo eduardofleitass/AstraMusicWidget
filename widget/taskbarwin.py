@@ -100,6 +100,41 @@ def list_bars() -> list[dict]:
     return barras
 
 
+def monitores() -> list[dict]:
+    """Monitores conectados, ordenados como `list_bars()`: de izquierda a derecha.
+
+    Cada uno trae `monitor` (el nombre del dispositivo, que es lo que se guarda en la
+    configuracion), `rect` (el monitor entero), `trabajo` (el area util, sin la barra) y
+    `franja` (la tira de abajo donde apoya el widget flotante).
+
+    En el modo flotante esta es la lista que ofrece el menu: ahi no hay una barra por
+    monitor que elegir (Windows 11 dibuja una sola), hay un monitor sobre el que apoyar
+    la ventana. Con `list_bars()` no alcanza porque en Windows 11 la barra de los otros
+    monitores puede no existir.
+    """
+    mons = []
+    try:
+        for hmon in win32api.EnumDisplayMonitors(None, None):
+            h = hmon[0] if isinstance(hmon, (list, tuple)) else hmon
+            info = win32api.GetMonitorInfo(h)
+            mons.append({"monitor": info["Device"], "rect": tuple(info["Monitor"]),
+                         "mon_rect": tuple(info["Monitor"]),
+                         "trabajo": tuple(info["Work"]),
+                         "primario": bool(info.get("Flags", 0) & 1)})
+    except Exception:
+        pass
+    mons.sort(key=lambda m: (m["rect"][0], m["rect"][1]))
+    for i, m in enumerate(mons):
+        m["nombre"] = "Principal" if m["primario"] else f"Monitor {i + 1}"
+        # Alto de la barra de ESE monitor: sale del area de trabajo. Con la barra
+        # oculta o a un costado no hay diferencia abajo y se usa el alto tipico.
+        alto = m["rect"][3] - m["trabajo"][3]
+        m["alto"] = max(24, int(alto)) if alto > 0 else 48
+        m["franja"] = (m["rect"][0], m["rect"][3] - m["alto"],
+                       m["rect"][2], m["rect"][3])
+    return mons
+
+
 def barra_en_posicion_util(barra: dict | None) -> bool:
     """True si el widget se puede incrustar en esa barra.
 

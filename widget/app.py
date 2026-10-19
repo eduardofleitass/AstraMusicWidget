@@ -32,7 +32,7 @@ from . import panel as panel_mod
 from . import ventanas
 from . import volume as volume_mod
 from .media import MediaPoller, MediaState
-from .taskbarwin import TaskbarHost, list_bars, set_dpi_aware
+from .taskbarwin import TaskbarHost, list_bars, monitores, set_dpi_aware
 
 # Niveles de fondo que ofrece el menu (alpha del chip)
 ALPHA_LEVELS = ((232, "Solido"), (170, "Translucido"), (100, "Muy transparente"),
@@ -768,7 +768,10 @@ class WidgetApp:
             if self._drag_x is None:
                 self._set_frac_noauto(self.host.frac_from_x(x, self.width_px,
                                                             self._min_free()))
-        return x - m["left"]
+        # Incrustado la x es relativa al CLIENTE de la barra. Flotante la ventana es de
+        # nivel superior y su x ya es de PANTALLA: restarle el borde del monitor la corria
+        # al monitor de al lado (con el principal no se notaba porque su borde es 0).
+        return x if getattr(self.host, "flotante", False) else x - m["left"]
 
     def _fundido_activo(self) -> bool:
         """Si el mostrar/ocultar se anima (solo con alpha real por pixel)."""
@@ -1304,16 +1307,64 @@ class WidgetApp:
                  else "color de las ondas",
                  draw.hex_color(c) if c else "color del tema")
 
-    def set_taskbar(self, monitor: str | None, save: bool = True) -> None:
-        """Mueve el widget a la barra de tareas de otro monitor (None = principal).
+    def _monitor_opciones(self) -> list[dict]:
+        """Entre que se puede elegir en el menu (vacio = no hay de donde elegir).
 
-        La ventana es HIJA de la barra, asi que no se puede mudar de padre: hay que
-        destruirla y crearla de nuevo en la otra barra, devolviendo antes el espacio
-        a la primera.
+        Incrustado se elige la BARRA de tareas de cada monitor (Windows 10 tiene una por
+        monitor). Flotante (Windows 11) no hay barra donde alojarse: lo que se elige es el
+        MONITOR sobre cuya franja de abajo apoya la ventana, asi que la lista sale de
+        `monitores()` y no de `list_bars()` (en Windows 11 puede haber un solo
+        Shell_TrayWnd aunque haya dos monitores, y ahi el submenu no aparecia).
         """
-        if (monitor or "") == (self.cfg.get("taskbar_monitor") or ""):
+        if getattr(self.host, "flotante", False):
+            mons = monitores()
+            return mons if len(mons) > 1 else []
+        barras = list_bars()
+        return barras if len(barras) > 1 else []
+
+    def _en_monitor(self, monitor: str | None) -> bool:
+        """True si la ventana del widget esta de verdad en ese monitor.
+
+        Se mira donde esta la ventana, no lo que dice la configuracion: con la 1.0.9 el
+        monitor se guardaba pero la ventana se quedaba en el principal, y asi el menu
+        creia que ya estaba ahi y no hacia nada al volver a elegirlo.
+        """
+        if not (self.hwnd_widget and win32gui.IsWindow(self.hwnd_widget)):
+            return False
+        try:
+            r = win32gui.GetWindowRect(self.hwnd_widget)
+        except Exception:
+            return False
+        cx, cy = (r[0] + r[2]) // 2, (r[1] + r[3]) // 2
+        for m in monitores():
+            if m["rect"][0] <= cx < m["rect"][2] and m["rect"][1] <= cy < m["rect"][3]:
+                return (None if m["primario"] else m["monitor"]) == (monitor or None)
+        return False
+
+    def _misma_barra(self, otra: dict) -> bool:
+        """True si esa barra/monitor es donde ya vive el widget.
+
+        El criterio cambia con el host: incrustado se comparan los handles de la barra;
+        flotante no hay barra, se compara el rectangulo del monitor (el principal vale
+        None en la configuracion, asi que comparar nombres de dispositivo no sirve).
+        """
+        if getattr(self.host, "flotante", False):
+            return tuple(otra.get("rect") or ()) == tuple(self.host.rect or ())
+        return otra.get("tray") == self.host.tray
+
+    def set_taskbar(self, monitor: str | None, save: bool = True) -> None:
+        """Mueve el widget a la barra de tareas (o al monitor) de otro monitor.
+
+        `monitor` es el nombre del dispositivo; None = el principal. Incrustado la ventana
+        es HIJA de la barra, asi que no se puede mudar de padre: hay que destruirla y
+        crearla de nuevo en la otra barra, devolviendo antes el espacio a la primera.
+        """
+        pedido = monitor or None
+        if pedido == (self.cfg.get("taskbar_monitor") or None) and self._en_monitor(pedido):
+            # ya esta ahi (y de verdad): no hay nada que rehacer. Si la configuracion
+            # dice una cosa y la ventana esta en otra, se sigue: hay que mudarla.
             return
-        self.cfg["taskbar_monitor"] = monitor or None
+        self.cfg["taskbar_monitor"] = pedido
         if save:
             cfgmod.save(self.cfg)
         try:
@@ -1341,7 +1392,9 @@ class WidgetApp:
             except Exception:
                 pass
         b = self.host.barra or {}
-        self.log("barra de tareas: %s (%s)", b.get("nombre", "?"), b.get("monitor", "?"))
+        self.log("%s: %s (%s)",
+                 "pantalla" if getattr(self.host, "flotante", False) else "barra de tareas",
+                 b.get("nombre", "?"), b.get("monitor", "?"))
 
     def _widget_wndproc(self, hwnd, msg, wp, lp):
         try:
@@ -1537,13 +1590,13 @@ class WidgetApp:
                                None if rgb == 0 else "#%06X" % rgb, save=False)
                 return 0
             if msg == WM_APP_MONITOR:
-                barras = list_bars()
+                opciones = self._monitor_opciones()
                 i = int(wp)
-                if 0 <= i < len(barras):
-                    b = barras[i]
+                if 0 <= i < len(opciones):
+                    b = opciones[i]
                     self.set_taskbar(None if b["primario"] else b["monitor"], save=bool(lp))
                 else:
-                    self.log("no existe la barra %s (hay %d)", i, len(barras))
+                    self.log("no existe la pantalla %s (hay %d)", i, len(opciones))
                 return 0
             if msg == win32con.WM_RBUTTONUP:
                 if self.cfg.get("right_click_menu", True):
@@ -1715,7 +1768,7 @@ class WidgetApp:
         # arrastraste al otro monitor), el widget se muda ahi y el arrastre sigue.
         # La ventana es hija de la barra, asi que mudarla es recrearla.
         otra = self.host.barra_en(cx)
-        if otra and otra["tray"] != self.host.tray:
+        if otra and not self._misma_barra(otra):
             self.set_taskbar(None if otra["primario"] else otra["monitor"])
             if self.hwnd_widget:
                 d["cx0"] = cx
@@ -2701,15 +2754,15 @@ class WidgetApp:
                     win32gui.AppendMenu(sub, flags, base_id + i, etiqueta)
                 subs.append((sub, titulo))
 
-            # Submenu de monitor: en que barra de tareas vive el widget. Solo se
-            # muestra si hay mas de una barra (o sea, si hay varios monitores); en
-            # Windows 10 cada monitor tiene la suya.
+            # Submenu de monitor: donde vive el widget. Solo se muestra si hay mas de
+            # una opcion (varios monitores). Incrustado se elige la barra de ese
+            # monitor; flotante (Windows 11) el monitor donde apoya la ventana.
             mon_sub = 0
-            barras = list_bars()
-            if len(barras) > 1:
+            opciones = self._monitor_opciones()
+            if opciones:
                 mon_sub = win32gui.CreatePopupMenu()
                 activo = self.cfg.get("taskbar_monitor") or None
-                for i, b in enumerate(barras):
+                for i, b in enumerate(opciones):
                     mr = b.get("mon_rect") or b["rect"]
                     flags = win32con.MF_STRING
                     if (None if b["primario"] else b["monitor"]) == activo:
@@ -2853,10 +2906,10 @@ class WidgetApp:
         elif 40 <= cmd <= 40 + len(COLOR_CHOICES) - 1:
             self.set_color("waves_color", COLOR_CHOICES[cmd - 40][0])
         elif 50 <= cmd <= 59:
-            barras = list_bars()
+            opciones = self._monitor_opciones()
             i = cmd - 50
-            if i < len(barras):
-                b = barras[i]
+            if i < len(opciones):
+                b = opciones[i]
                 self.set_taskbar(None if b["primario"] else b["monitor"])
         elif cmd == 6:
             self.set_position(None)

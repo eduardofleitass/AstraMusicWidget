@@ -17,9 +17,10 @@ Windows 10 con la barra de 40 px, da 40; en Windows 11 la barra mide 48.
 """
 from __future__ import annotations
 
-import win32api
 import win32con
 import win32gui
+
+from .taskbarwin import monitores
 
 
 class FloatingHost:
@@ -29,16 +30,16 @@ class FloatingHost:
     tray = 0            # no hay barra
     container = 0
     anchor = 0
-    barra = None
 
     def __init__(self, log=lambda *a, **k: None, monitor: str | None = None,
                  reserva_derecha: int = 300):
         self.log = log
-        self.monitor_pedido = monitor
+        self.monitor = monitor or None
         self.reserva_derecha = int(reserva_derecha)
         self.rect = None            # (x0, y0, x1, y1) del monitor
         self.trabajo = None         # area de trabajo (sin la barra)
         self.alto = 44              # alto de la franja
+        self.barra = None           # datos del monitor elegido (mismo formato que list_bars)
         self.refresh()
 
     # ------------------------------------------------------------------ geometria
@@ -46,20 +47,37 @@ class FloatingHost:
         return bool(self.rect)
 
     def refresh(self) -> bool:
+        """Resuelve el monitor pedido por nombre de dispositivo.
+
+        `monitor` es un nombre de DISPOSITIVO (`\\\\.\\DISPLAY2`), que es lo que guarda la
+        configuracion y lo que devuelve `monitores()`. Si ese monitor ya no esta (se
+        desconecto, cambio de puerto) se cae al principal y queda dicho en el log: es lo
+        que contesta "por que volvio al otro monitor" cuando alguien lo reporta.
+        """
         try:
-            mon = win32api.MonitorFromPoint((0, 0), win32con.MONITOR_DEFAULTTOPRIMARY)
-            info = win32api.GetMonitorInfo(mon)
-            self.rect = tuple(info["Monitor"])
-            self.trabajo = tuple(info["Work"])
-            alto = self.rect[3] - self.trabajo[3]
-            if alto <= 0:
-                # barra oculta o de otro lado: se usa el alto tipico de Windows 11
-                alto = 48
-            self.alto = max(24, int(alto))
+            mons = monitores()
+            if not mons:
+                raise RuntimeError("no hay monitores")
+            elegido = None
+            if self.monitor:
+                for m in mons:
+                    if m["monitor"] == self.monitor:
+                        elegido = m
+                        break
+                if elegido is None:
+                    self.log("no encuentro el monitor %s; uso el principal", self.monitor)
+                    self.monitor = None
+            if elegido is None:
+                elegido = next((m for m in mons if m["primario"]), mons[0])
+            self.rect = tuple(elegido["rect"])
+            self.trabajo = tuple(elegido["trabajo"])
+            self.alto = int(elegido["alto"])
+            self.barra = dict(elegido)
             return True
         except Exception as exc:
             self.log("flotante: no pude medir el monitor: %r", exc)
             self.rect = None
+            self.barra = None
             return False
 
     def metrics(self) -> dict:
@@ -72,7 +90,12 @@ class FloatingHost:
         return int(self.rect[3] - self.alto)
 
     def select(self, monitor: str | None) -> None:
-        """En flotante siempre es el monitor principal (la barra de 11 es una sola)."""
+        """Elige sobre que monitor apoya el widget (None = el principal).
+
+        En flotante no hay barra que elegir: lo que se elige es el monitor, y la ventana
+        se vuelve a apoyar en la franja de abajo de ESE monitor.
+        """
+        self.monitor = monitor or None
         self.refresh()
 
     def restore(self) -> None:
@@ -86,7 +109,11 @@ class FloatingHost:
             pass
 
     def barra_en(self, x: int) -> dict | None:
-        return None                 # no hay barras por las que mudarse
+        """Monitor cuyo tramo horizontal contiene esa x (arrastrar entre monitores)."""
+        for m in monitores():
+            if m["rect"][0] <= x < m["rect"][2]:
+                return m
+        return None
 
     # -------------------------------------------------------------------- posicion
     def free_span(self) -> tuple[int, int]:

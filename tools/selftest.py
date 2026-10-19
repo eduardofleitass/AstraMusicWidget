@@ -26,7 +26,7 @@ import win32process  # noqa: E402
 
 from widget import config as cfgmod  # noqa: E402
 from widget import sistema  # noqa: E402
-from widget.taskbarwin import TaskbarHost, list_bars  # noqa: E402
+from widget.taskbarwin import TaskbarHost, list_bars, monitores  # noqa: E402
 from widget import draw  # noqa: E402
 
 WM_APP_PANEL = win32con.WM_APP + 10
@@ -77,6 +77,70 @@ def barra_del_widget():
         if w:
             return b, w
     return (barras[0] if barras else None), 0
+
+
+def monitor_de_ventana(hwnd) -> dict | None:
+    """Monitor donde esta esa ventana, por el centro de su rectangulo."""
+    if not hwnd or not win32gui.IsWindow(hwnd):
+        return None
+    try:
+        r = win32gui.GetWindowRect(hwnd)
+    except Exception:
+        return None
+    cx, cy = (r[0] + r[2]) // 2, (r[1] + r[3]) // 2
+    for m in monitores():
+        if m["rect"][0] <= cx < m["rect"][2] and m["rect"][1] <= cy < m["rect"][3]:
+            return m
+    return None
+
+
+def probar_otro_monitor_flotante(check) -> None:
+    """Modo flotante: elegir monitor tiene que mover la ventana a ESE monitor.
+
+    En Windows 11 no hay una barra por monitor donde alojarse: el menu elige el monitor
+    sobre cuya franja de abajo apoya la ventana. Es lo que no pasaba en la 1.0.9 (el host
+    flotante resolvia siempre el principal, asi que la opcion no movia nada y la ventana
+    seguia en su lugar). La comprobacion es geometrica: donde quedo la ventana, no lo que
+    dice la configuracion.
+    """
+    mons = monitores()
+    w = widget_ventana()
+    actual = monitor_de_ventana(w)
+    if len(mons) < 2 or not w or actual is None:
+        check("el equipo tiene mas de un monitor", False,
+              f"{len(mons)} monitor(es): no hay otro donde probar", skipped=True)
+        return
+    idx_actual = next(i for i, m in enumerate(mons) if m["rect"] == actual["rect"])
+    idx_destino = next(i for i, m in enumerate(mons) if m["rect"] != actual["rect"])
+    destino = mons[idx_destino]
+    win32gui.SendMessage(w, WM_APP_MONITOR, idx_destino, 0)     # lParam 0 = no guardar
+    time.sleep(1.7)
+    w2 = widget_ventana()
+    r2 = win32gui.GetWindowRect(w2) if w2 else (0, 0, 0, 0)
+    en2 = monitor_de_ventana(w2)
+    check("el widget se muda al monitor elegido",
+          bool(en2) and en2["rect"] == destino["rect"],
+          f"ventana {r2} en {en2['nombre'] if en2 else '?'} "
+          f"(se pidio {destino['nombre']})")
+    check("apoya en la franja de abajo de ese monitor",
+          bool(en2) and r2[3] == en2["rect"][3],
+          f"ventana {r2} monitor {en2['rect'] if en2 else '-'}")
+    check("queda adentro de ese monitor",
+          bool(en2) and r2[0] >= en2["rect"][0] and r2[2] <= en2["rect"][2],
+          f"widget {r2} dentro de {en2['rect'] if en2 else '-'}")
+    check("el widget esta visible en el otro monitor",
+          bool(w2) and bool(win32gui.IsWindowVisible(w2)))
+    check("no se mete en el bloque de la derecha del monitor",
+          bool(en2) and r2[2] <= en2["rect"][2] - 8, r2)
+    if not w2:
+        return
+    win32gui.SendMessage(w2, WM_APP_MONITOR, idx_actual, 0)
+    time.sleep(1.7)
+    w3 = widget_ventana()
+    en3 = monitor_de_ventana(w3)
+    check("la vuelta deja el widget en su monitor",
+          bool(en3) and en3["rect"] == actual["rect"],
+          f"quedo en {en3['nombre'] if en3 else '?'}")
 
 
 def host_de(barra) -> TaskbarHost:
@@ -923,7 +987,9 @@ def main() -> int:
         u32.WindowFromPoint.argtypes = [wt.POINT]
         barras = list_bars()
         actual, w_now = barra_del_widget()
-        if len(barras) < 2 or not w_now or actual is None:
+        if FLOTANTE:
+            probar_otro_monitor_flotante(check)
+        elif len(barras) < 2 or not w_now or actual is None:
             check("el equipo tiene mas de una barra de tareas", False,
                   f"{len(barras)} barra(s): no hay otro monitor que probar", skipped=True)
         else:
@@ -1010,14 +1076,17 @@ def main() -> int:
     try:
         w_now = widget_ventana()
         posicion(w_now, 0xFFFF, 232)
-        tt = rect(p["tray"])[1]
         malos = 0
         total = 0
         for _ in range(30):
             time.sleep(0.3)
             wr3 = rect(w_now)
-            fondo = franja(wr3[0] - 2, wr3[0] - 1, tt + 3)[0]
-            borde = franja(wr3[2] - 12, wr3[2] - 11, tt + 3)[0]
+            # La y sale del WIDGET, no de la barra principal: el widget puede estar en la
+            # franja de otro monitor y ahi muestrear la barra principal compara barra con
+            # barra (daba 0/30 aun viendose perfecto).
+            tt = wr3[1] + 3
+            fondo = franja(wr3[0] - 2, wr3[0] - 1, tt)[0]
+            borde = franja(wr3[2] - 12, wr3[2] - 11, tt)[0]
             total += 1
             if max(abs(fondo[i] - borde[i]) for i in range(3)) <= 3:
                 malos += 1
@@ -1289,8 +1358,17 @@ def main() -> int:
               f"mitad {medio} -> oculto 0")
 
         win32gui.PostMessage(ctl, win32con.WM_HOTKEY, 1, 0)   # mostrar: fundido al reves
-        time.sleep(max(0.08, 0.10))
-        cap_medio2 = captura()
+        # Al mostrar, el primer cuadro puede tardar hasta un ciclo del temporizador (500 ms
+        # sin musica, 100 ms con musica): medir a los 0,10 s fijos daba 0 en silencio y
+        # parecia que no habia fundido. Se espera el primer cambio, que es el cuadro del
+        # medio (alfa 0 -> 48 de 255).
+        cap_medio2 = cap_oculto
+        for _ in range(6):
+            time.sleep(0.10)
+            tentativa = captura()
+            if distintos(tentativa, cap_oculto) > 5:
+                cap_medio2 = tentativa
+                break
         time.sleep(0.7)
         cap_visible2 = captura()
         medio2 = distintos(cap_medio2, cap_oculto)
