@@ -47,7 +47,7 @@ APARIENCIA = [
 PANEL = [
     ("toggle", "panel_mode", "Modo gaming (chico y sin robar el foco)", 120),
     ("toggle", "panel_clics", "Dejar pasar los clics al juego", 154),
-    ("label", "Tamano", 192),
+    ("label", "Tamaño", 192),
     ("seg", "panel_size", [("Normal", "normal"), ("Chico", "chico"),
                            ("Tira", "tira")], 212, 26),
     ("label", "Opacidad del panel", 252),
@@ -86,12 +86,28 @@ CHIP_COLORES = (("auto", "auto", None), ("accent", "acento", None),
                 ("light", "claro", (232, 234, 240)), ("dark", "oscuro", (26, 28, 36)))
 
 
+# Paleta de la ventana de Ajustes: TODO el color sale de aca.
+# Morado sobre fondo oscuro: las barras (deslizadores), los contornos de botones y los
+# interruptores van en morado; el resto (fondo, cajas, textos) queda oscuro.
+PALETA = {
+    "fondo": (19, 19, 25),      # fondo de la ventana
+    "caja": (27, 26, 35),       # barra de secciones y fondo de los botones
+    "linea": (124, 96, 206),    # CONTORNO de botones, segmentado y caja del preview
+    "txt": (236, 233, 246),
+    "dim": (154, 148, 176),
+    "acc": (167, 139, 250),     # MORADO de las barras y de los interruptores encendidos
+    "sel": (58, 44, 108),       # fondo de la seccion o el boton elegido
+    "riel": (52, 42, 84),       # pista vacia del deslizador
+    "off": (62, 52, 96),        # interruptor apagado
+    "hueco": (40, 34, 62),      # boton apagado del segmentado, hover, renglon del monitor
+    "noche": (17, 16, 22),      # caja de la vista previa y bolita del interruptor
+}
+
+
 def _paleta(cfg: dict) -> dict:
-    tema = cfg.get("theme") or {}
-    acc = tema.get("accent") or (96, 205, 145)
-    return {"fondo": (24, 26, 33), "caja": (30, 33, 42), "linea": (48, 52, 64),
-            "txt": (232, 235, 242), "dim": (150, 156, 172),
-            "acc": tuple(int(v) for v in acc[:3]), "sel": (44, 60, 50)}
+    """Colores de la ventana (copia, para no tocar la tabla si alguien la edita)."""
+    return dict(PALETA)
+
 
 
 def seccion_valida(nombre: str) -> str:
@@ -283,7 +299,7 @@ def render(cfg: dict, seccion: str, preview: Image.Image | None, k: float,
            width=max(1, int(1.4 * k)))
     # vista previa
     px0, py0, px1, py1 = z["preview"]
-    d.rounded_rectangle([px0, py0, px1, py1], radius=int(8 * k), fill=(18, 20, 26),
+    d.rounded_rectangle([px0, py0, px1, py1], radius=int(8 * k), fill=P["noche"],
                         outline=P["linea"])
     if preview is not None:
         pv = preview
@@ -302,7 +318,7 @@ def render(cfg: dict, seccion: str, preview: Image.Image | None, k: float,
         sel = nombre == seccion
         if sel or hover == "nav%d" % i:
             d.rounded_rectangle(r, radius=int(6 * k),
-                                fill=P["sel"] if sel else (38, 42, 52))
+                                fill=P["sel"] if sel else P["hueco"])
         d.text((r[0] + int(14 * k), r[1] + int(8 * k)), nombre, font=frowb if sel else frow,
                fill=P["acc"] if sel else P["dim"])
     # contenido
@@ -327,7 +343,7 @@ def render(cfg: dict, seccion: str, preview: Image.Image | None, k: float,
             valor, lo, hi = _valor_actual(cfg, f["accion"])
             frac = 0.0 if hi <= lo else max(0.0, min(1.0, (valor - lo) / float(hi - lo)))
             d.rounded_rectangle([t[0], t[1] + 2 * k // 2, t[2], t[3]],
-                                radius=int(3 * k), fill=(52, 56, 68))
+                                radius=int(3 * k), fill=P["riel"])
             xm = int(t[0] + frac * (t[2] - t[0]))
             d.rounded_rectangle([t[0], t[1] + 2 * k // 2, xm, t[3]],
                                 radius=int(3 * k), fill=P["acc"])
@@ -352,14 +368,14 @@ def render(cfg: dict, seccion: str, preview: Image.Image | None, k: float,
             xx = r[2] - int(22 * k)
             caja = [xx, r[1] + int(7 * k), xx + int(26 * k), r[1] + int(21 * k)]
             d.rounded_rectangle(caja, radius=int(7 * k),
-                                fill=P["acc"] if on else (56, 60, 72))
+                                fill=P["acc"] if on else P["off"])
             kx = caja[2] - int(7 * k) if on else caja[0] + int(7 * k)
             d.ellipse([kx - int(5 * k), caja[1] + int(2 * k), kx + int(5 * k),
-                       caja[3] - int(2 * k)], fill=(18, 20, 26))
+                       caja[3] - int(2 * k)], fill=P["noche"])
         elif tipo == "radio":
             r = f["rect"]
             if hover == "radio%d" % f["indice"]:
-                d.rounded_rectangle(r, radius=int(6 * k), fill=(38, 42, 52))
+                d.rounded_rectangle(r, radius=int(6 * k), fill=P["hueco"])
             if f["tildado"]:
                 _check(d, r[0] + int(4 * k), r[1] + int(15 * k), k, P["acc"])
             d.text((r[0] + int(22 * k), r[1] + int(6 * k)), f["texto"], font=frow,
@@ -375,10 +391,20 @@ def render(cfg: dict, seccion: str, preview: Image.Image | None, k: float,
 
 
 def _color_aprox(cfg: dict, valor: str, P: dict) -> tuple:
-    """Color que se muestra en el swatch 'auto'/'accent'."""
+    """Color que se muestra en el swatch 'auto'/'accent'.
+
+    OJO: el swatch "acento" tiene que mostrar el color REAL de Windows, no el morado de
+    esta ventana; si no, el usuario elige "acento" esperando ese color y ve otro.
+    """
     if valor == "accent":
-        return P["acc"]
-    return (52, 56, 68)
+        tema = (cfg.get("theme") or {}).get("accent")
+        if tema:
+            return tuple(int(v) for v in tema[:3])
+        try:
+            return draw.color_acento()
+        except Exception:
+            return (96, 205, 145)
+    return P["caja"]
 
 
 def _seg_activo(cfg: dict, accion: str, valor) -> bool:
