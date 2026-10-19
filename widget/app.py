@@ -2235,6 +2235,11 @@ class WidgetApp:
             return
         if not self._create_panel():
             return
+        # Las dos ventanas se abren en el mismo lugar (arriba del widget): si Ajustes
+        # queda abierta, el panel se le encima y los clics del panel caen en la otra.
+        # Se cierra la una cuando se abre la otra (en el otro sentido ya se hacia).
+        if self.aj_visible:
+            self.toggle_ajustes(False)
         x, y, w, h = self._panel_pos()
         try:
             win32gui.SetWindowPos(self.hwnd_panel, 0, x, y, w, h,
