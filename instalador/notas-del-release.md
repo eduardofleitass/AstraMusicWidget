@@ -1,4 +1,4 @@
-# Astra-Music-widget 1.0.9
+# Astra-Music-widget 1.1.0
 
 Widget de musica que vive **dentro** de la barra de tareas de Windows: muestra lo que esta
 sonando (caratula, titulo, artista, barra de progreso clicable, controles y el volumen de
@@ -8,44 +8,47 @@ de multimedia de Windows, no un reproductor en particular.
 
 ## Novedades de esta version
 
-- **El panel queda siempre arriba de la ventana que estes usando.** El arreglo anterior
-  (1.0.8) cubrio la mitad del problema: el panel ya no se *cierraba* al tocar otra ventana,
-  pero seguia siendo una ventana normal, asi que al tocar el juego o el navegador **se iba
-  detras** y parecia que habia desaparecido. Ahora se muestra siempre por encima (no es un
-  ajuste: es lo unico que tiene sentido para un panel que se usa con otra app adelante) y se
-  sube a la primera al abrirlo. Medido: con una consola en primer plano tapando toda esa
-  zona, el punto central del panel le pertenece al panel, no a la consola.
-- **La prueba que faltaba.** El banco *sabia* que otra ventana podia tapar el panel y en ese
-  caso se saltaba la comprobacion de dibujo, asi que el caso mas comun de uso no estaba
-  cubierto. Ahora hay una comprobacion propia: si algo tapa el panel, es FALLA.
+- **Ventana de Ajustes.** Clic derecho -> *Ajustes...* abre una ventana propia, con la
+  **vista previa del widget arriba** y todo lo que antes habia que buscar en submenus, con
+  controles de verdad: deslizadores de opacidad y ancho, botones de fondo, muestras de color,
+  interruptores, la lista de monitores y los atajos. Cada cambio se ve en el momento en la
+  vista previa. Cuatro secciones: Apariencia, Posicion, Panel y Atajos. Los deslizadores
+  aplican al mover y guardan al soltar, para no escribir la configuracion en cada pixel.
+- **El menu contextual paso de 15 filas a 6**: *Ocultar/Mostrar*, *Panel*, *Apariencia*,
+  *Posicion*, *Ajustes...* y *Salir*. Lo fino (fondos, opacidades, colores, ancho) vive
+  adentro de *Apariencia* y *Posicion*; el ancho dejo de ser una fila apagada que no hacia
+  nada y ahora es *Mas ancho* / *Mas angosto* / *Restablecer*.
+- **La ventana de Ajustes va en morado** sobre fondo oscuro: barras, contornos de botones e
+  interruptores. Los colores salen de una sola tabla (`PALETA` en `widget/ajustes.py`), asi
+  que se cambian en un lugar.
+- **Las dos ventanas no se pisan**: si Ajustes esta abierta y abris el panel (o al reves), la
+  otra se cierra sola. Antes quedaban encimadas en el mismo lugar y los clics caian en la
+  ventana equivocada.
 
-Lo de la 1.0.8, que sigue valiendo:
+## Arreglos de esta version
 
-- **El panel ya no se cierra al tocar otra ventana.** Era su peor defecto de uso: el panel
-  existe para cambiar de tema **sin salir de lo que estas haciendo** (un juego, una reunion,
-  una planilla), y cualquier clic afuera lo hacia desaparecer justo en el momento en que se
-  usa. Ahora queda abierto hasta que lo cierres con la cruz, con `Escape` (si tiene el foco)
-  o con `Ctrl+Alt+O`; el clic en la caratula tambien lo cierra. En modo gaming ya era asi;
-  ahora vale tambien en el modo escritorio, que era el que se comportaba como un globo del
-  sistema. Si alguien lo prefiere asi, `panel_cerrar_afuera` en `config.json` lo devuelve.
+- **Elegir monitor ahora mueve el widget.** En el modo de Windows 11 la opcion se tildaba y
+  se guardaba, pero la ventana no se movia (ni al arrancar se respetaba): el widget flotante
+  pedia siempre el monitor principal. Ahora se mueve, y arrastrarlo de un monitor a otro
+  queda guardado.
+- **"Fondo del widget" volvio a mandar sobre el fondo del widget.** El submenu estaba armado
+  con la variable de la opacidad del panel, asi que elejia el nivel del panel y el fondo del
+  widget quedaba como un control muerto.
+- **El altavoz (volumen de la app) funciona.** No hacia nada con las apps que no informan el
+  nombre del ejecutable con extension (Brave manda `Brave`, la sesion de audio es
+  `brave.exe`): ahora se comparan sin `.exe`. Con eso andan la rueda, el clic de silencio y
+  la barra de volumen del panel.
+- **La portada en la vista previa se ve como en la barra.** Se pedia la caratula a un tercio
+  del tamano y aparecia como una tapita con un marco oscuro alrededor.
+- **El muestrario "acento" de la ventana de Ajustes muestra el color real de Windows**, no el
+  morado de la ventana.
 
-Lo de la 1.0.7, que sigue valiendo:
+## Como se probo
 
-- **Elegir el color del fondo hace algo tambien con el fondo apagado.** Con el widget en
-  *Fondo del widget → Sin fondo*, elegir *Claro*, *Oscuro* o *Del tema de Windows* no
-  cambiaba **nada** en pantalla: sin chip dibujado no hay color que pintar, asi que el menu
-  parecia roto (medido: con alfa 0, "claro" y "automatico" daban exactamente el mismo pixel).
-  Ahora, si elegis un color con el fondo apagado, el fondo se enciende (solido) y queda
-  anotado en el log; para volver a apagarlo esta el mismo submenu.
-- **Los links de descarga no cambian mas de una version a otra.** El README apunta a
-  `releases/latest/download/Astra-Music-widget-setup.exe` y
-  `releases/latest/download/Astra-Music-widget.exe`: siempre la ultima, siempre con el mismo
-  nombre. Cada release sube las dos copias versionadas y las dos de nombre fijo, asi que un
-  link que compartiste no queda apuntando a la version vieja.
-- **La verificacion del modo flotante dejo de mentir.** La suite que prueba el camino de
-  Windows 11 medía el color del fondo sobre un chip invisible cuando la configuracion tenia
-  *Sin fondo*, y reportaba tres fallas que no existian. Ahora fuerza un fondo visible mientras
-  mide y lo devuelve como estaba: 16/16, con la configuracion real del usuario.
+Regresion completa sobre el ejecutable: 114/126 del banco general (las 12 saltadas son las
+pruebas de incrustar en la barra de Windows 10, que necesitan esa version), 35/37 de las
+pruebas de mouse real (2 saltadas por interferencia), 80/80 de la regresion sin pantalla y
+el contrato de monitores entero. Sin fallas.
 
 ## Una aclaracion sobre los atajos (Ctrl+Alt+flechas)
 
