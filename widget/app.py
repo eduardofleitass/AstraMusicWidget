@@ -2776,13 +2776,21 @@ class WidgetApp:
         return out
 
     def _aj_preview(self):
-        """El widget dibujado con la config actual, para la vista previa de Ajustes."""
+        """El widget dibujado con la config actual, para la vista previa de Ajustes.
+
+        La caratula se pide con la MISMA escala que el widget (`ART * S`, con S =
+        k * supersample): `draw.render` dibuja el lienzo ampliado y despues lo reduce,
+        asi que pasarle `ART * k` dejaba la portada tres veces mas chica que en la
+        barra. Se veia una tapita diminuta con un marco oscuro alrededor.
+        """
         try:
+            SS = max(1, int(self.cfg.get("supersample", 3)))
+            S = self.k * SS
             art = None
             if self.cfg.get("show_art", True):
                 art = draw.get_art(self.state.art, self.state.art_key,
-                                   int(round(draw.ART * self.k)),
-                                   int(round(draw.ART_RADIUS * self.k)))
+                                   int(round(draw.ART * S)),
+                                   int(round(draw.ART_RADIUS * S)))
             return draw.render(self.state, self.cfg, art=art, hover=-1, marquee=0.0,
                                k=self.k, base=self.base, height=self.height_px,
                                opaque=not self.layered,
