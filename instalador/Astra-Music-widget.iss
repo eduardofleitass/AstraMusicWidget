@@ -52,6 +52,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 [Tasks]
 Name: "autostart"; Description: "Arrancar con Windows (recomendado: es un adorno de la barra)"; GroupDescription: "Inicio:"; Flags: checkedonce
 Name: "desktopicon"; Description: "Crear un acceso en el escritorio"; GroupDescription: "Accesos directos:"; Flags: unchecked
+Name: "donar"; Description: "Ver el link para apoyar el proyecto (opcional, el programa es gratis igual)"; GroupDescription: "Donaciones:"; Flags: unchecked
 
 [Files]
 Source: "..\dist\{#MiExe}"; DestDir: "{app}"; Flags: ignoreversion
@@ -67,6 +68,8 @@ Name: "{userstartup}\{#MiNombre}"; Filename: "{app}\{#MiExe}"; IconFilename: "{a
 
 [Run]
 Filename: "{app}\{#MiExe}"; Description: "Arrancar {#MiNombre} ahora"; Flags: nowait postinstall skipifsilent
+; La donacion es opcional y la casilla viene DESTILDADA: se abre solo si el usuario la tildo.
+Filename: "https://paypal.me/damflou26"; Description: "Apoyar el proyecto con una donacion"; Flags: shellexec nowait postinstall skipifsilent; Tasks: donar
 
 [UninstallDelete]
 Type: files; Name: "{app}\astra-widget.log"

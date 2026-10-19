@@ -1,4 +1,4 @@
-# Astra-Music-widget 1.1.0
+# Astra-Music-widget 1.2.0
 
 Widget de musica que vive **dentro** de la barra de tareas de Windows: muestra lo que esta
 sonando (caratula, titulo, artista, barra de progreso clicable, controles y el volumen de
@@ -7,6 +7,24 @@ sistema (Spotify, VLC, Groove, y lo que suene en Chrome/Edge/Brave), porque lee 
 de multimedia de Windows, no un reproductor en particular.
 
 ## Novedades de esta version
+
+- **Seccion de donaciones, opcional y sin molestar.** El programa sigue siendo gratis y
+  completo: nada se bloquea ni se degrada si no donas. Hay tres lugares donde aparece el
+  link de PayPal, y ninguno interrumpe:
+    * el menu contextual, en *Apoyar el proyecto...*;
+    * una seccion nueva en la ventana de Ajustes (*Apoyar*), con el QR para escanear desde
+      el telefono;
+    * el instalador, con una casilla **destildada** que, si la tildas, abre la pagina al
+      terminar.
+- **Recordatorio medido, estilo "apoya el proyecto" y no estilo WinRAR.** Aparece recien
+  despues de 7 dias de uso (o 20 arranques), como maximo 3 veces en la vida y nunca mas de
+  una vez cada 30 dias. Tiene *Donar*, *Ahora no* y *No volver a mostrar*; esta ultima se
+  respeta para siempre. No bloquea el arranque (el widget se dibuja primero y el cartel
+  sale 8 segundos despues), no aparece en modo gaming y no sale si el widget esta oculto.
+- **El link y el QR salen de la configuracion** (`donation_link` en `config.json`), asi que
+  se puede cambiar sin recompilar.
+
+## Lo de la 1.1.0, que sigue valiendo
 
 - **Ventana de Ajustes.** Clic derecho -> *Ajustes...* abre una ventana propia, con la
   **vista previa del widget arriba** y todo lo que antes habia que buscar en submenus, con

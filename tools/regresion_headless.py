@@ -17,6 +17,7 @@ from widget import ajustes as A
 from widget import config as cfgmod
 from widget import draw
 from widget import panel as panel_mod
+from widget import donaciones as don_mod
 from widget.media import MediaState
 
 fallos = []
@@ -156,6 +157,82 @@ for tam in ("normal", "chico", "tira"):
             check("panel %s: %s no se sale del panel" % (tam, nombre),
                   r[0] >= -2 and r[1] >= -2 and r[2] <= W + 2 and r[3] <= H + 2,
                   (nombre, r, (W, H)))
+
+
+# ---------------------------------------------------------------- 6. donaciones
+# Las reglas son lo importante: el cartel no puede volverse un WinRAR.
+from datetime import datetime, timedelta
+HOY = datetime(2026, 10, 19, 12, 0, 0)
+casos = [
+    ("recien instalado (sin fecha) no aparece", {}, False),
+    ("primer dia no aparece", {"donation_primera": HOY.isoformat()}, False),
+    ("al sexto dia todavia no", {"donation_primera": (HOY - timedelta(days=6)).isoformat()},
+     False),
+    ("a los 7 dias aparece", {"donation_primera": (HOY - timedelta(days=7)).isoformat()}, True),
+    ("a los 20 arranques aparece aunque sea el dia 2",
+     {"donation_primera": HOY.isoformat(), "donation_arranques": 20}, True),
+    ("si ya se mostro hace 10 dias no aparece",
+     {"donation_primera": (HOY - timedelta(days=60)).isoformat(),
+      "donation_ultima": (HOY - timedelta(days=10)).isoformat()}, False),
+    ("si se mostro hace 31 dias aparece",
+     {"donation_primera": (HOY - timedelta(days=60)).isoformat(),
+      "donation_ultima": (HOY - timedelta(days=31)).isoformat()}, True),
+    ("a las 3 veces no aparece nunca mas",
+     {"donation_primera": (HOY - timedelta(days=400)).isoformat(),
+      "donation_ultima": (HOY - timedelta(days=365)).isoformat(),
+      "donation_veces": 3}, False),
+    ("'no volver a mostrar' gana sobre todo",
+     {"donation_primera": (HOY - timedelta(days=400)).isoformat(),
+      "donation_no_mostrar": True}, False),
+    ("en modo gaming no aparece",
+     {"donation_primera": (HOY - timedelta(days=400)).isoformat(),
+      "panel_mode": "gaming"}, False),
+    ("sin link no aparece", {"donation_primera": (HOY - timedelta(days=400)).isoformat(),
+                             "donation_link": ""}, False),
+]
+for nombre, cfg_caso, esperado in casos:
+    base = dict(cfg, donation_link=don_mod.LINK)
+    base.update(cfg_caso)
+    got = don_mod.debe_mostrar(base, ahora=HOY)
+    check("donaciones: %s" % nombre, got == esperado, "debe_mostrar=%s" % got)
+
+# marcar_mostrado suma una vez y deja fecha
+c2 = dict(cfg, donation_veces=0)
+don_mod.marcar_mostrado(c2, ahora=HOY)
+check("donaciones: marcar_mostrado cuenta y fecha",
+      c2.get("donation_veces") == 1 and c2.get("donation_ultima") == HOY.isoformat(
+          timespec="seconds"), c2.get("donation_ultima"))
+c3 = {}
+don_mod.arranque(c3, ahora=HOY)
+check("donaciones: el primer arranque deja fecha y arranques=1",
+      bool(c3.get("donation_primera")) and c3.get("donation_arranques") == 1, c3)
+
+# geometria y hit del cartel
+for k in (1.0, 1.2, 1.5):
+    wc, hc = don_mod.size(k)
+    z = don_mod.rects(k)
+    malos = [b["accion"] for b in z["botones"]
+             if b["rect"][0] < 0 or b["rect"][1] < 0 or b["rect"][2] > wc or b["rect"][3] > hc]
+    check("k=%.1f donaciones: los botones entran en el cartel" % k, not malos, malos)
+    img = don_mod.render(cfg, k, None, don_mod.qr_image())
+    check("k=%.1f donaciones: el cartel se dibuja del tamano pedido" % k,
+          img.size == (wc, hc), img.size)
+    for b in z["botones"]:
+        r = b["rect"]
+        got = don_mod.hit((r[0] + r[2]) // 2, (r[1] + r[3]) // 2, k)
+        check("k=%.1f donaciones: el boton '%s' responde" % (k, b["accion"]),
+              got == (b["accion"], None), got)
+check("donaciones: el QR existe como archivo", don_mod.qr_image() is not None)
+check("donaciones: el link es el de PayPal.Me",
+      don_mod.LINK.startswith("https://paypal.me/") and "damflou26" in don_mod.LINK,
+      don_mod.LINK)
+
+# la seccion Apoyar de Ajustes tambien tiene que responder
+za = A.rects(1.2, cfg, "Apoyar")
+botones_a = [f for f in za["filas"] if f["tipo"] == "boton"]
+check("Ajustes/Apoyar: hay boton de donar y de recordatorio",
+      {b["accion"] for b in botones_a} >= {"donar", "donacion_no_mostrar"},
+      [b["accion"] for b in botones_a])
 
 # ---------------------------------------------------------------- 5. config
 base = cfgmod.defaults() if hasattr(cfgmod, "defaults") else None

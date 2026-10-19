@@ -38,6 +38,7 @@ WM_APP_WAVES = win32con.WM_APP + 4
 WM_APP_COLOR = win32con.WM_APP + 5
 WM_APP_MONITOR = win32con.WM_APP + 6
 WM_APP_AJUSTES = win32con.WM_APP + 14
+WM_APP_DONAR = win32con.WM_APP + 15
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
 WM_CAPTURECHANGED = 0x0215
@@ -1895,6 +1896,40 @@ def main() -> int:
                   not win32gui.IsWindowVisible(h_aj))
     except Exception as exc:
         check("la ventana de Ajustes", False, repr(exc))
+
+    # --- cartel de donaciones (nunca tiene que tapar ni frenar el widget) ---
+    print("\n-- cartel de donaciones --")
+    try:
+        win32gui.PostMessage(w_now, WM_APP_DONAR, 1, 0)
+        time.sleep(1.0)
+        h_don = win32gui.FindWindow("AstraMusicDonar", None)
+        check("donaciones: el cartel se abre y se ve",
+              bool(h_don) and bool(win32gui.IsWindowVisible(h_don)),
+              f"ventana {hex(h_don or 0)}")
+        if h_don:
+            pr_d = rect(h_don)
+            wr_d = rect(w_now)
+            ex_d = win32gui.GetWindowLong(h_don, win32con.GWL_EXSTYLE)
+            try:
+                mi_d = win32api.GetMonitorInfo(
+                    win32api.MonitorFromWindow(w_now, 2))["Monitor"]
+            except Exception:
+                mi_d = None
+            check("donaciones: no entra en Alt+Tab",
+                  bool(ex_d & 0x00000080) and bool(ex_d & 0x00080000),
+                  f"exstyle {hex(ex_d)}")
+            check("donaciones: queda dentro del monitor del widget",
+                  mi_d is None or (mi_d[0] <= pr_d[0] and pr_d[2] <= mi_d[2]
+                                   and mi_d[1] <= pr_d[1] and pr_d[3] <= mi_d[3]),
+                  f"cartel {pr_d} monitor {mi_d}")
+            check("donaciones: no tapa el widget",
+                  pr_d[3] <= wr_d[1] + 2 or pr_d[1] >= wr_d[3] - 2,
+                  f"cartel {pr_d} widget {wr_d}")
+            win32gui.PostMessage(w_now, WM_APP_DONAR, 0, 0)
+            time.sleep(0.6)
+            check("donaciones: se cierra", not win32gui.IsWindowVisible(h_don))
+    except Exception as exc:
+        check("el cartel de donaciones", False, repr(exc))
 
     # --- la barra tiene que estar abajo para incrustar; si no, modo flotante ---------
     try:

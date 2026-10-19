@@ -17,6 +17,7 @@ import ctypes.wintypes as wt
 import math
 import os
 import time
+import webbrowser
 
 import win32api
 import win32con
@@ -27,6 +28,7 @@ from PIL import Image, ImageChops
 from . import config as cfgmod
 from . import draw
 from . import ajustes as ajustes_mod
+from . import donaciones as don_mod
 from . import sistema
 from .flotante import FloatingHost
 from . import panel as panel_mod
@@ -44,6 +46,7 @@ CTL_CLASS = "AstraMusicCtl"
 WIDGET_CLASS = "AstraMusicWnd"
 PANEL_CLASS = "AstraMusicPanel"
 AJUSTES_CLASS = "AstraMusicAjustes"
+DONAR_CLASS = "AstraMusicDonar"
 
 # Tamanos del panel en el submenu (la etiqueta solo la usa el menu).
 PANEL_TAMANOS = (
@@ -54,6 +57,7 @@ PANEL_TAMANOS = (
 MUTEX_NAME = "Local\\AstraMusicWidget"
 TIMER_TICK = 1
 TIMER_LAYOUT = 2
+TIMER_DONAR = 3          # el cartel de donaciones sale unos segundos despues
 HOTKEY_TOGGLE = 1
 # Atajos globales. Se registran sobre la ventana CONTROLADORA (que vive todo el
 # programa), no sobre el widget: asi siguen andando con el widget oculto, que es
@@ -109,6 +113,7 @@ WM_APP_PANEL_CFG = win32con.WM_APP + 11  # pruebas: cambiar un ajuste del panel
 WM_APP_WIDGET_ALPHA = win32con.WM_APP + 12  # pruebas: opacidad de todo el widget
 WM_APP_CHIP_COLOR = win32con.WM_APP + 13    # pruebas: 0 auto / 1 accent / 2 light / 3 dark
 WM_APP_AJUSTES = win32con.WM_APP + 14       # wParam = 1 abrir / 0 cerrar; lParam = seccion
+WM_APP_DONAR = win32con.WM_APP + 15         # wParam = 1 abrir / 0 cerrar
 PANEL_ALPHAS = [(255, "Todo nitido"), (235, "Leve"), (200, "Translucido"),
                 (160, "Muy transparente")]
 # Alfa del FONDO dibujado (el chip detras del texto). Es independiente del anterior:
@@ -343,6 +348,12 @@ class WidgetApp:
         self.aj_drag = None     # ("slider", nombre) mientras se arrastra un deslizador
         self._aj_sig = None
         self._aj_wndproc_ref = None
+        self.hwnd_don = 0       # ventana del cartel de donaciones
+        self.dib_don = None
+        self.don_visible = False
+        self.don_hover = None
+        self._don_sig = None
+        self._don_wndproc_ref = None
         self._hud_key = None                 # ultima caratula mostrada por el HUD
         self._vis_alpha = 255   # alfa global del widget (fundido de mostrar/ocultar)
         self._vis_target = 255
@@ -390,13 +401,18 @@ class WidgetApp:
         def ajustes_proc(hwnd, msg, wp, lp):
             return self._ajustes_wndproc(hwnd, msg, wp, lp)
 
+        def donar_proc(hwnd, msg, wp, lp):
+            return self._don_wndproc(hwnd, msg, wp, lp)
+
         self._ctl_wndproc_ref = ctl_proc
         self._widget_wndproc_ref = wnd_proc
         self._panel_wndproc_ref = panel_proc
         self._ajustes_wndproc_ref = ajustes_proc
+        self._don_wndproc_ref = donar_proc
 
         for cls, proc in ((CTL_CLASS, ctl_proc), (WIDGET_CLASS, wnd_proc),
-                          (PANEL_CLASS, panel_proc), (AJUSTES_CLASS, ajustes_proc)):
+                          (PANEL_CLASS, panel_proc), (AJUSTES_CLASS, ajustes_proc),
+                          (DONAR_CLASS, donar_proc)):
             wc = win32gui.WNDCLASS()
             wc.hInstance = hinst
             wc.lpszClassName = cls
@@ -483,6 +499,7 @@ class WidgetApp:
         self._show_when_ready()
         self._set_timer(self.cfg.get("timer_idle_ms", 500))
         user32.SetTimer(self.hwnd_ctl, TIMER_LAYOUT, int(self.cfg.get("layout_check_ms", 1000)), None)
+        self._donaciones_arranque()
         if self.motivo:
             # El motivo de haber pasado a flotante, en el log y no solo en stderr: el
             # .exe no tiene consola y este es el unico rastro que queda en la maquina
@@ -795,6 +812,8 @@ class WidgetApp:
     def _ocultar_ya(self) -> None:
         if self.aj_visible:
             self.toggle_ajustes(False)      # la configuracion sola, sin widget, no sirve
+        if self.don_visible:
+            self.toggle_don(False)
         if self.hwnd_widget:
             try:
                 win32gui.ShowWindow(self.hwnd_widget, win32con.SW_HIDE)
@@ -1103,6 +1122,12 @@ class WidgetApp:
                     self.tick()
                 elif wp == TIMER_LAYOUT:
                     self.layout_tick()
+                elif wp == TIMER_DONAR:
+                    # el cartel sale DESPUES de que el widget ya se dibujo: nunca frena
+                    # el arranque ni aparece encima de la barra antes de tiempo
+                    user32.KillTimer(self.hwnd_ctl, TIMER_DONAR)
+                    if not self.don_visible and don_mod.debe_mostrar(self.cfg):
+                        self.toggle_don(True)
                 return 0
             if msg == win32con.WM_HOTKEY:
                 self._accion_atajo(int(wp))
@@ -1623,6 +1648,9 @@ class WidgetApp:
                     except Exception:
                         seccion = None
                 self.toggle_ajustes(bool(wp), seccion)
+                return 0
+            if msg == WM_APP_DONAR:
+                self.toggle_don(bool(wp))
                 return 0
             if msg == win32con.WM_RBUTTONUP:
                 if self.cfg.get("right_click_menu", True):
@@ -2891,7 +2919,7 @@ class WidgetApp:
         try:
             img = ajustes_mod.render(self.cfg, self.aj_seccion, self._aj_preview(),
                                      self._aj_k(), self.aj_hover, self._aj_monitores(),
-                                     self._aj_atajos())
+                                     self._aj_atajos(), don_mod.qr_image())
         except Exception as exc:
             self.log("Ajustes: no pude dibujar: %r", exc)
             return
@@ -2966,6 +2994,14 @@ class WidgetApp:
             self.set_position(None, save=save)
         elif accion == "refrescar":
             self.panel_remuestrear()
+        elif accion == "donar":
+            self._don_accion("donar")
+            return
+        elif accion == "donacion_no_mostrar":
+            self.cfg["donation_no_mostrar"] = not bool(self.cfg.get("donation_no_mostrar"))
+            cfgmod.save(self.cfg)
+            self.log("donaciones: recordatorio %s",
+                     "desactivado" if self.cfg["donation_no_mostrar"] else "activado")
         self._aj_sig = None
         self._ajustes_render(force=True)
 
@@ -3051,6 +3087,197 @@ class WidgetApp:
         except Exception as exc:
             self.log("ajustes proc fallo: %r", exc)
         return win32gui.DefWindowProc(hwnd, msg, wp, lp)
+
+    # -------------------------------------------------------------- donaciones
+    def _create_don(self) -> bool:
+        if self.hwnd_don and win32gui.IsWindow(self.hwnd_don):
+            return True
+        w, h = don_mod.size(self._aj_k())
+        hinst = win32api.GetModuleHandle(None)
+        self.hwnd_don = win32gui.CreateWindowEx(
+            win32con.WS_EX_TOOLWINDOW | win32con.WS_EX_LAYERED,
+            DONAR_CLASS, "astra-donar", win32con.WS_POPUP,
+            0, 0, w, h, 0, None, hinst, None)
+        if not self.hwnd_don:
+            self.log("no se pudo crear el cartel de donaciones")
+            return False
+        self.dib_don = _Layered(self.hwnd_don, w, h)
+        self._don_sig = None
+        return True
+
+    def _don_pos(self) -> tuple[int, int, int, int]:
+        """Centrado sobre el widget, adentro de su monitor (mismo criterio que Ajustes)."""
+        w, h = don_mod.size(self._aj_k())
+        try:
+            mon = win32api.MonitorFromWindow(self.hwnd_widget, 2)
+            mi = win32api.GetMonitorInfo(mon)["Monitor"]
+        except Exception:
+            mi = (0, 0, 1366, 768)
+        wr = None
+        try:
+            if self.hwnd_widget and win32gui.IsWindow(self.hwnd_widget):
+                wr = win32gui.GetWindowRect(self.hwnd_widget)
+        except Exception:
+            wr = None
+        hueco = int(round(12 * self._aj_k()))
+        if wr:
+            x = (wr[0] + wr[2]) // 2 - w // 2
+            y = wr[1] - h - hueco
+            if y < mi[1] + 8:
+                y = min(wr[3] + hueco, mi[3] - h - 8)
+        else:
+            x, y = (mi[0] + mi[2]) // 2 - w // 2, mi[1] + 60
+        x = max(mi[0] + 8, min(x, mi[2] - w - 8))
+        y = max(mi[1] + 8, min(y, mi[3] - h - 8))
+        return (x, y, w, h)
+
+    def toggle_don(self, on: bool | None = None, auto: bool = False) -> None:
+        """Abre o cierra el cartel de donaciones.
+
+        `auto=True` es el recordatorio que dispara el temporizador: es el unico que cuenta
+        como "pedido" (y por eso respeta los intervalos). Abrirlo desde el menu no cuenta.
+        """
+        if on is None:
+            on = not self.don_visible
+        if not on:
+            if self.hwnd_don and win32gui.IsWindow(self.hwnd_don):
+                win32gui.ShowWindow(self.hwnd_don, win32con.SW_HIDE)
+            self.don_visible = False
+            self.don_hover = None
+            return
+        if not self._create_don():
+            return
+        # una sola ventana a la vez arriba del widget
+        if self.panel_visible:
+            self.toggle_panel(False)
+        if self.aj_visible:
+            self.toggle_ajustes(False)
+        x, y, w, h = self._don_pos()
+        try:
+            win32gui.SetWindowPos(self.hwnd_don, win32con.HWND_TOPMOST, x, y, w, h,
+                                  win32con.SWP_NOACTIVATE)
+            win32gui.ShowWindow(self.hwnd_don, win32con.SW_SHOW)
+            win32gui.SetForegroundWindow(self.hwnd_don)
+        except Exception:
+            pass
+        self.don_visible = True
+        if auto:
+            # se anota al MOSTRAR (no al cerrar): si el usuario lo deja abierto y cierra
+            # el widget, igual tiene que contar para no reaparecer manana
+            try:
+                don_mod.marcar_mostrado(self.cfg)
+                cfgmod.save(self.cfg)
+            except Exception:
+                pass
+        self._don_sig = None
+        self._don_render(force=True)
+        self.log("donaciones: cartel abierto en %s%s", (x, y, w, h),
+                 " (recordatorio automatico)" if auto else "")
+
+    def _don_render(self, force: bool = False) -> None:
+        if not (self.don_visible and self.hwnd_don and self.dib_don):
+            return
+        sig = (self.don_hover,)
+        if not force and sig == self._don_sig:
+            return
+        self._don_sig = sig
+        try:
+            img = don_mod.render(self.cfg, self._aj_k(), self.don_hover, don_mod.qr_image())
+        except Exception as exc:
+            self.log("donaciones: no pude dibujar el cartel: %r", exc)
+            return
+        self.dib_don.alpha = 255
+        self.dib_don.upload(draw.to_premult_bgra(img))
+
+    def _don_accion(self, accion: str) -> None:
+        """Que hace cada boton del cartel. Nada de esto toca la funcionalidad del widget."""
+        if accion in ("donar", "ahora_no", "cerrar"):
+            try:
+                if accion != "cerrar":
+                    don_mod.marcar_mostrado(self.cfg)
+                cfgmod.save(self.cfg)
+            except Exception:
+                pass
+        if accion == "donar" or accion == "qr":
+            link = str(self.cfg.get("donation_link") or don_mod.LINK)
+            try:
+                webbrowser.open(link)
+                self.log("donaciones: abri el navegador en %s", link)
+            except Exception as exc:
+                self.log("donaciones: no pude abrir el navegador: %r", exc)
+        elif accion == "nunca":
+            self.cfg["donation_no_mostrar"] = True
+            try:
+                cfgmod.save(self.cfg)
+            except Exception:
+                pass
+            self.log("donaciones: no se muestra nunca mas")
+        self.toggle_don(False)
+
+    def _don_wndproc(self, hwnd, msg, wp, lp):
+        try:
+            if msg == win32con.WM_PAINT:
+                hdc, ps = win32gui.BeginPaint(hwnd)
+                try:
+                    if self.dib_don:
+                        self.dib_don.blit(hdc)
+                finally:
+                    win32gui.EndPaint(hwnd, ps)
+                return 0
+            if msg == win32con.WM_ERASEBKGND:
+                return 1
+            if msg == win32con.WM_MOUSEMOVE:
+                x, y = self._xy(lp)
+                r = don_mod.hit(x, y, self._aj_k())
+                hover = r[0] if r else None
+                if hover != self.don_hover:
+                    self.don_hover = hover
+                    self._don_render(force=True)
+                try:
+                    tme = TRACKMOUSEEVENT(ctypes.sizeof(TRACKMOUSEEVENT), 0x00000002,
+                                          hwnd, 0)
+                    user32.TrackMouseEvent(ctypes.byref(tme))
+                except Exception:
+                    pass
+                return 0
+            if msg == win32con.WM_MOUSELEAVE:
+                if self.don_hover is not None:
+                    self.don_hover = None
+                    self._don_render(force=True)
+                return 0
+            if msg == win32con.WM_LBUTTONUP:
+                x, y = self._xy(lp)
+                r = don_mod.hit(x, y, self._aj_k())
+                if r:
+                    self._don_accion(r[0])
+                return 0
+            if msg == win32con.WM_RBUTTONUP:
+                self.toggle_don(False)
+                return 0
+            if msg == win32con.WM_DESTROY:
+                self.hwnd_don = 0
+                self.don_visible = False
+                return 0
+        except Exception as exc:
+            self.log("donaciones: el cartel fallo: %r", exc)
+        return win32gui.DefWindowProc(hwnd, msg, wp, lp)
+
+    def _donaciones_arranque(self) -> None:
+        """Anota el primer arranque y el contador, y deja el recordatorio si corresponde.
+
+        El cartel NO sale en el arranque: se programa con un temporizador para que el
+        widget ya este dibujado (nunca frena el inicio ni tapa la barra al aparecer).
+        """
+        try:
+            don_mod.arranque(self.cfg)
+            cfgmod.save(self.cfg)
+        except Exception as exc:
+            self.log("donaciones: no pude anotar el arranque: %r", exc)
+            return
+        if don_mod.debe_mostrar(self.cfg):
+            espera = int(self.cfg.get("donation_espera_ms", 8000))
+            user32.SetTimer(self.hwnd_ctl, TIMER_DONAR, max(1000, espera), None)
+            self.log("donaciones: recordatorio programado para %d s", espera // 1000)
 
     def _show_menu(self) -> None:
         try:
@@ -3226,6 +3453,7 @@ class WidgetApp:
                 ("popup", pos_sub, "Posicion", True),
                 ("sep", 0, "", None),
                 ("item", 27, "Ajustes...", True),
+                ("item", 29, "Apoyar el proyecto...", True),
                 ("sep", 0, "", None),
                 ("item", 12, "Salir", True),
             ]
@@ -3267,6 +3495,8 @@ class WidgetApp:
             self.toggle_ajustes()
         elif cmd == 28:
             self.set_width(300)
+        elif cmd == 29:
+            self.toggle_don(True)
         elif 20 <= cmd <= 20 + len(ALPHA_LEVELS) - 1:
             self.set_chip_alpha(ALPHA_LEVELS[cmd - 20][0])
         elif 110 <= cmd <= 110 + len(WIDGET_ALPHAS) - 1:

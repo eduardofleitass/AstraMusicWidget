@@ -16,12 +16,12 @@ from . import draw
 
 # ------------------------------------------------------------------ medidas logicas
 W, H = 452, 372
-NAV = (12, 116, 118, 162)          # x, y, ancho, alto de la barra de secciones
+NAV = (12, 116, 118, 202)          # x, y, ancho, alto de la barra de secciones
 NAV_FILA = 40
 CONT_X = 148
 CONT_X1 = 434
 
-SECCIONES = ("Apariencia", "Posicion", "Panel", "Atajos")
+SECCIONES = ("Apariencia", "Posicion", "Panel", "Atajos", "Apoyar")
 
 # deslizadores: nombre -> (minimo, maximo, sufijo)
 RANGOS = {
@@ -59,6 +59,15 @@ PANEL = [
 ATAJOS = [
     ("toggle", "hotkeys", "Atajos globales", 120),
 ]
+
+APOYAR = [
+    ("label", "Gracias por usar el widget", 120),
+    ("nota", "Es gratis y sin anuncios. Si te sirve todos los dias", 144),
+    ("nota", "y queres colaborar, aca esta el link:", 162),
+    ("boton", "donar", "Abrir PayPal", 192, 160),
+    ("boton", "donacion_no_mostrar", "Recordatorio: activado", 232, 240),
+]
+
 
 NOTAS_ATAJOS = (
     "Rueda sobre el widget: busca. Sobre el altavoz: volumen.",
@@ -101,6 +110,7 @@ PALETA = {
     "off": (62, 52, 96),        # interruptor apagado
     "hueco": (40, 34, 62),      # boton apagado del segmentado, hover, renglon del monitor
     "noche": (17, 16, 22),      # caja de la vista previa y bolita del interruptor
+    "sobre_acc": (22, 20, 30),  # texto oscuro sobre el morado (boton Donar)
 }
 
 
@@ -148,6 +158,8 @@ def rects(k: float, cfg: dict, seccion: str = SECCIONES[0],
         z["nav"].append(_r(nx, ny + i * NAV_FILA, nw, 30, k))
     if seccion == "Atajos":
         filas = [f for f in ATAJOS if f[0] == "toggle"] + filas_atajos(atajos)
+    elif seccion == "Apoyar":
+        filas = list(APOYAR)
     else:
         filas = {"Apariencia": APARIENCIA, "Panel": PANEL}.get(seccion)
     if filas:
@@ -185,6 +197,10 @@ def rects(k: float, cfg: dict, seccion: str = SECCIONES[0],
             elif tipo == "toggle":
                 z["filas"].append({"tipo": "toggle", "accion": f[1], "texto": f[2],
                                    "rect": _r(CONT_X, f[3] - 4, CONT_X1 - CONT_X, 30, k)})
+            elif tipo == "boton":
+                ancho_boton = f[4] if len(f) > 4 else 180
+                z["filas"].append({"tipo": "boton", "accion": f[1], "texto": f[2],
+                                   "rect": _r(CONT_X, f[3], ancho_boton, 30, k)})
     if seccion == "Posicion":
         mons = monitores or []
         z["filas"].append({"tipo": "label", "texto": "Monitor",
@@ -277,8 +293,8 @@ def _check(d, x, y, k, color):
 
 def render(cfg: dict, seccion: str, preview: Image.Image | None, k: float,
            hover: str | None = None, monitores: list | None = None,
-           atajos: list | None = None) -> Image.Image:
-    """Dibuja la ventana completa. `monitores` y `atajos` los pasa la app."""
+           atajos: list | None = None, qr: Image.Image | None = None) -> Image.Image:
+    """Dibuja la ventana completa. `monitores`, `atajos` y `qr` los pasa la app."""
     seccion = seccion_valida(seccion)
     P = _paleta(cfg)
     im = Image.new("RGB", (int(round(W * k)), int(round(H * k))), P["fondo"])
@@ -301,7 +317,12 @@ def render(cfg: dict, seccion: str, preview: Image.Image | None, k: float,
     px0, py0, px1, py1 = z["preview"]
     d.rounded_rectangle([px0, py0, px1, py1], radius=int(8 * k), fill=P["noche"],
                         outline=P["linea"])
-    if preview is not None:
+    if seccion == "Apoyar" and qr is not None:
+        # en Apoyar la caja de arriba muestra el QR, no el widget
+        lado = max(20, min((py1 - py0) - int(8 * k), (px1 - px0) - int(8 * k)))
+        q = qr.resize((lado, lado), Image.LANCZOS)
+        im.paste(q, (px0 + ((px1 - px0) - lado) // 2, py0 + ((py1 - py0) - lado) // 2))
+    if preview is not None and seccion != "Apoyar":
         pv = preview
         if pv.width > (px1 - px0) - int(12 * k) or pv.height > (py1 - py0) - int(10 * k):
             esc = min(((px1 - px0) - 12 * k) / float(pv.width),
@@ -384,9 +405,18 @@ def render(cfg: dict, seccion: str, preview: Image.Image | None, k: float,
                    anchor="ra")
         elif tipo == "boton":
             r = f["rect"]
-            d.rounded_rectangle(r, radius=int(6 * k), fill=P["caja"], outline=P["linea"])
-            d.text((r[0] + (r[2] - r[0]) / 2, r[1] + int(8 * k)), f["texto"], font=frow,
-                   fill=P["txt"], anchor="ma")
+            if f.get("accion") == "donar":
+                d.rounded_rectangle(r, radius=int(6 * k), fill=P["acc"])
+                d.text((r[0] + (r[2] - r[0]) / 2, r[1] + int(8 * k)), f["texto"], font=frowb,
+                       fill=P["sobre_acc"], anchor="ma")
+            else:
+                d.rounded_rectangle(r, radius=int(6 * k), fill=P["caja"], outline=P["linea"])
+                texto_b = f["texto"]
+                if f.get("accion") == "donacion_no_mostrar":
+                    activo = not bool(cfg.get("donation_no_mostrar"))
+                    texto_b = "Recordatorio: %s" % ("activado" if activo else "desactivado")
+                d.text((r[0] + (r[2] - r[0]) / 2, r[1] + int(8 * k)), texto_b, font=frow,
+                       fill=P["txt"], anchor="ma")
     return im
 
 

@@ -749,6 +749,23 @@ verificar asi es la barra real de Windows 11 (donde el modo se elige solo): eso 
 maquina con 11.
 
 
+## Apoyar el proyecto
+
+El widget es gratis, sin anuncios y sin funciones bloqueadas. Si te sirve todos los dias y
+queres invitarme un cafe, se agradece de corazon (y si no, no cambia nada):
+
+    https://paypal.me/damflou26
+
+![QR de PayPal](assets/qr_paypal.png)
+
+El mismo link esta en el menu contextual (*Apoyar el proyecto...*) y en la ventana de
+Ajustes (seccion *Apoyar*), con el QR para escanear desde el telefono.
+
+Como funciona el recordatorio: aparece **una sola vez** despues de los primeros 7 dias de
+uso (o 20 arranques), como maximo **3 veces** en la vida y nunca mas de una vez cada 30
+dias. Tiene *Ahora no* y *No volver a mostrar*, que se respeta para siempre. No bloquea el
+arranque, no aparece en modo gaming y el programa funciona completo si nunca donas.
+
 ## El menu (corto a proposito) y la ventana de Ajustes
 
 Clic derecho sobre el widget. Seis filas, y lo fino adentro de dos submenus o en la
