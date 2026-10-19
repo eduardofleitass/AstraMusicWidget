@@ -101,11 +101,24 @@ def find_widget():
             # mudarse de barra el hwnd cambia, asi que hay que refrescarlo aca.
             WIN["widget"] = w
             return b["tray"], w
-    # Windows 11: el widget es una ventana propia (modo flotante), no un hijo de la barra
+    # Windows 11: el widget es una ventana propia (modo flotante), no un hijo de la barra.
+    # La barra que se informa es la del monitor donde APOYA la ventana: devolver siempre
+    # la principal hacia que "arrastrarlo al otro monitor" no se pudiera verificar (el
+    # widget se mudaba de verdad, el test decia que no).
     w = win32gui.FindWindow("AstraMusicWnd", None)
     if w:
         WIN["widget"] = w
         barras = list_bars()
+        try:
+            wr = win32gui.GetWindowRect(w)
+            cx = (wr[0] + wr[2]) // 2
+        except Exception:
+            cx = None
+        if cx is not None:
+            for b in barras:
+                mr = b.get("mon_rect") or b["rect"]
+                if mr[0] <= cx < mr[2]:
+                    return b["tray"], w
         return (barras[0]["tray"] if barras else 0), w
     return 0, 0
 
@@ -406,7 +419,12 @@ def main() -> int:
     base = sample(poller)
     w, wrect = rect_actual()
     k = (wrect[3] - wrect[1]) / 40.0
-    pr = draw.progress_rect(int(cfg.get("width", 260)), k, cfg)
+    # El ancho LOGICO del widget que esta corriendo, no el del config del proyecto: con
+    # el .exe al lado son archivos distintos (370 contra 300) y la barra calculada
+    # terminaba antes, asi que el clic al 80% caia cerca del 52% y parecia un bug de la
+    # barra cuando era la cuenta del test.
+    w_log = int(round((wrect[2] - wrect[0]) / k)) if k > 0 else int(cfg.get("width", 260))
+    pr = draw.progress_rect(w_log, k, cfg)
     y_barra = wrect[1] + int(35.5 * k)
     if not (pr and base.can_seek and base.duration > 20):
         check("un clic en la barra salta a la posicion clickeada", False,
