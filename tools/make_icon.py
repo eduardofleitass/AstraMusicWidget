@@ -26,7 +26,7 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ICO = os.path.join(RAIZ, "assets", "icono.ico")
 PNG = os.path.join(RAIZ, "assets", "icono.png")
 TAMANOS = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
-ELEGIDO = 1
+ELEGIDO = 2
 
 
 def generar(elegido: int = ELEGIDO) -> tuple[str, str]:

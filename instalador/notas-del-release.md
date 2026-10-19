@@ -1,4 +1,4 @@
-# Astra-Music-widget 1.2.0
+# Astra-Music-widget 1.2.1
 
 Widget de musica que vive **dentro** de la barra de tareas de Windows: muestra lo que esta
 sonando (caratula, titulo, artista, barra de progreso clicable, controles y el volumen de
@@ -7,6 +7,17 @@ sistema (Spotify, VLC, Groove, y lo que suene en Chrome/Edge/Brave), porque lee 
 de multimedia de Windows, no un reproductor en particular.
 
 ## Novedades de esta version
+
+- **Icono nuevo.** El anterior era un ecualizador de cuatro barras sobre un cuadrado oscuro:
+  se veia como cualquier app de audio y no decia nada del nombre. Ahora es una **estrella
+  astral con la onda de sonido** debajo, en violeta sobre degradado oscuro: *Astra* (el
+  astro) y *Music* (la onda) en una sola silueta que se sigue leyendo en la barra de tareas
+  a 24 y 16 px. Se aplica al ejecutable, al instalador y a los accesos directos.
+- Los cuatro disenos que se evaluaron (nota estelar, estrella con onda, constelacion y halo
+  astral) quedan en `tools/iconos_astra.py`, y el icono se regenera con
+  `tools/make_icon.py --elegido N`.
+
+## Lo de la 1.2.0, que sigue valiendo
 
 - **Seccion de donaciones, opcional y sin molestar.** El programa sigue siendo gratis y
   completo: nada se bloquea ni se degrada si no donas. Hay tres lugares donde aparece el
