@@ -226,17 +226,27 @@ def sesiones() -> list[dict]:
 
 
 def _normalizar(app: str) -> str:
-    """De un app_id de SMTC (a veces ruta completa) al nombre del ejecutable."""
+    """De un app_id de SMTC al nombre del ejecutable, **sin extension**.
+
+    SMTC no es consistente con el nombre: Spotify manda "Spotify.exe", Brave manda
+    "Brave" a secas, y otros mandan la ruta completa. La sesion de audio siempre trae el
+    ejecutable con extension, asi que la comparacion tiene que ser sin extension: con
+    "Brave" contra "brave.exe" no habia match, `estado()` devolvia None y el altavoz del
+    widget quedaba como un boton muerto (el clic solo anotaba "no tiene sesion de audio").
+    """
     app = (app or "").strip()
-    app = app.split("!")[0]
-    return os.path.basename(app.replace("\\", "/")).lower()
+    app = app.split("!")[0]                      # AUMID: "Paquete!EntryPoint"
+    base = os.path.basename(app.replace("\\", "/")).lower()
+    if base.endswith(".exe"):
+        base = base[:-4]
+    return base.strip()
 
 
 def _sesiones_de(app: str) -> list[_Sesion]:
     objetivo = _normalizar(app)
     if not objetivo:
         return []
-    return [s for s in _sesiones_del_dispositivo() if s.exe.lower() == objetivo]
+    return [s for s in _sesiones_del_dispositivo() if _normalizar(s.exe) == objetivo]
 
 
 def estado(app: str) -> tuple[float, bool] | None:

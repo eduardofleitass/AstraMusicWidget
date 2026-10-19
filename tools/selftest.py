@@ -1224,13 +1224,22 @@ def main() -> int:
         except Exception:
             pass
         est = volume_mod.estado(app_sonando) if app_sonando else None
+        ses = volume_mod.sesiones()
+        # Si la app que suena TIENE sesion de audio pero `estado()` no la encuentra, es un
+        # fallo del emparejamiento de nombres, no interferencia: paso con Brave, que manda
+        # "Brave" en SMTC mientras la sesion es "brave.exe". Antes se marcaba SALTA y
+        # tapaba el bug (el altavoz del widget quedaba como un boton muerto).
+        objetivo = volume_mod._normalizar(app_sonando) if app_sonando else ""
+        parecidas = [s["exe"] for s in ses
+                     if objetivo and volume_mod._normalizar(s["exe"]) == objetivo]
         check("se lee el volumen de la app que esta sonando",
-              bool(est) and 0.0 <= est[0] <= 1.0,
+              (bool(est) and 0.0 <= est[0] <= 1.0) or not parecidas,
               f"{app_sonando or 'sin app'}: "
               + (f"{est[0] * 100:.0f}%" + (" (silenciado)" if est[1] else "")
-                 if est else "no tiene sesion de audio"),
-              skipped=not est)
-        ses = volume_mod.sesiones()
+                 if est else
+                 (f"la sesion existe ({', '.join(parecidas)}) pero estado() no la encuentra"
+                  if parecidas else "no tiene sesion de audio")),
+              skipped=not est and not parecidas)
         # La API puede contestar bien y no haber NINGUNA sesion de audio (nada usando el
         # sonido en este momento, como una maquina con la musica en pausa): eso es el estado
         # de la maquina, no una falla del programa. Solo es falla si la llamada revienta.
@@ -1598,18 +1607,32 @@ def main() -> int:
               f"lejos y fuera del monitor")
 
         # (d) fracciones y prueba de impacto
-        for nombre, c in (("normal", cfg_normal), ("chico", cfg_chico)):
+        cfg_tira = dict(cfg, panel_size="tira")
+        for nombre, c in (("normal", cfg_normal), ("chico", cfg_chico), ("tira", cfg_tira)):
             z = panel_mod.rects(kp, c)
             ok_frac = (abs(panel_mod.frac_en_barra(z["barra"][0], kp, c)) < 0.01
                        and abs(panel_mod.frac_en_barra(z["barra"][2], kp, c) - 1.0) < 0.01
                        and abs(panel_mod.frac_en_volumen(z["volumen"][0], kp, c)) < 0.01)
             ctr = z["controles"][1]
+            alt = z["altavoz"]
+            vol = z["volumen"]
             ok_hit = (panel_mod.hit((ctr[0] + ctr[2]) // 2, (ctr[1] + ctr[3]) // 2, kp, c) == 1
                       and panel_mod.hit(z["cerrar"][0] + 2, z["cerrar"][1] + 2, kp, c) == 6
                       and panel_mod.hit(z["tapa"][0] + 2, z["tapa"][1] + 2, kp, c) == 7
-                      and panel_mod.hit(-3, -3, kp, c) == -1)
+                      and panel_mod.hit(-3, -3, kp, c) == -1
+                      # el altavoz manda sobre la zona del volumen: si no, el clic de
+                      # silencio se toma como "poner el nivel" (pasaba en el tamano tira)
+                      and panel_mod.hit((alt[0] + alt[2]) // 2, (alt[1] + alt[3]) // 2,
+                                        kp, c) == 5
+                      and panel_mod.hit((vol[0] + vol[2]) // 2, (vol[1] + vol[3]) // 2,
+                                        kp, c) == 4)
             check(f"el panel {nombre}: fracciones y que hay bajo el cursor",
-                  ok_frac and ok_hit, "fracciones y prueba de impacto correctas")
+                  ok_frac and ok_hit,
+                  "fracciones y prueba de impacto correctas"
+                  if ok_hit else
+                  f"altavoz={panel_mod.hit((alt[0] + alt[2]) // 2, (alt[1] + alt[3]) // 2, kp, c)}"
+                  f" volumen={panel_mod.hit((vol[0] + vol[2]) // 2, (vol[1] + vol[3]) // 2, kp, c)}"
+                  f" (se esperaba 5 y 4)")
 
         # (e) en vivo: abrir, ver y cerrar
         win32gui.PostMessage(w_now, WM_APP_PANEL, 1, 1)

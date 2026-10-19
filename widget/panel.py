@@ -134,17 +134,22 @@ def _dentro(r, x, y) -> bool:
 
 def hit(x: int, y: int, k: float, cfg: dict) -> int:
     """Que hay bajo el cursor: 0/1/2 transporte, 3 barra, 4 volumen, 5 altavoz,
-    6 cerrar, 7 caratula, -1 nada."""
+    6 cerrar, 7 caratula, -1 nada.
+
+    El altavoz se mira ANTES de la zona del volumen: en el tamano "tira" el icono cae
+    adentro de la zona (264..300 contra 266..280) y, con el orden al reves, el clic en el
+    altavoz se tomaba como "poner el nivel" y no silenciaba nada.
+    """
     z = rects(k, cfg)
     for i, c in enumerate(z["controles"]):
         if _dentro(c, x, y):
             return i
     if _dentro(z["barra_zona"], x, y):
         return 3
-    if _dentro(z["volumen_zona"], x, y):
-        return 4
     if _dentro(z["altavoz"], x, y):
         return 5
+    if _dentro(z["volumen_zona"], x, y):
+        return 4
     if _dentro(z["cerrar"], x, y):
         return 6
     if _dentro(z["tapa"], x, y):

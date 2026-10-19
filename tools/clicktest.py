@@ -764,7 +764,14 @@ def main() -> int:
               f"panel {hex(hp or 0)}, rect {win32gui.GetWindowRect(hp) if hp else '-'}")
         if abierto:
             pr = win32gui.GetWindowRect(hp)
-            zp = panel_mod.rects(k, cfgmod.load())
+            # El tamano se deduce del ALTO de la ventana del panel: el widget que corre
+            # puede ser el .exe, que lee su propio config.json (al lado del .exe) y no el
+            # del proyecto. Midiendo con el config equivocado, los puntos caian fuera de
+            # las zonas y el volumen del panel "no andaba" (falso).
+            alturas = {"normal": 178, "chico": 84, "tira": 34}
+            alto_log = (pr[3] - pr[1]) / max(0.6, k)
+            tam_real = min(alturas, key=lambda n: abs(alturas[n] - alto_log))
+            zp = panel_mod.rects(k, dict(cfgmod.load(), panel_size=tam_real))
 
             # (a) play/pausa del panel
             c_play = zp["controles"][1]
