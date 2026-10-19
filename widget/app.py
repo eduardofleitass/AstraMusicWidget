@@ -26,6 +26,7 @@ from PIL import Image, ImageChops
 
 from . import config as cfgmod
 from . import draw
+from . import ajustes as ajustes_mod
 from . import sistema
 from .flotante import FloatingHost
 from . import panel as panel_mod
@@ -42,6 +43,7 @@ NUDGE_PX = 20
 CTL_CLASS = "AstraMusicCtl"
 WIDGET_CLASS = "AstraMusicWnd"
 PANEL_CLASS = "AstraMusicPanel"
+AJUSTES_CLASS = "AstraMusicAjustes"
 
 # Tamanos del panel en el submenu (la etiqueta solo la usa el menu).
 PANEL_TAMANOS = (
@@ -106,6 +108,7 @@ WM_APP_PANEL = win32con.WM_APP + 10  # wParam = 1/0: abrir o cerrar el panel
 WM_APP_PANEL_CFG = win32con.WM_APP + 11  # pruebas: cambiar un ajuste del panel
 WM_APP_WIDGET_ALPHA = win32con.WM_APP + 12  # pruebas: opacidad de todo el widget
 WM_APP_CHIP_COLOR = win32con.WM_APP + 13    # pruebas: 0 auto / 1 accent / 2 light / 3 dark
+WM_APP_AJUSTES = win32con.WM_APP + 14       # wParam = 1 abrir / 0 cerrar; lParam = seccion
 PANEL_ALPHAS = [(255, "Todo nitido"), (235, "Leve"), (200, "Translucido"),
                 (160, "Muy transparente")]
 # Alfa del FONDO dibujado (el chip detras del texto). Es independiente del anterior:
@@ -332,6 +335,14 @@ class WidgetApp:
         self._panel_wndproc_ref = None
         self._panel_int = time.monotonic()   # ultima interaccion con el panel
         self._panel_fondo = None             # (r, g, b, brillo, desvio) detras del panel
+        self.hwnd_aj = 0        # ventana de Ajustes
+        self.dib_aj = None      # su superficie
+        self.aj_visible = False
+        self.aj_seccion = ajustes_mod.SECCIONES[0]
+        self.aj_hover = None    # "nav0"/"radio1"/None, solo para el resalte
+        self.aj_drag = None     # ("slider", nombre) mientras se arrastra un deslizador
+        self._aj_sig = None
+        self._aj_wndproc_ref = None
         self._hud_key = None                 # ultima caratula mostrada por el HUD
         self._vis_alpha = 255   # alfa global del widget (fundido de mostrar/ocultar)
         self._vis_target = 255
@@ -376,12 +387,16 @@ class WidgetApp:
         def panel_proc(hwnd, msg, wp, lp):
             return self._panel_wndproc(hwnd, msg, wp, lp)
 
+        def ajustes_proc(hwnd, msg, wp, lp):
+            return self._ajustes_wndproc(hwnd, msg, wp, lp)
+
         self._ctl_wndproc_ref = ctl_proc
         self._widget_wndproc_ref = wnd_proc
         self._panel_wndproc_ref = panel_proc
+        self._ajustes_wndproc_ref = ajustes_proc
 
         for cls, proc in ((CTL_CLASS, ctl_proc), (WIDGET_CLASS, wnd_proc),
-                          (PANEL_CLASS, panel_proc)):
+                          (PANEL_CLASS, panel_proc), (AJUSTES_CLASS, ajustes_proc)):
             wc = win32gui.WNDCLASS()
             wc.hInstance = hinst
             wc.lpszClassName = cls
@@ -778,6 +793,8 @@ class WidgetApp:
         return bool(self.layered and self.cfg.get("fade_visible", True))
 
     def _ocultar_ya(self) -> None:
+        if self.aj_visible:
+            self.toggle_ajustes(False)      # la configuracion sola, sin widget, no sirve
         if self.hwnd_widget:
             try:
                 win32gui.ShowWindow(self.hwnd_widget, win32con.SW_HIDE)
@@ -1598,6 +1615,15 @@ class WidgetApp:
                 else:
                     self.log("no existe la pantalla %s (hay %d)", i, len(opciones))
                 return 0
+            if msg == WM_APP_AJUSTES:
+                seccion = None
+                if int(lp):
+                    try:
+                        seccion = ajustes_mod.SECCIONES[int(lp) - 1]
+                    except Exception:
+                        seccion = None
+                self.toggle_ajustes(bool(wp), seccion)
+                return 0
             if msg == win32con.WM_RBUTTONUP:
                 if self.cfg.get("right_click_menu", True):
                     self._show_menu()
@@ -1662,6 +1688,30 @@ class WidgetApp:
         self._aplicar_alpha()
         self.log("opacidad del widget: %d%s", alpha,
                  "" if self.layered else " (el fondo opaco no admite opacidad global)")
+
+    def set_width(self, px: int, save: bool = True) -> None:
+        """Ancho del widget en px logicos (menu *Ancho*, Ajustes y pruebas).
+
+        Se guarda la x relativa (position_frac) y no la absoluta: al cambiar el ancho el
+        widget se reacomoda solo sin saltar de lugar.
+        """
+        try:
+            nuevo = int(px)
+        except (TypeError, ValueError):
+            return
+        nuevo = max(150, min(520, nuevo))
+        if nuevo == int(self.cfg.get("width", 260)):
+            return
+        self.cfg["width"] = nuevo
+        if save:
+            cfgmod.save(self.cfg)
+        self._sig = None
+        self._base_img = None
+        self._apply_layout(force=True)
+        self._repaint_if_needed(force=True)
+        if self.aj_visible:
+            self._aj_reubicar()
+        self.log("ancho: %d px", nuevo)
 
     def set_chip_color(self, modo: str, save: bool = True) -> None:
         """Color del fondo del widget: auto / accent (el de Windows) / light / dark."""
@@ -2691,7 +2741,304 @@ class WidgetApp:
             self.toggle_panel(True)
         self.log("panel: vuelve a anclarse al widget")
 
-    # ------------------------------------------------------------------- menu
+    # ---------------------------------------------------------------- ajustes
+    def _aj_k(self) -> float:
+        """Escala de la ventana de Ajustes (la misma del widget, con un piso)."""
+        return max(0.9, self.k or 1.0)
+
+    def _aj_atajos(self) -> list[str]:
+        """Los atajos REALES (tabla HOTKEYS), con la combinacion ya escrita.
+
+        La seccion los muestra desde aca y no escritos a mano: antes decia
+        Ctrl+Alt+Espacio para play/pausa (el de verdad es Ctrl+Alt+P).
+        """
+        out = []
+        for hk_id, mods, vk, nombre in HOTKEYS:
+            if hk_id == HOTKEY_TOGGLE:
+                nombre = "mostrar u ocultar el widget"
+            out.append("%s   ·   %s" % (texto_atajo(mods, vk), nombre))
+        return out
+
+    def _aj_monitores(self) -> list[dict]:
+        """Opciones de la seccion Monitor de Ajustes, con el tildado ya resuelto."""
+        try:
+            opciones = self._monitor_opciones()
+        except Exception:
+            opciones = []
+        actual = self.cfg.get("taskbar_monitor") or None
+        out = []
+        for b in opciones:
+            out.append({
+                "nombre": b.get("nombre", "?"),
+                "rect": tuple(b.get("mon_rect") or b["rect"]),
+                "monitor": b.get("monitor"), "primario": bool(b.get("primario")),
+                "tildado": (None if b.get("primario") else b.get("monitor")) == actual})
+        return out
+
+    def _aj_preview(self):
+        """El widget dibujado con la config actual, para la vista previa de Ajustes."""
+        try:
+            art = None
+            if self.cfg.get("show_art", True):
+                art = draw.get_art(self.state.art, self.state.art_key,
+                                   int(round(draw.ART * self.k)),
+                                   int(round(draw.ART_RADIUS * self.k)))
+            return draw.render(self.state, self.cfg, art=art, hover=-1, marquee=0.0,
+                               k=self.k, base=self.base, height=self.height_px,
+                               opaque=not self.layered,
+                               waves=[] if self._levels is not None else None,
+                               volume=self._vol_para_render()).convert("RGBA")
+        except Exception:
+            return None
+
+    def _create_ajustes(self) -> bool:
+        if self.hwnd_aj and win32gui.IsWindow(self.hwnd_aj):
+            return True
+        w, h = ajustes_mod.size(self._aj_k())
+        hinst = win32api.GetModuleHandle(None)
+        self.hwnd_aj = win32gui.CreateWindowEx(
+            win32con.WS_EX_TOOLWINDOW | win32con.WS_EX_LAYERED,
+            AJUSTES_CLASS, "astra-ajustes", win32con.WS_POPUP,
+            0, 0, w, h, 0, None, hinst, None)
+        if not self.hwnd_aj:
+            self.log("no se pudo crear la ventana de Ajustes")
+            return False
+        self.dib_aj = _Layered(self.hwnd_aj, w, h)
+        self._aj_sig = None
+        return True
+
+    def _aj_pos(self) -> tuple[int, int, int, int]:
+        """Centrada sobre el widget, y adentro del monitor de ese widget."""
+        w, h = ajustes_mod.size(self._aj_k())
+        try:
+            mon = win32api.MonitorFromWindow(self.hwnd_widget, 2)
+            mi = win32api.GetMonitorInfo(mon)["Monitor"]
+        except Exception:
+            mi = (0, 0, 1366, 768)
+        wr = None
+        try:
+            if self.hwnd_widget and win32gui.IsWindow(self.hwnd_widget):
+                wr = win32gui.GetWindowRect(self.hwnd_widget)
+        except Exception:
+            wr = None
+        hueco = int(round(12 * self._aj_k()))
+        if wr:
+            x = (wr[0] + wr[2]) // 2 - w // 2
+            y = wr[1] - h - hueco
+            if y < mi[1] + 8:
+                y = min(wr[3] + hueco, mi[3] - h - 8)
+        else:
+            x, y = (mi[0] + mi[2]) // 2 - w // 2, mi[1] + 60
+        x = max(mi[0] + 8, min(x, mi[2] - w - 8))
+        y = max(mi[1] + 8, min(y, mi[3] - h - 8))
+        return (x, y, w, h)
+
+    def toggle_ajustes(self, on: bool | None = None, seccion: str | None = None) -> None:
+        """Abre o cierra la ventana de Ajustes (menu, gancho de pruebas)."""
+        if on is None:
+            on = not self.aj_visible
+        if seccion:
+            self.aj_seccion = ajustes_mod.seccion_valida(seccion)
+        if not on:
+            if self.hwnd_aj and win32gui.IsWindow(self.hwnd_aj):
+                win32gui.ShowWindow(self.hwnd_aj, win32con.SW_HIDE)
+            self.aj_visible = False
+            self.aj_hover = None
+            self.aj_drag = None
+            self.log("Ajustes cerrado")
+            return
+        if not self._create_ajustes():
+            return
+        if self.panel_visible:
+            self.toggle_panel(False)          # las dos ventanas juntas no aportan nada
+        x, y, w, h = self._aj_pos()
+        try:
+            win32gui.SetWindowPos(self.hwnd_aj, win32con.HWND_TOPMOST, x, y, w, h,
+                                  win32con.SWP_NOACTIVATE)
+            win32gui.ShowWindow(self.hwnd_aj, win32con.SW_SHOW)
+            # Sin esto el primer clic solo ACTIVA la ventana y no llega al control: se
+            # siente como que el primer toque no hace nada (paso en la prueba).
+            win32gui.SetForegroundWindow(self.hwnd_aj)
+        except Exception:
+            pass
+        self.aj_visible = True
+        self._aj_sig = None
+        self._ajustes_render(force=True)
+        self.log("Ajustes abierto en %s (seccion %s)", (x, y, w, h), self.aj_seccion)
+
+    def _ajustes_render(self, force: bool = False) -> None:
+        if not (self.aj_visible and self.hwnd_aj and self.dib_aj):
+            return
+        # la firma incluye la config: cualquier ajuste cambia el dibujo (y la vista previa)
+        sig = (self.aj_seccion, self.aj_hover, self.state.art_key, self.state.title,
+               tuple(sorted((str(k), str(v)) for k, v in self.cfg.items() if k != "theme")))
+        if not force and sig == self._aj_sig:
+            return
+        self._aj_sig = sig
+        try:
+            img = ajustes_mod.render(self.cfg, self.aj_seccion, self._aj_preview(),
+                                     self._aj_k(), self.aj_hover, self._aj_monitores(),
+                                     self._aj_atajos())
+        except Exception as exc:
+            self.log("Ajustes: no pude dibujar: %r", exc)
+            return
+        self.dib_aj.alpha = 255
+        self.dib_aj.upload(draw.to_premult_bgra(img))
+
+    def _aj_hit(self, x: int, y: int):
+        try:
+            return ajustes_mod.hit(x, y, self._aj_k(), self.cfg, self.aj_seccion,
+                                   self._aj_monitores())
+        except Exception:
+            return None
+
+    def _aj_hover_en(self, x: int, y: int) -> str | None:
+        try:
+            z = ajustes_mod.rects(self._aj_k(), self.cfg, self.aj_seccion,
+                                  self._aj_monitores())
+        except Exception:
+            return None
+        for i, r in enumerate(z["nav"]):
+            if r[0] <= x <= r[2] and r[1] <= y <= r[3]:
+                return "nav%d" % i
+        for f in z["filas"]:
+            if f["tipo"] == "radio" and f["rect"][0] <= x <= f["rect"][2] \
+                    and f["rect"][1] <= y <= f["rect"][3]:
+                return "radio%d" % f["indice"]
+        return None
+
+    def _aj_slider_a(self, nombre: str, x: int, save: bool = True) -> None:
+        frac = ajustes_mod.frac_slider(nombre, x, self._aj_k(), self.aj_seccion)
+        self._aj_aplicar(nombre, ajustes_mod.valor_slider(nombre, frac), save=save)
+
+    def _aj_aplicar(self, accion: str, valor=None, save: bool = True) -> None:
+        """Aplica una accion de Ajustes: son las MISMAS funciones que usa el menu."""
+        if accion == "cerrar":
+            self.toggle_ajustes(False)
+            return
+        if accion == "seccion":
+            self.aj_seccion = ajustes_mod.seccion_valida(valor)
+            self.aj_hover = None
+        elif accion == "chip_alpha":
+            self.set_chip_alpha(int(valor), save=save)
+        elif accion == "widget_alpha":
+            self.set_widget_alpha(int(valor), save=save)
+        elif accion == "chip_color":
+            self.set_chip_color(str(valor), save=save)
+        elif accion == "waves":
+            self.set_waves(not self.cfg.get("show_waves", False), save=save)
+        elif accion == "width":
+            self.set_width(int(valor), save=save)
+        elif accion == "panel_mode":
+            self.set_panel_gaming(
+                not (str(self.cfg.get("panel_mode", "normal")).lower() == "gaming"), save=save)
+        elif accion == "panel_clics":
+            self.set_panel_ajuste("panel_clics_al_juego",
+                                  not self.cfg.get("panel_clics_al_juego", False), save=save)
+        elif accion == "panel_size":
+            self.set_panel_size(str(valor), save=save)
+        elif accion == "panel_alpha":
+            self.set_panel_ajuste("panel_alpha", int(valor), save=save)
+        elif accion == "panel_bg_alpha":
+            self.set_panel_ajuste("panel_bg_alpha", int(valor), save=save)
+        elif accion == "hotkeys":
+            self.set_hotkeys(not self.cfg.get("hotkeys", True), save=save)
+        elif accion == "monitor":
+            opciones = self._monitor_opciones()
+            if 0 <= int(valor) < len(opciones):
+                b = opciones[int(valor)]
+                self.set_taskbar(None if b["primario"] else b["monitor"], save=save)
+                self._aj_reubicar()
+        elif accion == "extremo":
+            self.set_position(None, save=save)
+        elif accion == "refrescar":
+            self.panel_remuestrear()
+        self._aj_sig = None
+        self._ajustes_render(force=True)
+
+    def _aj_reubicar(self) -> None:
+        """Vuelve a centrar Ajustes sobre el widget (cambio de monitor, de ancho)."""
+        if not (self.aj_visible and self.hwnd_aj and win32gui.IsWindow(self.hwnd_aj)):
+            return
+        try:
+            x, y, w, h = self._aj_pos()
+            win32gui.SetWindowPos(self.hwnd_aj, win32con.HWND_TOPMOST, x, y, w, h,
+                                  win32con.SWP_NOACTIVATE)
+        except Exception:
+            pass
+
+    def _ajustes_wndproc(self, hwnd, msg, wp, lp):
+        try:
+            if msg == win32con.WM_PAINT:
+                hdc, ps = win32gui.BeginPaint(hwnd)
+                try:
+                    if self.dib_aj:
+                        self.dib_aj.blit(hdc)
+                finally:
+                    win32gui.EndPaint(hwnd, ps)
+                return 0
+            if msg == win32con.WM_ERASEBKGND:
+                return 1
+            if msg == win32con.WM_MOUSEMOVE:
+                x, y = self._xy(lp)
+                if self.aj_drag is not None:
+                    self._aj_slider_a(self.aj_drag[1], x, save=False)
+                    return 0
+                hover = self._aj_hover_en(x, y)
+                if hover != self.aj_hover:
+                    self.aj_hover = hover
+                    self._ajustes_render(force=True)
+                try:
+                    tme = TRACKMOUSEEVENT(ctypes.sizeof(TRACKMOUSEEVENT), 0x00000002,
+                                          hwnd, 0)
+                    user32.TrackMouseEvent(ctypes.byref(tme))
+                except Exception:
+                    pass
+                return 0
+            if msg == win32con.WM_MOUSELEAVE:
+                if self.aj_hover is not None:
+                    self.aj_hover = None
+                    self._ajustes_render(force=True)
+                return 0
+            if msg == win32con.WM_LBUTTONDOWN:
+                x, y = self._xy(lp)
+                r = self._aj_hit(x, y)
+                if r and r[0] == "slider":
+                    # arrastre: se aplica en el acto pero se guarda al soltar
+                    self.aj_drag = r
+                    self._aj_slider_a(r[1], x, save=False)
+                    try:
+                        win32gui.SetCapture(hwnd)
+                        win32gui.SetCursor(win32gui.LoadCursor(0, IDC_SIZEWE))
+                    except Exception:
+                        pass
+                return 0
+            if msg == win32con.WM_LBUTTONUP:
+                x, y = self._xy(lp)
+                if self.aj_drag is not None:
+                    nombre = self.aj_drag[1]
+                    self.aj_drag = None
+                    self._aj_slider_a(nombre, x, save=True)
+                    try:
+                        win32gui.ReleaseCapture()
+                    except Exception:
+                        pass
+                    return 0
+                r = self._aj_hit(x, y)
+                if r:
+                    self._aj_aplicar(r[0], r[1])
+                return 0
+            if msg == win32con.WM_RBUTTONUP:
+                self.toggle_ajustes(False)      # clic derecho: cerrar
+                return 0
+            if msg == win32con.WM_DESTROY:
+                self.hwnd_aj = 0
+                self.aj_visible = False
+                return 0
+        except Exception as exc:
+            self.log("ajustes proc fallo: %r", exc)
+        return win32gui.DefWindowProc(hwnd, msg, wp, lp)
+
     def _show_menu(self) -> None:
         try:
             menu = win32gui.CreatePopupMenu()
@@ -2780,6 +3127,8 @@ class WidgetApp:
                 win32gui.AppendMenu(pan_sub, flags, ident, etiqueta)
 
             gaming = str(self.cfg.get("panel_mode", "normal")).lower() == "gaming"
+            pan_check(26, "Abrir el panel (clic en la caratula)", bool(self.panel_visible))
+            win32gui.AppendMenu(pan_sub, win32con.MF_SEPARATOR, 0, "")
             pan_check(60, "Modo gaming (chico y sin robar el foco)", gaming)
             win32gui.AppendMenu(pan_sub, win32con.MF_SEPARATOR, 0, "")
             tam_sub = win32gui.CreatePopupMenu()
@@ -2818,32 +3167,52 @@ class WidgetApp:
             win32gui.AppendMenu(pan_sub, win32con.MF_STRING, 74,
                                 "Volver a anclarlo al widget")
 
-            # Menu corto a proposito: queda solo lo que NO se puede hacer de otra
-            # forma. Sacado (sigue en config.json, documentado en el README): atrasar y
-            # adelantar (barra, rueda, atajos), silenciar y volumen (celda del altavoz,
-            # rueda, atajos), mover paso a paso y centrar (se arrastra con el mouse),
-            # mostrar el altavoz, apagar los atajos, abrir la carpeta del proyecto, y los
-            # interruptores internos del panel que ahora fija el modo gaming.
+            # Menu corto a proposito: seis filas. Lo fino (fondos, opacidades, colores,
+            # ancho) vive en los submenus de Apariencia y Posicion, y lo que pide
+            # deslizadores se maneja en la ventana de Ajustes. Sacado del menu (sigue en
+            # config.json y en Ajustes): atrasar/adelantar, silenciar y volumen, mover
+            # paso a paso, mostrar el altavoz y los interruptores internos del panel.
+            apa_sub = win32gui.CreatePopupMenu()
+            for etiqueta, sub in (("Fondo del widget", alpha_sub),
+                                  ("Opacidad de todo el widget", opac_sub),
+                                  ("Color del widget", color_sub),
+                                  ("Color de la barra", subs[0][0]),
+                                  ("Color de las ondas", subs[1][0])):
+                win32gui.AppendMenu(apa_sub, win32con.MF_POPUP | win32con.MF_STRING,
+                                    sub, etiqueta)
+            win32gui.AppendMenu(apa_sub, win32con.MF_SEPARATOR, 0, "")
+            flags = win32con.MF_STRING
+            if self.cfg.get("show_waves", False):
+                flags |= win32con.MF_CHECKED
+            win32gui.AppendMenu(apa_sub, flags, 15, "Ondas de sonido")
+            # El ancho era una fila apagada ("Ancho: 320 px") que no hacia nada: ahora es
+            # un submenu con las dos acciones y un restablecer.
+            an_sub = win32gui.CreatePopupMenu()
+            win32gui.AppendMenu(an_sub, win32con.MF_STRING | win32con.MF_GRAYED, 7,
+                                "Ancho: %d px" % int(self.cfg.get("width", 260)))
+            win32gui.AppendMenu(an_sub, win32con.MF_SEPARATOR, 0, "")
+            win32gui.AppendMenu(an_sub, win32con.MF_STRING, 9, "Mas angosto")
+            win32gui.AppendMenu(an_sub, win32con.MF_STRING, 8, "Mas ancho")
+            win32gui.AppendMenu(an_sub, win32con.MF_SEPARATOR, 0, "")
+            win32gui.AppendMenu(an_sub, win32con.MF_STRING, 28, "Restablecer (300 px)")
+            win32gui.AppendMenu(apa_sub, win32con.MF_POPUP | win32con.MF_STRING,
+                                an_sub, "Ancho")
+
+            pos_sub = win32gui.CreatePopupMenu()
+            if mon_sub:
+                win32gui.AppendMenu(pos_sub, win32con.MF_POPUP | win32con.MF_STRING,
+                                    mon_sub, "Monitor")
+            win32gui.AppendMenu(pos_sub, win32con.MF_STRING, 6,
+                                "Volver al extremo derecho")
+            win32gui.AppendMenu(pos_sub, win32con.MF_STRING, 10, "Refrescar ahora")
+
             items = [
                 ("item", 1, "Ocultar widget" if self.visible else "Mostrar widget", True),
-                ("check", 26, "Abrir el panel (clic en la caratula)", bool(self.panel_visible)),
                 ("popup", pan_sub, "Panel", True),
+                ("popup", apa_sub, "Apariencia", True),
+                ("popup", pos_sub, "Posicion", True),
                 ("sep", 0, "", None),
-                ("popup", alpha_sub, "Fondo del widget", True),
-                ("popup", opac_sub, "Opacidad de todo el widget", True),
-                ("popup", color_sub, "Color del widget", True),
-                ("popup", subs[0][0], subs[0][1], True),
-                ("popup", subs[1][0], subs[1][1], True),
-                *([("popup", mon_sub, "Monitor", True)] if mon_sub else []),
-                ("sep", 0, "", None),
-                ("check", 15, "Ondas de sonido", bool(self.cfg.get("show_waves", False))),
-                ("sep", 0, "", None),
-                ("item", 7, f"Ancho: {self.cfg.get('width', 260)} px", False),
-                ("item", 8, "   Mas ancho", True),
-                ("item", 9, "   Mas angosto", True),
-                ("sep", 0, "", None),
-                ("item", 6, "Volver al extremo derecho", True),
-                ("item", 10, "Refrescar ahora", True),
+                ("item", 27, "Ajustes...", True),
                 ("sep", 0, "", None),
                 ("item", 12, "Salir", True),
             ]
@@ -2881,6 +3250,10 @@ class WidgetApp:
     def _handle_menu(self, cmd: int) -> None:
         if cmd == 1:
             self.toggle_visible()
+        elif cmd == 27:
+            self.toggle_ajustes()
+        elif cmd == 28:
+            self.set_width(300)
         elif 20 <= cmd <= 20 + len(ALPHA_LEVELS) - 1:
             self.set_chip_alpha(ALPHA_LEVELS[cmd - 20][0])
         elif 110 <= cmd <= 110 + len(WIDGET_ALPHAS) - 1:
@@ -2918,15 +3291,9 @@ class WidgetApp:
         elif cmd == 6:
             self.set_position(None)
         elif cmd == 8:
-            self.cfg["width"] = min(520, int(self.cfg.get("width", 260)) + 20)
-            cfgmod.save(self.cfg)
-            self._apply_layout(force=True)
-            self._repaint_if_needed(force=True)
+            self.set_width(int(self.cfg.get("width", 260)) + 20)
         elif cmd == 9:
-            self.cfg["width"] = max(150, int(self.cfg.get("width", 260)) - 20)
-            cfgmod.save(self.cfg)
-            self._apply_layout(force=True)
-            self._repaint_if_needed(force=True)
+            self.set_width(int(self.cfg.get("width", 260)) - 20)
         elif cmd == 10:
             self.state = self.poller.state()
             self._sig = None

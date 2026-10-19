@@ -400,6 +400,7 @@ Tres piezas bien separadas:
 |---|---|
 | `widget/media.py` | Lee el SMTC en un hilo propio con su propio event loop asyncio. Publica una foto inmutable (`MediaState`) y despacha los comandos. |
 | `widget/panel.py` | El panel del mini reproductor: geometria (zonas clicables), dibujo con Pillow y que hay bajo el cursor. Separado del widget para poder verificarlo sin ventana. |
+| `widget/ajustes.py` | La ventana de Ajustes: lo mismo que el panel pero para la configuracion (secciones, deslizadores, swatches, vista previa) y sin crear ninguna ventana: `render()`, `rects()`, `hit()`, `valor_slider()`. |
 | `widget/draw.py` | Dibuja el widget con Pillow en un lienzo ampliado x3 y lo reduce con LANCZOS: asi los bordes redondeados, los iconos vectoriales y el texto salen suaves sin depender de GDI+ ni de un framework de UI. Con el fondo transparente la reduccion se hace en espacio premultiplicado, para que no quede un halo oscuro en los bordes. Las ondas de sonido se dibujan aparte, en su propia tira, para poder animarlas sin repintar el chip. |
 | `widget/volume.py` | Volumen de la app que suena, por la API de audio de Windows (Core Audio) con `ctypes`: enumera las sesiones de audio del dispositivo por defecto, las empareja por ejecutable y lee/escribe volumen y silencio. |
 | `widget/app.py` + `taskbarwin.py` | Ventana Win32, superficie de doble buffer (DIB + `BitBlt`, o en capas con `UpdateLayeredWindow` cuando el fondo es transparente), entrada de mouse, arrastre, anclaje y posicion en la barra. |
@@ -506,8 +507,10 @@ corto; que la barra tome el suyo —medido en rojo puro— que las ondas tomen e
 —medido en azul— y que ninguno tome el del otro), la barra de otro monitor (que el
 widget se mude, quede dentro de esa barra, que ese monitor le ceda el espacio y
 que la barra que deja recupere su ancho natural, ida y vuelta; en modo flotante, que
-la ventana se apoye en la franja de abajo del monitor elegido y quede adentro) y 30
-muestras de
+la ventana se apoye en la franja de abajo del monitor elegido y quede adentro), la
+ventana de Ajustes (que todos los controles entren en la ventana, que respondan donde
+se ven, que los deslizadores mapeen al rango del ajuste y que abra y cierre arriba del
+widget sin taparlo) y 30 muestras de
 vigilancia del pintado (30/30 cuadros correctos). Y 20 de 20 de interaccion real
 (`python tools\clicktest.py`): el hover ilumina los tres botones, un clic de verdad
 cambia el estado de reproduccion, el segundo clic lo restaura, un clic en la
@@ -746,24 +749,39 @@ verificar asi es la barra real de Windows 11 (donde el modo se elige solo): eso 
 maquina con 11.
 
 
-## El menu (corto a proposito)
+## El menu (corto a proposito) y la ventana de Ajustes
 
-Clic derecho sobre el widget. Queda **solo lo que no se puede hacer de otra forma**:
+Clic derecho sobre el widget. Seis filas, y lo fino adentro de dos submenus o en la
+ventana de Ajustes:
 
     Ocultar / Mostrar widget
-    Abrir el panel            (lo mismo que el clic en la caratula)
-    Panel                     Modo gaming, Tamano, Dejar pasar los clics,
-                              Fondo, Opacidad, Volver a anclarlo al widget
-    Fondo del widget          solido / translucido / ... / sin fondo
-    Opacidad de todo el widget   todo nitido / leve / translucido / muy transparente
-    Color del widget          automatico / del tema de Windows / claro / oscuro
-    Color de la barra         (y Color de las ondas)
-    Monitor                   (solo si hay mas de un monitor)
-    Ondas de sonido           (interruptor)
-    Ancho: N px               Mas ancho / Mas angosto
-    Volver al extremo derecho
-    Refrescar ahora           vuelve a medir el fondo del panel
+    Panel                     Abrir el panel, Modo gaming, Tamano, Dejar pasar los
+                              clics, Fondo, Opacidad, Volver a anclarlo al widget
+    Apariencia                Fondo del widget, Opacidad de todo el widget,
+                              Color del widget, Color de la barra,
+                              Color de las ondas, Ondas de sonido (interruptor),
+                              Ancho (mas ancho / mas angosto / restablecer 300 px)
+    Posicion                  Monitor (solo si hay mas de un monitor),
+                              Volver al extremo derecho, Refrescar ahora
+    Ajustes...                abre la ventana con deslizadores y vista previa
     Salir
+
+### La ventana de Ajustes
+
+Es una ventana propia (misma estetica que el panel, sin entrar en Alt+Tab) con la
+**vista previa del widget arriba**: cada cambio se ve ahi mismo. Tiene cuatro secciones:
+
+| seccion | que hay |
+|---|---|
+| Apariencia | Fondo (segmentado), Opacidad de todo el widget (deslizador), Color del widget (swatches), Ondas de sonido (interruptor), Ancho (deslizador 150-520) |
+| Posicion | los monitores con el que esta en uso tildado, *Volver al extremo derecho*, *Refrescar el fondo del panel* |
+| Panel | Modo gaming, Dejar pasar los clics, Tamano (normal/chico/tira), Opacidad y Fondo del panel |
+| Atajos | interruptor de atajos globales y la lista de combinaciones **real**, armada desde la tabla `HOTKEYS` |
+
+Se cierra con la cruz de arriba a la derecha (o clic derecho adentro). Los deslizadores
+aplican en el acto y guardan al soltar el boton, asi no se escribe `config.json` en cada
+pixel del arrastre. Las acciones son las mismas funciones que usa el menu, no hay dos
+caminos para lo mismo.
 
 **Fondo y opacidad son dos cosas distintas** (como en el panel): *Fondo del widget* decide
 cuanto se ve la barra de tareas a traves del chip; *Opacidad de todo el widget* es el alfa de

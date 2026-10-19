@@ -37,6 +37,7 @@ WM_APP_CANCEL_SCRUB = win32con.WM_APP + 3
 WM_APP_WAVES = win32con.WM_APP + 4
 WM_APP_COLOR = win32con.WM_APP + 5
 WM_APP_MONITOR = win32con.WM_APP + 6
+WM_APP_AJUSTES = win32con.WM_APP + 14
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
 WM_CAPTURECHANGED = 0x0215
@@ -1367,21 +1368,20 @@ def main() -> int:
               f"mitad {medio} -> oculto 0")
 
         win32gui.PostMessage(ctl, win32con.WM_HOTKEY, 1, 0)   # mostrar: fundido al reves
-        # Al mostrar, el primer cuadro puede tardar hasta un ciclo del temporizador (500 ms
-        # sin musica, 100 ms con musica): medir a los 0,10 s fijos daba 0 en silencio y
-        # parecia que no habia fundido. Se espera el primer cambio, que es el cuadro del
-        # medio (alfa 0 -> 48 de 255).
-        cap_medio2 = cap_oculto
-        for _ in range(6):
-            time.sleep(0.10)
-            tentativa = captura()
-            if distintos(tentativa, cap_oculto) > 5:
-                cap_medio2 = tentativa
-                break
+        # Se muestrean cuadros mientras dura el fundido y despues se elige el del MEDIO.
+        # Con un solo muestreo a tiempo fijo el resultado dependia de cuando caia el
+        # temporizador (100 ms con musica, 500 en silencio): daba 0 (no habia empezado) o
+        # el cuadro final (ya habia terminado), las dos veces como falso fallo.
+        cuadros = []
+        for _ in range(20):
+            time.sleep(0.04)
+            cuadros.append(captura())
         time.sleep(0.7)
         cap_visible2 = captura()
-        medio2 = distintos(cap_medio2, cap_oculto)
         visible_despues = distintos(cap_visible2, cap_oculto)
+        medios = [distintos(c, cap_oculto) for c in cuadros]
+        medios = [m for m in medios if 5 < m < visible_despues]
+        medio2 = max(medios) if medios else 0
         check("al mostrarlo tambien aparece con fundido",
               visible_despues > medio2 > 5,
               f"pixeles del widget contra el fondo: oculto 0 -> mitad {medio2} -> "
@@ -1811,6 +1811,90 @@ def main() -> int:
                       win32gui.FindWindow("AstraMusicPanel", None) or w_panel))
     except Exception as exc:
         check("el panel", False, repr(exc))
+
+    # --- ventana de Ajustes (opcion D del menu) ------------------------------
+    print("\n-- ventana de Ajustes --")
+    try:
+        from widget import ajustes as ajustes_mod
+        # k propio: el del panel se define adentro de su bloque y puede no existir si
+        # aquella seccion fallo antes
+        wr_k = rect(w_now)
+        kaj = max(0.9, (wr_k[3] - wr_k[1]) / 40.0)
+        w_aj = ajustes_mod.size(kaj)
+        mons_falsos = [{"nombre": "Principal", "rect": (0, 0, 1920, 1080), "tildado": True},
+                       {"nombre": "Monitor 2", "rect": (1920, 0, 3200, 1080),
+                        "tildado": False}]
+        atajos_falsos = ["Ctrl+Alt+M   ·   mostrar u ocultar el widget",
+                         "Ctrl+Alt+P   ·   play/pausa"]
+        # (a) sin ventana: todo entra, y cada control devuelve su accion
+        malos = []
+        for seccion in ajustes_mod.SECCIONES:
+            z = ajustes_mod.rects(kaj, cfg, seccion, mons_falsos, atajos_falsos)
+            for f in z["filas"]:
+                r = f["rect"]
+                if r[0] < 0 or r[1] < 0 or r[2] > w_aj[0] or r[3] > w_aj[1]:
+                    malos.append((seccion, f["tipo"], r))
+        check("Ajustes: todos los controles entran en la ventana", not malos, malos[:3])
+        z = ajustes_mod.rects(kaj, cfg, "Apariencia")
+        seg = z["filas"][1]
+        b = seg["botones"][1]
+        ok_hit = (
+            ajustes_mod.hit((b["rect"][0] + b["rect"][2]) // 2,
+                            (b["rect"][1] + b["rect"][3]) // 2, kaj, cfg, "Apariencia")
+            == ("chip_alpha", b["valor"])
+            and ajustes_mod.hit((z["nav"][2][0] + z["nav"][2][2]) // 2,
+                                (z["nav"][2][1] + z["nav"][2][3]) // 2, kaj, cfg,
+                                "Apariencia") == ("seccion", "Panel")
+            and ajustes_mod.hit((z["cerrar"][0] + z["cerrar"][2]) // 2,
+                                (z["cerrar"][1] + z["cerrar"][3]) // 2, kaj, cfg,
+                                "Apariencia") == ("cerrar", None))
+        check("Ajustes: los controles responden donde se ven", ok_hit,
+              "segmentado / navegacion / cruz")
+        sw = next(f for f in z["filas"] if f["tipo"] == "swatches")
+        b = sw["botones"][1]
+        check("Ajustes: el swatch devuelve el color",
+              ajustes_mod.hit((b["rect"][0] + b["rect"][2]) // 2,
+                              (b["rect"][1] + b["rect"][3]) // 2, kaj, cfg, "Apariencia")
+              == ("chip_color", b["valor"]))
+        check("Ajustes: el deslizador mapea 0..1 al rango del ajuste",
+              ajustes_mod.valor_slider("width", 0.0) == 150
+              and ajustes_mod.valor_slider("width", 1.0) == 520
+              and ajustes_mod.valor_slider("widget_alpha", 0.5) in (147, 148),
+              (ajustes_mod.valor_slider("width", 0.0),
+               ajustes_mod.valor_slider("width", 1.0)))
+        # (b) en vivo: se abre arriba del widget, no roba la barra y se cierra
+        win32gui.PostMessage(w_now, WM_APP_AJUSTES, 1, 1)
+        time.sleep(1.0)
+        h_aj = win32gui.FindWindow("AstraMusicAjustes", None)
+        check("Ajustes: la ventana se abre y se ve",
+              bool(h_aj) and bool(win32gui.IsWindowVisible(h_aj)),
+              f"ventana {hex(h_aj or 0)}")
+        if h_aj:
+            pr_aj = rect(h_aj)
+            ex_aj = win32gui.GetWindowLong(h_aj, win32con.GWL_EXSTYLE)
+            wr_aj = rect(w_now)
+            try:
+                mi_aj = win32api.GetMonitorInfo(
+                    win32api.MonitorFromWindow(w_now, 2))["Monitor"]
+            except Exception:
+                mi_aj = None
+            check("Ajustes: no entra en la barra ni en Alt+Tab",
+                  bool(ex_aj & 0x00000080) and bool(ex_aj & 0x00080000),
+                  f"TOOLWINDOW={'si' if ex_aj & 0x80 else 'no'}, "
+                  f"LAYERED={'si' if ex_aj & 0x80000 else 'no'}")
+            check("Ajustes: queda dentro del monitor del widget",
+                  mi_aj is None or (mi_aj[0] <= pr_aj[0] and pr_aj[2] <= mi_aj[2]
+                                    and mi_aj[1] <= pr_aj[1] and pr_aj[3] <= mi_aj[3]),
+                  f"ventana {pr_aj} monitor {mi_aj}")
+            check("Ajustes: queda arriba del widget, sin taparlo",
+                  pr_aj[3] <= wr_aj[1] + 2 or pr_aj[1] >= wr_aj[3] - 2,
+                  f"ajustes {pr_aj} widget {wr_aj}")
+            win32gui.PostMessage(w_now, WM_APP_AJUSTES, 0, 0)
+            time.sleep(0.6)
+            check("Ajustes: se cierra",
+                  not win32gui.IsWindowVisible(h_aj))
+    except Exception as exc:
+        check("la ventana de Ajustes", False, repr(exc))
 
     # --- la barra tiene que estar abajo para incrustar; si no, modo flotante ---------
     try:
